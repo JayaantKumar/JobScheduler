@@ -1,148 +1,173 @@
 import { useMachines } from "../hooks/useMachines";
 import { useJobs } from "../hooks/useJobs";
-import { useScheduleBlocks } from "../hooks/useScheduleBlocks";
+// import { useScheduleBlocks } from "../hooks/useScheduleBlocks"; // Not strictly needed for this specific UI
 
 export default function DashboardHome() {
   const { machines, loading: mLoading } = useMachines();
   const { jobs, loading: jLoading } = useJobs();
-  const { blocks, loading: bLoading } = useScheduleBlocks();
 
-  if (mLoading || jLoading || bLoading) {
+  if (mLoading || jLoading) {
     return <div className="p-8 text-primary-500 animate-pulse font-medium">Loading command center...</div>;
   }
 
-  // --- KPI Calculations ---
+  // --- Metric Calculations ---
   
-  // Machine Stats
-  const onlineMachines = machines.filter(m => m.status === 'Online').length;
+  // 1. Jobs Stats
+  const activeJobs = jobs.filter(j => j.status === 'pending' || j.status === 'scheduled');
+  const inProgressCount = activeJobs.filter(j => j.status === 'scheduled').length;
+  const completedJobs = jobs.filter(j => j.status === 'completed');
+  
+  // 2. Machine Stats
+  const onlineMachinesCount = machines.filter(m => m.status === 'Online').length;
   const avgLoad = machines.length > 0 
     ? Math.round(machines.reduce((acc, m) => acc + (m.currentLoad || 0), 0) / machines.length) 
     : 0;
+    
+  // 3. Alerts (Simulated by checking for offline machines or high load)
+  const offlineMachines = machines.filter(m => m.status === 'Offline');
+  const overloadedMachines = machines.filter(m => (m.currentLoad || 0) > 90);
+  const criticalAlertsCount = offlineMachines.length + overloadedMachines.length;
 
-  // Job Stats
-  const activeJobs = jobs.filter(j => j.status === 'pending' || j.status === 'scheduled').length;
-  // (Removed the unused completedJobs variable here)
-  
-  // Process Stats (Blocks)
-  const completedBlocks = blocks.filter(b => b.status === 'completed').length;
-  const completionRate = blocks.length > 0 ? Math.round((completedBlocks / blocks.length) * 100) : 0;
-
-  // Recent Activity (Last 5 completed blocks)
-  const recentActivity = [...blocks]
-    .filter(b => b.status === 'completed')
-    // Assuming we have updated_at, but we'll sort by start_time for the Gantt logic we used
-    .sort((a, b) => b.start_time?.toMillis() - a.start_time?.toMillis()) 
-    .slice(0, 5);
+  // 4. High Priority Jobs (Sort active jobs by deadline, grab the closest 3)
+  const highPriorityJobs = [...activeJobs]
+    .sort((a, b) => new Date(a.deadline) - new Date(b.deadline))
+    .slice(0, 3);
 
   return (
-    <div className="max-w-7xl mx-auto p-6 space-y-6">
+    <div className="max-w-[1600px] mx-auto p-6">
+      {/* Header matching the screenshot */}
       <div className="mb-8">
-        <h2 className="text-2xl font-bold text-white">Factory Overview</h2>
-        <p className="text-gray-400 mt-1">Real-time telemetry and production analytics.</p>
+        <h2 className="text-3xl font-bold text-white tracking-tight">Dashboard</h2>
+        <p className="text-gray-400 mt-1">A high-level overview of your production floor.</p>
       </div>
 
-      {/* KPI Cards Row */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 shadow-lg">
-          <div className="text-gray-500 text-sm font-medium mb-1">Fleet Status</div>
-          <div className="text-3xl font-bold text-white flex items-end gap-2">
-            {onlineMachines} <span className="text-base font-normal text-gray-500 mb-1">/ {machines.length} Online</span>
-          </div>
-          <div className="mt-4 h-1.5 w-full bg-gray-800 rounded-full overflow-hidden">
-            <div className="h-full bg-green-500 rounded-full" style={{ width: `${(onlineMachines/machines.length)*100}%` }}></div>
-          </div>
-        </div>
-
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 shadow-lg">
-          <div className="text-gray-500 text-sm font-medium mb-1">Active Production</div>
-          <div className="text-3xl font-bold text-white flex items-end gap-2">
-            {activeJobs} <span className="text-base font-normal text-gray-500 mb-1">Jobs</span>
-          </div>
-          <div className="mt-4 flex gap-1">
-            <span className="text-xs font-medium text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">
-              {jobs.filter(j=>j.status === 'scheduled').length} Scheduled
-            </span>
-            <span className="text-xs font-medium text-yellow-400 bg-yellow-500/10 px-2 py-0.5 rounded border border-yellow-500/20">
-              {jobs.filter(j=>j.status === 'pending').length} Pending
-            </span>
-          </div>
-        </div>
-
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 shadow-lg">
-          <div className="text-gray-500 text-sm font-medium mb-1">Average Floor Load</div>
-          <div className="text-3xl font-bold text-white flex items-end gap-2">
-            {avgLoad}%
-          </div>
-          <div className="mt-4 h-1.5 w-full bg-gray-800 rounded-full overflow-hidden">
-            <div className={`h-full rounded-full ${avgLoad > 80 ? 'bg-red-500' : 'bg-primary-500'}`} style={{ width: `${avgLoad}%` }}></div>
-          </div>
-        </div>
-
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 shadow-lg">
-          <div className="text-gray-500 text-sm font-medium mb-1">Process Completion</div>
-          <div className="text-3xl font-bold text-white flex items-end gap-2">
-            {completionRate}%
-          </div>
-          <div className="mt-4 text-xs text-gray-400">
-            {completedBlocks} of {blocks.length} scheduled blocks finished.
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
+      {/* KPI Cards Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
         
-        {/* Left Column: Machine Workload Bar Chart (Custom CSS) */}
-        <div className="col-span-2 bg-gray-900 border border-gray-800 rounded-xl p-6 shadow-lg">
-          <h3 className="text-lg font-bold text-white mb-6">Machine Utilization Breakdown</h3>
-          <div className="space-y-4">
-            {machines.map(machine => (
-              <div key={machine.id}>
-                <div className="flex justify-between text-sm mb-1">
-                  <span className="text-gray-300 font-medium">{machine.name}</span>
-                  <span className={machine.currentLoad > 80 ? 'text-red-400' : 'text-primary-400'}>
-                    {machine.currentLoad || 0}%
-                  </span>
-                </div>
-                <div className="h-2 w-full bg-gray-800 rounded-full overflow-hidden">
-                  <div 
-                    className={`h-full rounded-full transition-all duration-1000 ${
-                      machine.currentLoad > 80 ? 'bg-red-500' : 
-                      machine.currentLoad === 0 ? 'bg-gray-600' : 'bg-primary-500'
-                    }`} 
-                    style={{ width: `${machine.currentLoad || 0}%` }}
-                  ></div>
-                </div>
-              </div>
-            ))}
-            {machines.length === 0 && <div className="text-gray-500 text-sm">No machines configured.</div>}
+        {/* Card 1: Active Jobs */}
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 flex items-center gap-5 shadow-lg">
+          <div className="w-14 h-14 rounded-xl bg-purple-500/10 text-purple-400 flex items-center justify-center shrink-0 border border-purple-500/20">
+            <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+            </svg>
+          </div>
+          <div>
+            <div className="text-gray-400 text-sm font-medium mb-0.5">Active Jobs</div>
+            <div className="text-3xl font-bold text-white">{activeJobs.length}</div>
+            <div className="text-xs text-gray-500 mt-1">{inProgressCount} in progress</div>
           </div>
         </div>
 
-        {/* Right Column: Recent Activity Feed */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 shadow-lg">
-          <h3 className="text-lg font-bold text-white mb-6">Recent Completions</h3>
-          <div className="space-y-4">
-            {recentActivity.length === 0 ? (
-              <div className="text-gray-500 text-sm">No recent activity.</div>
+        {/* Card 2: Avg Machine Utilization */}
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 flex items-center gap-5 shadow-lg">
+          <div className="w-14 h-14 rounded-xl bg-blue-500/10 text-blue-400 flex items-center justify-center shrink-0 border border-blue-500/20">
+            <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
+            </svg>
+          </div>
+          <div>
+            <div className="text-gray-400 text-sm font-medium mb-0.5">Avg. Machine Utilization</div>
+            <div className="text-3xl font-bold text-white">{avgLoad}%</div>
+            <div className="text-xs text-gray-500 mt-1">{onlineMachinesCount} machines online</div>
+          </div>
+        </div>
+
+        {/* Card 3: Completed Today */}
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 flex items-center gap-5 shadow-lg">
+          <div className="w-14 h-14 rounded-xl bg-green-500/10 text-green-400 flex items-center justify-center shrink-0 border border-green-500/20">
+            <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <div>
+            <div className="text-gray-400 text-sm font-medium mb-0.5">Completed Today</div>
+            <div className="text-3xl font-bold text-white">{completedJobs.length}</div>
+            <div className="text-xs text-gray-500 mt-1">Jobs finished since midnight</div>
+          </div>
+        </div>
+
+        {/* Card 4: Critical Alerts */}
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 flex items-center gap-5 shadow-lg">
+          <div className="w-14 h-14 rounded-xl bg-red-500/10 text-red-400 flex items-center justify-center shrink-0 border border-red-500/20">
+            <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+          <div>
+            <div className="text-gray-400 text-sm font-medium mb-0.5">Critical Alerts</div>
+            <div className="text-3xl font-bold text-white">{criticalAlertsCount}</div>
+            <div className="text-xs text-gray-500 mt-1">Machine breakdowns</div>
+          </div>
+        </div>
+
+      </div>
+
+      {/* Bottom Panels Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+        
+        {/* Recent Alerts Panel */}
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 shadow-lg flex flex-col">
+          <h3 className="text-lg font-bold text-white mb-6">Recent Alerts</h3>
+          
+          <div className="flex-1 flex flex-col gap-3">
+            {criticalAlertsCount === 0 ? (
+              <div className="flex-1 flex items-center justify-center text-gray-500 text-sm italic min-h-[150px]">
+                No active alerts. Factory is operating normally.
+              </div>
             ) : (
-              recentActivity.map(block => {
-                const machine = machines.find(m => m.id === block.machine_id);
-                return (
-                  <div key={block.id} className="flex gap-4 items-start pb-4 border-b border-gray-800 last:border-0 last:pb-0">
-                    <div className="w-8 h-8 rounded-full bg-green-500/10 text-green-500 flex items-center justify-center shrink-0 border border-green-500/20">
-                      ✓
-                    </div>
+              <>
+                {offlineMachines.map(m => (
+                  <div key={`off-${m.id}`} className="bg-gray-950 border border-red-900/30 border-l-2 border-l-red-500 rounded-lg p-4 flex justify-between items-center">
                     <div>
-                      <div className="text-sm font-medium text-gray-200">
-                        {block.process_id} finished
+                      <div className="text-white font-medium text-sm">{m.name} is Offline</div>
+                      <div className="text-gray-500 text-xs mt-0.5">Requires maintenance check</div>
+                    </div>
+                    <span className="text-xs font-bold text-red-400 bg-red-500/10 px-2 py-1 rounded">Urgent</span>
+                  </div>
+                ))}
+                {overloadedMachines.map(m => (
+                  <div key={`load-${m.id}`} className="bg-gray-950 border border-orange-900/30 border-l-2 border-l-orange-500 rounded-lg p-4 flex justify-between items-center">
+                    <div>
+                      <div className="text-white font-medium text-sm">{m.name} Overloaded</div>
+                      <div className="text-gray-500 text-xs mt-0.5">Current load at {m.currentLoad}%</div>
+                    </div>
+                    <span className="text-xs font-bold text-orange-400 bg-orange-500/10 px-2 py-1 rounded">Warning</span>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* High Priority Jobs Panel */}
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 shadow-lg flex flex-col">
+          <h3 className="text-lg font-bold text-white mb-6">High Priority Jobs</h3>
+          
+          <div className="flex-1 flex flex-col gap-3">
+            {highPriorityJobs.length === 0 ? (
+              <div className="flex-1 flex items-center justify-center text-gray-500 text-sm italic min-h-[150px]">
+                No pending or scheduled jobs in the queue.
+              </div>
+            ) : (
+              highPriorityJobs.map(job => (
+                <div key={job.id} className="bg-gray-950 border border-gray-800 rounded-lg p-4 transition-colors hover:border-gray-700">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <div className="text-white font-medium">
+                        {job.product?.name} <span className="text-red-400 text-xs ml-1 font-mono">(JOB-{job.id.slice(0,6).toUpperCase()})</span>
                       </div>
-                      <div className="text-xs text-gray-500 mt-0.5">
-                        Job {block.job_id.slice(0,5)} • {machine?.name || 'Unknown Machine'}
+                      <div className="text-gray-500 text-xs mt-1">
+                        Due: {new Date(job.deadline).toLocaleDateString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit' })}
                       </div>
                     </div>
+                    <span className={`text-[10px] px-2 py-1 rounded-full uppercase font-bold tracking-wider ${
+                      job.status === 'scheduled' ? 'bg-blue-500/10 text-blue-400' : 'bg-yellow-500/10 text-yellow-400'
+                    }`}>
+                      {job.status}
+                    </span>
                   </div>
-                );
-              })
+                </div>
+              ))
             )}
           </div>
         </div>

@@ -25,6 +25,10 @@ export default function AdminLayout() {
           <NavLink to="/dashboard" end className={navLinkClasses}>
             Overview Analytics
           </NavLink>
+
+          <NavLink to="/dashboard/analytics" className={navLinkClasses}>
+            Analytics
+          </NavLink>
           
           <NavLink to="/dashboard/machines" className={navLinkClasses}>
             Machine Management

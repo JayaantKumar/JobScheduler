@@ -7,6 +7,7 @@ import Jobs from "../pages/Jobs";
 import Scheduler from "../pages/Scheduler";
 import DashboardHome from "../pages/DashboardHome";
 import Unauthorized from "../pages/Unauthorized";
+import Analytics from "../pages/Analytics";
 
 const ProtectedRoute = ({ children, requiredRole }) => {
   const { user, role } = useAuth();
@@ -42,6 +43,8 @@ export const AppRouter = () => {
         }>
           {/* Default route loads the Analytics Dashboard */}
           <Route index element={<DashboardHome />} />
+
+          <Route path="analytics" element={<Analytics />} />
           
           {/* Sub-routes for the management pages */}
           <Route path="machines" element={<Machines />} />
