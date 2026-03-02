@@ -46,6 +46,12 @@ export default function AdminLayout() {
           <NavLink to="/dashboard/saved-schedules" onClick={handleNavClick} className={navLinkClasses}>Saved Schedules</NavLink>
           <NavLink to="/dashboard/jobs" onClick={handleNavClick} className={navLinkClasses}>Job Management</NavLink>
           <NavLink to="/dashboard/machines" onClick={handleNavClick} className={navLinkClasses}>Machine Management</NavLink>
+          <NavLink to="/dashboard/master-data" onClick={handleNavClick} className={navLinkClasses}>
+            Master Data
+          </NavLink>
+          <NavLink to="/dashboard/product-management" onClick={handleNavClick} className={navLinkClasses}>
+            Product Management
+          </NavLink>
         </nav>
 
         <div className="p-4 border-t border-gray-800 shrink-0 bg-gray-900">

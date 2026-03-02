@@ -1,7 +1,11 @@
 import { useState } from "react";
 import { useJobs } from "../hooks/useJobs";
 import JobModal from "../components/JobModal";
+import JobViewModal from "../components/JobViewModal"; 
 import { autoScheduleJob } from "../services/scheduler.service";
+// NEW IMPORTS FOR CLEARING SCHEDULE
+import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { db } from "../firebase/config";
 
 // Helper function to calculate how late a process is
 const getOverdueText = (scheduledEnd) => {
@@ -18,8 +22,9 @@ const getOverdueText = (scheduledEnd) => {
 export default function Jobs() {
   const { jobs, loading } = useJobs();
   const [isModalOpen, setModalOpen] = useState(false);
+  const [viewingJob, setViewingJob] = useState(null); 
   const [schedulingId, setSchedulingId] = useState(null);
-  const [activeTab, setActiveTab] = useState("all"); // 'all', 'pending', 'in_progress', 'completed', 'overdue'
+  const [activeTab, setActiveTab] = useState("all"); 
 
   const handleRunScheduler = async (job) => {
     setSchedulingId(job.id);
@@ -32,20 +37,52 @@ export default function Jobs() {
     }
   };
 
+  // --- NEW LOGIC: CLEAR SCHEDULE ---
+  const handleClearSchedule = async (job) => {
+    if (!window.confirm(`Are you sure you want to clear the schedule for JOB-${job.id.slice(0,8).toUpperCase()}? This will move it back to the pending queue so you can run the AI Scheduler again.`)) {
+      return;
+    }
+
+    try {
+      // 1. Loop through the sequence and reset any step that IS NOT already completed
+      const resetSequence = job.process_sequence.map(step => {
+        if (step.status === "completed") return step; // Leave finished steps alone
+        
+        return {
+          ...step,
+          status: "pending",
+          assigned_machine_id: null,
+          scheduled_start: null,
+          scheduled_end: null
+        };
+      });
+
+      // 2. Push the reset sequence to Firebase and change overall job status to pending
+      const jobRef = doc(db, "jobs", job.id);
+      await updateDoc(jobRef, {
+        status: "pending",
+        process_sequence: resetSequence,
+        updated_at: serverTimestamp()
+      });
+
+      alert("Schedule cleared! The job is back in the Pending queue.");
+    } catch (error) {
+      console.error("Error clearing schedule:", error);
+      alert("Failed to clear schedule: " + error.message);
+    }
+  };
+
   if (loading) return <div className="p-8 text-primary-500 animate-pulse font-medium">Loading production queue...</div>;
 
-  // --- Calculate Overdue Processes ---
   const now = new Date();
   const overdueProcesses = [];
   
   jobs.forEach(job => {
-    if (job.status === "completed") return; // Skip finished jobs
+    if (job.status === "completed") return; 
     
     job.process_sequence?.forEach(step => {
       if (step.status === "scheduled" && step.scheduled_end) {
-        // Convert Firestore Timestamp to JS Date
         const endTime = step.scheduled_end.toDate ? step.scheduled_end.toDate() : new Date(step.scheduled_end);
-        
         if (endTime < now) {
           overdueProcesses.push({
             jobId: job.id,
@@ -53,18 +90,17 @@ export default function Jobs() {
             processId: step.process_id,
             processName: step.process_name,
             scheduledEnd: endTime,
-            parentJob: job
+            parentJob: job 
           });
         }
       }
     });
   });
 
-  // --- Filter Standard Jobs ---
   const filteredJobs = jobs.filter(job => {
     if (activeTab === "all") return true;
     if (activeTab === "pending") return job.status === "pending";
-    if (activeTab === "in_progress") return job.status === "scheduled"; // In Progress = Scheduled in our engine
+    if (activeTab === "in_progress") return job.status === "scheduled";
     if (activeTab === "completed") return job.status === "completed";
     return true;
   });
@@ -86,7 +122,7 @@ export default function Jobs() {
         </button>
       </div>
 
-      {/* Tabs - Added overflow-x-auto and whitespace-nowrap for mobile scrolling */}
+      {/* Tabs */}
       <div className="flex items-center gap-6 border-b border-gray-800 mb-6 overflow-x-auto whitespace-nowrap no-scrollbar pb-1">
         {[
           { id: "all", label: "All" },
@@ -107,7 +143,7 @@ export default function Jobs() {
           </button>
         ))}
         
-        {/* Overdue Tab (Special Styling) */}
+        {/* Overdue Tab */}
         <button
           onClick={() => setActiveTab("overdue")}
           className={`pb-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
@@ -128,7 +164,7 @@ export default function Jobs() {
         </button>
       </div>
 
-      {/* Overdue Warning Banner (Only visible on Overdue tab) */}
+      {/* Overdue Warning Banner */}
       {activeTab === "overdue" && overdueProcesses.length > 0 && (
         <div className="bg-red-950/30 border border-red-900/50 rounded-lg p-4 mb-6 flex items-start gap-3 shrink-0">
           <svg className="w-5 h-5 text-red-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
@@ -143,8 +179,6 @@ export default function Jobs() {
 
       {/* Main Content Area */}
       <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden shadow-xl flex-1 flex flex-col">
-        
-        {/* ADDED DIV WRAPPER AROUND TABLES FOR MOBILE RESPONSIVENESS */}
         <div className="overflow-x-auto flex-1">
           
           {/* OVERDUE TABLE VIEW */}
@@ -167,7 +201,7 @@ export default function Jobs() {
                     <tr key={`${proc.jobId}-${proc.processId}-${idx}`} className="hover:bg-gray-800/30 transition-colors group">
                       <td className="py-4 px-6">
                         <div className="font-bold text-gray-200">JOB-{proc.jobId.slice(0, 8).toUpperCase()}</div>
-                        <div className="text-xs text-gray-500 mt-0.5">{proc.productName}</div>
+                        <div className="text-xs text-gray-500 mt-0.5">{proc.productName || 'Untitled Job'}</div>
                       </td>
                       <td className="py-4 px-6 text-gray-300 font-medium">{proc.processName}</td>
                       <td className="py-4 px-6 text-gray-400 flex items-center gap-2">
@@ -177,13 +211,22 @@ export default function Jobs() {
                       <td className="py-4 px-6 text-red-400 font-medium text-sm">{getOverdueText(proc.scheduledEnd)}</td>
                       <td className="py-4 px-6 text-right">
                         <div className="flex justify-end gap-3">
-                          <button className="text-gray-400 hover:text-white text-sm font-medium transition-colors px-3 py-1.5 border border-gray-700 rounded-md hover:bg-gray-800">
+                          <button 
+                            onClick={() => setViewingJob(proc.parentJob)}
+                            className="text-gray-400 hover:text-white text-sm font-medium transition-colors px-3 py-1.5 border border-gray-700 rounded-md hover:bg-gray-800"
+                          >
                             View Job
                           </button>
-                          <button className="text-red-400 hover:text-red-300 text-sm font-medium transition-colors px-3 py-1.5 border border-red-900/50 bg-red-500/10 rounded-md hover:bg-red-500/20 flex items-center gap-1.5">
+                          
+                          {/* THE CLEAR SCHEDULE BUTTON IS NOW HOOKED UP! */}
+                          <button 
+                            onClick={() => handleClearSchedule(proc.parentJob)}
+                            className="text-red-400 hover:text-red-300 text-sm font-medium transition-colors px-3 py-1.5 border border-red-900/50 bg-red-500/10 rounded-md hover:bg-red-500/20 flex items-center gap-1.5"
+                          >
                             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                             Clear Schedule
                           </button>
+
                         </div>
                       </td>
                     </tr>
@@ -193,7 +236,7 @@ export default function Jobs() {
             </table>
           ) : (
             
-            /* STANDARD TABLE VIEW (All, Pending, In Progress, Completed) */
+            /* STANDARD TABLE VIEW */
             <table className="w-full text-left border-collapse min-w-[1000px]">
               <thead>
                 <tr className="bg-gray-950/50 border-b border-gray-800 text-xs font-bold text-gray-400 uppercase tracking-wider">
@@ -216,7 +259,7 @@ export default function Jobs() {
                       <tr key={job.id} className="hover:bg-gray-800/30 transition-colors group">
                         <td className="py-4 px-6 font-mono text-sm font-bold text-gray-200">JOB-{job.id.slice(0, 6).toUpperCase()}</td>
                         <td className="py-4 px-6">
-                          <div className="font-medium text-gray-300">{job.product?.name}</div>
+                          <div className="font-medium text-gray-300">{job.title || job.product?.name || 'Untitled Job'}</div>
                           <div className="text-xs text-gray-500 mt-0.5">{job.product?.sku}</div>
                         </td>
                         <td className="py-4 px-6 text-gray-400">{job.quantity_target.toLocaleString()}</td>
@@ -229,6 +272,7 @@ export default function Jobs() {
                             {job.status === 'scheduled' ? 'In Progress' : job.status}
                           </span>
                         </td>
+                        
                         <td className="py-4 px-6">
                           <div className="flex gap-1.5">
                             {job.process_sequence?.map(step => (
@@ -236,20 +280,30 @@ export default function Jobs() {
                             ))}
                           </div>
                         </td>
+                        
                         <td className="py-4 px-6 text-right">
-                          {job.status !== 'completed' && (
+                          <div className="flex justify-end items-center gap-2">
                             <button 
-                              onClick={() => handleRunScheduler(job)}
-                              disabled={schedulingId === job.id || isFullyScheduled}
-                              className={`text-sm font-medium transition-all px-4 py-1.5 rounded-md border ${
-                                isFullyScheduled 
-                                  ? 'border-gray-700 text-gray-600 cursor-not-allowed bg-gray-800/50' 
-                                  : 'border-primary-500/50 text-primary-400 hover:bg-primary-500/10 hover:border-primary-400'
-                              }`}
+                              onClick={() => setViewingJob(job)}
+                              className="text-gray-400 hover:text-white text-sm font-medium transition-colors px-3 py-1.5 border border-gray-700 rounded-md hover:bg-gray-800"
                             >
-                              {schedulingId === job.id ? 'Thinking...' : isFullyScheduled ? 'Assigned' : 'Run AI Scheduler'}
+                              View
                             </button>
-                          )}
+                            
+                            {job.status !== 'completed' && (
+                              <button 
+                                onClick={() => handleRunScheduler(job)}
+                                disabled={schedulingId === job.id || isFullyScheduled}
+                                className={`text-sm font-medium transition-all px-4 py-1.5 rounded-md border ${
+                                  isFullyScheduled 
+                                    ? 'border-gray-700 text-gray-600 cursor-not-allowed bg-gray-800/50' 
+                                    : 'border-primary-500/50 text-primary-400 hover:bg-primary-500/10 hover:border-primary-400'
+                                }`}
+                              >
+                                {schedulingId === job.id ? 'Thinking...' : isFullyScheduled ? 'Assigned' : 'Run AI'}
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -263,6 +317,8 @@ export default function Jobs() {
       </div>
 
       {isModalOpen && <JobModal onClose={() => setModalOpen(false)} />}
+      
+      <JobViewModal job={viewingJob} onClose={() => setViewingJob(null)} />
     </div>
   );
 }
