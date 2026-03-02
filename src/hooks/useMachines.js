@@ -2,26 +2,28 @@ import { useState, useEffect } from "react";
 import { collection, onSnapshot, query, orderBy } from "firebase/firestore";
 import { db } from "../firebase/config";
 
-export const useMachines = () => {
+export function useMachines() {
   const [machines, setMachines] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
 
   useEffect(() => {
-    const q = query(collection(db, "machines"), orderBy("createdAt", "desc"));
-    
+    // 1. Point exactly to the "machines" collection and order by newest
+    const q = query(collection(db, "machines"), orderBy("created_at", "desc"));
+
+    // 2. Listen for real-time changes
     const unsubscribe = onSnapshot(q, 
       (snapshot) => {
-        const machineData = snapshot.docs.map(doc => ({
+        const machineList = snapshot.docs.map(doc => ({
           id: doc.id,
           ...doc.data()
         }));
-        setMachines(machineData);
+        setMachines(machineList);
         setLoading(false);
       },
-      (err) => {
-        console.error("Error fetching machines:", err);
-        setError(err.message);
+      (error) => {
+        // 3. THIS IS THE CRUCIAL PART! 
+        // If Firebase blocks the read, it will now loudly complain in your console.
+        console.error("🔥 Firebase Read Error in useMachines:", error.message);
         setLoading(false);
       }
     );
@@ -29,5 +31,5 @@ export const useMachines = () => {
     return () => unsubscribe();
   }, []);
 
-  return { machines, loading, error };
-};
+  return { machines, loading };
+}
