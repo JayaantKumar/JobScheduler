@@ -8,6 +8,7 @@ import Scheduler from "../pages/Scheduler";
 import DashboardHome from "../pages/DashboardHome";
 import Unauthorized from "../pages/Unauthorized";
 import Analytics from "../pages/Analytics";
+import SavedSchedules from "../pages/SavedSchedules";
 
 const ProtectedRoute = ({ children, requiredRole }) => {
   const { user, role } = useAuth();
@@ -50,6 +51,7 @@ export const AppRouter = () => {
           <Route path="machines" element={<Machines />} />
           <Route path="jobs" element={<Jobs />} />
           <Route path="scheduler" element={<Scheduler />} />
+          <Route path="saved-schedules" element={<SavedSchedules />} />
         </Route>
         
         {/* Catch-all redirects unknown URLs to the dashboard */}
