@@ -1,171 +1,148 @@
-import { doc, collection, writeBatch, getDoc, getDocs, query, where } from "firebase/firestore";
+import { collection, getDocs, doc, writeBatch, Timestamp } from "firebase/firestore";
 import { db } from "../firebase/config";
 
-/**
- * CORE ENGINE: Batched Write for Job Scheduling
- * Updates Job array, creates Schedule Block, and updates Machine Load simultaneously.
- */
-export const executeLiveSchedule = async (
-  jobId, 
-  machineId, 
-  operatorId, 
-  processStep, // The specific step object from the job's process_sequence
-  startTime, 
-  endTime,
-  newMachineLoad
-) => {
-  const batch = writeBatch(db);
-
-  // 1. References
-  const jobRef = doc(db, "jobs", jobId);
-  const machineRef = doc(db, "machines", machineId);
-  const newBlockRef = doc(collection(db, "schedule_blocks")); // Auto-generates ID
-
-  // 2. Fetch current job to update the specific process_sequence array
-  const jobSnap = await getDoc(jobRef);
-  if (!jobSnap.exists()) throw new Error("Job not found");
-  
-  const jobData = jobSnap.data();
-  const updatedSequence = jobData.process_sequence.map(step => {
-    if (step.process_id === processStep.process_id) {
-      return {
-        ...step,
-        status: "scheduled",
-        assigned_machine_id: machineId,
-        assigned_operator_id: operatorId,
-        scheduled_start: startTime,
-        scheduled_end: endTime
-      };
-    }
-    return step;
-  });
-
-  // 3. Queue Batch Operations
-  
-  // Op A: Update the Job's sequence and status
-  batch.update(jobRef, { 
-    process_sequence: updatedSequence,
-    status: "scheduled",
-    updated_at: new Date()
-  });
-
-  // Op B: Create the flat Schedule Block
-  batch.set(newBlockRef, {
-    machine_id: machineId,
-    job_id: jobId,
-    operator_id: operatorId,
-    process_id: processStep.process_id,
-    start_time: startTime,
-    end_time: endTime,
-    status: "planned",
-    yield_actual: 0
-  });
-
-  // Op C: Update the Machine's load capacity
-  batch.update(machineRef, {
-    currentLoad: newMachineLoad, // Note: adjusted to match your completeProcessBlock naming
-    updated_at: new Date()
-  });
-
-  // 4. Commit all or nothing
-  await batch.commit();
-  console.log("Batched Schedule Execution Successful!");
-};
-
-/**
- * The CORE ENGINE Allocation Algorithm
- * Finds the next pending process, assigns an optimal machine, and calculates time slots.
- */
 export const autoScheduleJob = async (job) => {
-  // 1. Find the next pending step in the sequence
-  const nextStep = job.process_sequence.find(step => step.status === "pending");
-  if (!nextStep) throw new Error("No pending processes left to schedule for this job.");
-
-  // 2. Fetch all "Online" machines
-  // Note: In a full app, you would add: where("supported_processes", "array-contains", nextStep.process_id)
-  const machinesRef = collection(db, "machines");
-  const q = query(machinesRef, where("status", "==", "Online"));
-  const machineSnap = await getDocs(q);
+  // 1. Fetch all machines to see who is online
+  const machinesSnap = await getDocs(collection(db, "machines"));
+  const allMachines = machinesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
   
-  if (machineSnap.empty) throw new Error("No online machines available to take this job.");
-  
-  const availableMachines = machineSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  // We only want to schedule on machines that are actually running
+  const onlineMachines = allMachines.filter(m => m.status === "Online");
 
-  // 3. Load Balancing: Pick the machine with the lowest current load
-  const optimalMachine = availableMachines.sort((a, b) => (a.currentLoad || 0) - (b.currentLoad || 0))[0];
+  // 2. Fetch existing schedule blocks to avoid double-booking (used for advanced logic later)
+  const blocksSnap = await getDocs(collection(db, "schedule_blocks"));
+  const allBlocks = blocksSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-  // 4. Time Calculation (Simulated Logic for Gantt Chart)
-  // We want the block to show up nicely on today's timeline (between 8 AM and 8 PM)
-  const today = new Date();
-  
-  // Pick a random start hour between 8 AM and 2 PM (14:00)
-  const startHour = Math.floor(Math.random() * 6) + 8; 
-  const startTime = new Date(today.getFullYear(), today.getMonth(), today.getDate(), startHour, 0, 0);
-  
-  // Calculate duration based on quantity (e.g., 1 hour per 2,500 units, max 4 hours)
-  const durationHours = Math.min(4, Math.max(1, job.quantity_target / 2500));
-  const endTime = new Date(startTime.getTime() + (durationHours * 60 * 60 * 1000));
+  const batch = writeBatch(db);
+  let currentTime = new Date(); // Start scheduling from right now
 
-  // Calculate new simulated machine load (add 15%)
-  const newLoad = Math.min(100, (optimalMachine.currentLoad || 0) + 15);
+  const updatedSequence = [];
 
-  // 5. Fire the Batched Write!
-  await executeLiveSchedule(
-    job.id,
-    optimalMachine.id,
-    "op_auto_01", // Simulated operator ID
-    nextStep,
-    startTime,
-    endTime,
-    newLoad
-  );
+  for (const step of job.process_sequence) {
+    if (step.status === "completed") {
+      updatedSequence.push(step);
+      continue; // Skip steps that are already done
+    }
+
+    // ==========================================
+    // 🧠 THE MAGIC: MACHINE SELECTION LOGIC
+    // ==========================================
+    let selectedMachine = null;
+
+    // SCENARIO A: The Manager Forced a Specific Machine (Point L)
+    if (step.assigned_machine_id) {
+      selectedMachine = allMachines.find(m => m.id === step.assigned_machine_id);
+      
+      // Safety Check: What if they assigned it, but it broke down yesterday?
+      if (!selectedMachine || selectedMachine.status !== "Online") {
+        throw new Error(`The pre-assigned machine for ${step.process_name} (${selectedMachine?.name || 'Unknown'}) is currently Offline or in Maintenance. Please clear the schedule or assign a new machine.`);
+      }
+    } 
+    // SCENARIO B: Let the AI Decide (Load Balancing)
+    else {
+      // Find all online machines that match this process type
+      const capableMachines = onlineMachines.filter(m => 
+        m.type?.toLowerCase().includes(step.process_name.toLowerCase()) || 
+        step.process_name.toLowerCase().includes(m.type?.toLowerCase())
+      );
+
+      if (capableMachines.length === 0) {
+        throw new Error(`No online machines available to handle process: ${step.process_name}. Please add a machine or bring one online.`);
+      }
+
+      // AI Decision: Pick the capable machine with the FEWEST current jobs assigned to it
+      selectedMachine = capableMachines.sort((a, b) => {
+        const aJobs = allBlocks.filter(blk => blk.machine_id === a.id).length;
+        const bJobs = allBlocks.filter(blk => blk.machine_id === b.id).length;
+        return aJobs - bJobs;
+      })[0];
+    }
+
+    // ==========================================
+    // ⏱️ CALCULATE THE TIMESTAMPS
+    // ==========================================
+    const setupMins = parseInt(step.setup_mins) || 0;
+    const runMins = parseInt(step.run_mins) || 0;
+    const holdMins = parseInt(step.hold) || 0; 
+    const totalDurationMins = setupMins + runMins + holdMins;
+
+    // Ensure we don't accidentally schedule in the past
+    const now = new Date();
+    if (currentTime < now) currentTime = now;
+
+    const startTime = new Date(currentTime);
+    const endTime = new Date(startTime.getTime() + totalDurationMins * 60000); // Add minutes
+
+    // Advance the timeline clock so the NEXT step starts exactly when this step finishes
+    currentTime = new Date(endTime);
+
+    // ==========================================
+    // 💾 SAVE TO FIREBASE DATABASE
+    // ==========================================
+    
+    // Create the visual block for the Gantt Chart (Live Scheduler)
+    const blockRef = doc(collection(db, "schedule_blocks"));
+    batch.set(blockRef, {
+      job_id: job.id,
+      process_id: step.process_name,
+      machine_id: selectedMachine.id,
+      start_time: Timestamp.fromDate(startTime),
+      end_time: Timestamp.fromDate(endTime),
+      status: "scheduled",
+      created_at: Timestamp.now()
+    });
+
+    // Update the Job Card's sequence with the new times and the chosen machine
+    updatedSequence.push({
+      ...step,
+      status: "scheduled",
+      assigned_machine_id: selectedMachine.id,
+      assigned_machine_name: selectedMachine.name,
+      scheduled_start: Timestamp.fromDate(startTime),
+      scheduled_end: Timestamp.fromDate(endTime)
+    });
+  }
+
+  // Finally, update the main Job document from "Pending" to "Scheduled"
+  const jobRef = doc(db, "jobs", job.id);
+  batch.update(jobRef, {
+    status: "scheduled",
+    process_sequence: updatedSequence,
+    updated_at: Timestamp.now()
+  });
+
+  // Push all changes to Firebase at the exact same time
+  await batch.commit();
 };
 
-/**
- * CORE ENGINE: Close the Loop
- * Marks a block as completed, frees up machine capacity, and updates the Job.
- */
-export const completeProcessBlock = async (block, machine, job) => {
+// ==========================================
+// ✅ FUNCTION TO MARK A STEP AS COMPLETED 
+// (Used in your Live Scheduler Gantt Chart)
+// ==========================================
+export const completeProcessBlock = async (block, machine, parentJob) => {
   const batch = writeBatch(db);
-
-  // 1. References
+  
+  // 1. Mark the visual block as completed
   const blockRef = doc(db, "schedule_blocks", block.id);
-  const machineRef = doc(db, "machines", machine.id);
-  const jobRef = doc(db, "jobs", job.id);
+  batch.update(blockRef, { status: "completed" });
 
-  // 2. Free up the machine load (Subtract the 15% we added earlier, min 0)
-  const newLoad = Math.max(0, (machine.currentLoad || 0) - 15);
-  batch.update(machineRef, {
-    currentLoad: newLoad,
-    updated_at: new Date()
-  });
-
-  // 3. Mark the block as completed
-  batch.update(blockRef, {
-    status: "completed",
-    updated_at: new Date()
-  });
-
-  // 4. Update the Job's sequence
-  let allStepsCompleted = true;
-  const updatedSequence = job.process_sequence.map(step => {
-    if (step.process_id === block.process_id) {
-      step.status = "completed"; // Mark this specific step green
-    }
-    if (step.status !== "completed") {
-      allStepsCompleted = false; // If any step isn't complete, the job isn't complete
+  // 2. Mark the specific step inside the Job Card as completed
+  const updatedSequence = parentJob.process_sequence.map(step => {
+    if (step.process_name === block.process_id && step.assigned_machine_id === machine.id) {
+      return { ...step, status: "completed" };
     }
     return step;
   });
 
-  // Update Job document
+  // Check if ALL steps are now completed
+  const allDone = updatedSequence.every(s => s.status === "completed");
+
+  const jobRef = doc(db, "jobs", parentJob.id);
   batch.update(jobRef, {
     process_sequence: updatedSequence,
-    status: allStepsCompleted ? "completed" : "pending", // If done, complete job. Otherwise, back to pending for the next step!
-    updated_at: new Date()
+    status: allDone ? "completed" : parentJob.status,
+    updated_at: Timestamp.now()
   });
 
-  // 5. Commit!
   await batch.commit();
-  console.log("Process completed and capacity freed!");
 };
