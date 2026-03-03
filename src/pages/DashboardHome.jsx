@@ -1,178 +1,197 @@
-import { useMachines } from "../hooks/useMachines";
+import { useState, useMemo } from "react";
 import { useJobs } from "../hooks/useJobs";
-// import { useScheduleBlocks } from "../hooks/useScheduleBlocks"; // Not strictly needed for this specific UI
+
+// --- DATE MATH HELPERS ---
+const parseDate = (val) => {
+  if (!val) return new Date();
+  return val.toDate ? val.toDate() : new Date(val);
+};
+
+const isToday = (dateObj) => {
+  const d = parseDate(dateObj);
+  const today = new Date();
+  return d.getDate() === today.getDate() && d.getMonth() === today.getMonth() && d.getFullYear() === today.getFullYear();
+};
+
+const isThisWeek = (dateObj) => {
+  const d = parseDate(dateObj);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dayOfWeek = today.getDay(); 
+  const daysUntilEndOfWeek = dayOfWeek === 0 ? 0 : 7 - dayOfWeek; // Assuming Sunday is end of week
+  const endOfWeek = new Date(today);
+  endOfWeek.setDate(today.getDate() + daysUntilEndOfWeek);
+  endOfWeek.setHours(23, 59, 59, 999);
+  
+  return d >= today && d <= endOfWeek;
+};
+
+// Generates an array of 7 dates for Monday-Sunday of NEXT week
+const getNextWeekDays = () => {
+  const now = new Date();
+  const dayOfWeek = now.getDay();
+  const daysUntilNextMonday = dayOfWeek === 0 ? 1 : 8 - dayOfWeek;
+  const nextMonday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + daysUntilNextMonday);
+
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(nextMonday);
+    d.setDate(nextMonday.getDate() + i);
+    return d;
+  });
+};
 
 export default function DashboardHome() {
-  const { machines, loading: mLoading } = useMachines();
-  const { jobs, loading: jLoading } = useJobs();
-
-  if (mLoading || jLoading) {
-    return <div className="p-8 text-primary-500 animate-pulse font-medium">Loading command center...</div>;
-  }
-
-  // --- Metric Calculations ---
+  const { jobs, loading } = useJobs();
   
-  // 1. Jobs Stats
-  const activeJobs = jobs.filter(j => j.status === 'pending' || j.status === 'scheduled');
-  const inProgressCount = activeJobs.filter(j => j.status === 'scheduled').length;
-  const completedJobs = jobs.filter(j => j.status === 'completed');
-  
-  // 2. Machine Stats
-  const onlineMachinesCount = machines.filter(m => m.status === 'Online').length;
-  const avgLoad = machines.length > 0 
-    ? Math.round(machines.reduce((acc, m) => acc + (m.currentLoad || 0), 0) / machines.length) 
-    : 0;
-    
-  // 3. Alerts (Simulated by checking for offline machines or high load)
-  const offlineMachines = machines.filter(m => m.status === 'Offline');
-  const overloadedMachines = machines.filter(m => (m.currentLoad || 0) > 90);
-  const criticalAlertsCount = offlineMachines.length + overloadedMachines.length;
+  const nextWeekDays = useMemo(() => getNextWeekDays(), []);
+  // Default selection to next week's Monday (YYYY-MM-DD)
+  const [selectedNextDay, setSelectedNextDay] = useState(nextWeekDays[0].toISOString().split('T')[0]); 
 
-  // 4. High Priority Jobs (Sort active jobs by deadline, grab the closest 3)
-  const highPriorityJobs = [...activeJobs]
-    .sort((a, b) => new Date(a.deadline) - new Date(b.deadline))
-    .slice(0, 3);
+  if (loading) return <div className="p-8 text-primary-500 animate-pulse font-medium">Loading Dashboard Data...</div>;
+
+  // --- KPI CALCULATIONS ---
+  const now = new Date();
+  
+  // 1. Active Jobs (Anything not completed)
+  const activeJobs = jobs.filter(j => j.status !== "completed");
+  
+  // 2. Completed Today (Jobs finished today)
+  const completedToday = jobs.filter(j => j.status === "completed" && isToday(j.updated_at));
+  
+  // 3. Completing This Week (Active jobs with deadlines falling this week)
+  const completingThisWeek = activeJobs.filter(j => isThisWeek(j.deadline));
+  
+  // 4. On-going Jobs (Jobs explicitly scheduled/in progress)
+  const ongoingJobs = jobs.filter(j => j.status === "scheduled");
+  
+  // 5. Behind Schedule / Overdue (Active jobs whose deadline is in the past)
+  const overdueJobs = activeJobs.filter(j => parseDate(j.deadline) < now);
+
+  // 6. Completing Next Week (Filter active jobs matching the currently selected day)
+  const jobsCompletingSelectedDay = activeJobs.filter(j => {
+    const deadlineDate = parseDate(j.deadline).toISOString().split('T')[0];
+    return deadlineDate === selectedNextDay;
+  });
 
   return (
-    <div className="max-w-[1600px] mx-auto p-6">
-      {/* Header matching the screenshot */}
-      <div className="mb-8">
-        <h2 className="text-3xl font-bold text-white tracking-tight">Dashboard</h2>
-        <p className="text-gray-400 mt-1">A high-level overview of your production floor.</p>
+    <div className="max-w-[1600px] mx-auto p-6 h-full flex flex-col space-y-8">
+      
+      {/* Header */}
+      <div>
+        <h2 className="text-3xl font-bold text-white tracking-tight">Factory Dashboard</h2>
+        <p className="text-gray-400 mt-1">High-level overview of current production targets.</p>
       </div>
 
-      {/* KPI Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+      {/* KPI GRID */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
         
-        {/* Card 1: Active Jobs */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 flex items-center gap-5 shadow-lg">
-          <div className="w-14 h-14 rounded-xl bg-purple-500/10 text-purple-400 flex items-center justify-center shrink-0 border border-purple-500/20">
-            <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
-            </svg>
-          </div>
-          <div>
-            <div className="text-gray-400 text-sm font-medium mb-0.5">Active Jobs</div>
-            <div className="text-3xl font-bold text-white">{activeJobs.length}</div>
-            <div className="text-xs text-gray-500 mt-1">{inProgressCount} in progress</div>
-          </div>
+        {/* 1. Active Jobs */}
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 shadow-lg flex flex-col">
+          <span className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">Active Jobs</span>
+          <span className="text-3xl font-black text-white">{activeJobs.length}</span>
         </div>
 
-        {/* Card 2: Avg Machine Utilization */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 flex items-center gap-5 shadow-lg">
-          <div className="w-14 h-14 rounded-xl bg-blue-500/10 text-blue-400 flex items-center justify-center shrink-0 border border-blue-500/20">
-            <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
-            </svg>
-          </div>
-          <div>
-            <div className="text-gray-400 text-sm font-medium mb-0.5">Avg. Machine Utilization</div>
-            <div className="text-3xl font-bold text-white">{avgLoad}%</div>
-            <div className="text-xs text-gray-500 mt-1">{onlineMachinesCount} machines online</div>
-          </div>
+        {/* 4. On-going Jobs */}
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 shadow-lg flex flex-col">
+          <span className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">On-going Jobs</span>
+          <span className="text-3xl font-black text-blue-400">{ongoingJobs.length}</span>
         </div>
 
-        {/* Card 3: Completed Today */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 flex items-center gap-5 shadow-lg">
-          <div className="w-14 h-14 rounded-xl bg-green-500/10 text-green-400 flex items-center justify-center shrink-0 border border-green-500/20">
-            <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          </div>
-          <div>
-            <div className="text-gray-400 text-sm font-medium mb-0.5">Completed Today</div>
-            <div className="text-3xl font-bold text-white">{completedJobs.length}</div>
-            <div className="text-xs text-gray-500 mt-1">Jobs finished since midnight</div>
-          </div>
+        {/* 2. Completed Today */}
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 shadow-lg flex flex-col">
+          <span className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">Completed Today</span>
+          <span className="text-3xl font-black text-green-400">{completedToday.length}</span>
         </div>
 
-        {/* Card 4: Critical Alerts */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 flex items-center gap-5 shadow-lg">
-          <div className="w-14 h-14 rounded-xl bg-red-500/10 text-red-400 flex items-center justify-center shrink-0 border border-red-500/20">
-            <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-          </div>
-          <div>
-            <div className="text-gray-400 text-sm font-medium mb-0.5">Critical Alerts</div>
-            <div className="text-3xl font-bold text-white">{criticalAlertsCount}</div>
-            <div className="text-xs text-gray-500 mt-1">Machine breakdowns</div>
-          </div>
+        {/* 3. Completing This Week */}
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 shadow-lg flex flex-col">
+          <span className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">Completing This Wk</span>
+          <span className="text-3xl font-black text-primary-400">{completingThisWeek.length}</span>
+        </div>
+
+        {/* 5. Behind Schedule / Overdue */}
+        <div className="bg-red-950/20 border border-red-900/50 rounded-xl p-5 shadow-lg flex flex-col">
+          <span className="text-red-400/80 text-xs font-bold uppercase tracking-wider mb-1">Behind / Overdue</span>
+          <span className="text-3xl font-black text-red-500">{overdueJobs.length}</span>
         </div>
 
       </div>
 
-      {/* Bottom Panels Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
-        
-        {/* Recent Alerts Panel */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 shadow-lg flex flex-col">
-          <h3 className="text-lg font-bold text-white mb-6">Recent Alerts</h3>
+      {/* NEXT WEEK PLANNER (Requirement #6) */}
+      <div className="bg-gray-900 border border-gray-800 rounded-xl shadow-xl overflow-hidden flex flex-col">
+        <div className="p-5 border-b border-gray-800 bg-[#151724]">
+          <h3 className="text-lg font-bold text-white mb-4">Completing Next Week</h3>
           
-          <div className="flex-1 flex flex-col gap-3">
-            {criticalAlertsCount === 0 ? (
-              <div className="flex-1 flex items-center justify-center text-gray-500 text-sm italic min-h-[150px]">
-                No active alerts. Factory is operating normally.
-              </div>
-            ) : (
-              <>
-                {offlineMachines.map(m => (
-                  <div key={`off-${m.id}`} className="bg-gray-950 border border-red-900/30 border-l-2 border-l-red-500 rounded-lg p-4 flex justify-between items-center">
-                    <div>
-                      <div className="text-white font-medium text-sm">{m.name} is Offline</div>
-                      <div className="text-gray-500 text-xs mt-0.5">Requires maintenance check</div>
-                    </div>
-                    <span className="text-xs font-bold text-red-400 bg-red-500/10 px-2 py-1 rounded">Urgent</span>
-                  </div>
-                ))}
-                {overloadedMachines.map(m => (
-                  <div key={`load-${m.id}`} className="bg-gray-950 border border-orange-900/30 border-l-2 border-l-orange-500 rounded-lg p-4 flex justify-between items-center">
-                    <div>
-                      <div className="text-white font-medium text-sm">{m.name} Overloaded</div>
-                      <div className="text-gray-500 text-xs mt-0.5">Current load at {m.currentLoad}%</div>
-                    </div>
-                    <span className="text-xs font-bold text-orange-400 bg-orange-500/10 px-2 py-1 rounded">Warning</span>
-                  </div>
-                ))}
-              </>
-            )}
+          {/* Day Selector Row */}
+          <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
+            {nextWeekDays.map((dateObj) => {
+              const dateString = dateObj.toISOString().split('T')[0];
+              const dayName = dateObj.toLocaleDateString("en-US", { weekday: 'short' });
+              const dayNum = dateObj.getDate();
+              const isSelected = selectedNextDay === dateString;
+
+              return (
+                <button
+                  key={dateString}
+                  onClick={() => setSelectedNextDay(dateString)}
+                  className={`flex flex-col items-center justify-center min-w-[80px] p-3 rounded-lg border transition-all ${
+                    isSelected 
+                      ? 'bg-primary-600 border-primary-500 text-white shadow-lg shadow-primary-500/20' 
+                      : 'bg-gray-950 border-gray-800 text-gray-400 hover:bg-gray-800 hover:text-white'
+                  }`}
+                >
+                  <span className="text-xs uppercase font-bold tracking-wider">{dayName}</span>
+                  <span className="text-2xl font-black mt-1">{dayNum}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
 
-        {/* High Priority Jobs Panel */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 shadow-lg flex flex-col">
-          <h3 className="text-lg font-bold text-white mb-6">High Priority Jobs</h3>
-          
-          <div className="flex-1 flex flex-col gap-3">
-            {highPriorityJobs.length === 0 ? (
-              <div className="flex-1 flex items-center justify-center text-gray-500 text-sm italic min-h-[150px]">
-                No pending or scheduled jobs in the queue.
-              </div>
-            ) : (
-              highPriorityJobs.map(job => (
-                <div key={job.id} className="bg-gray-950 border border-gray-800 rounded-lg p-4 transition-colors hover:border-gray-700">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <div className="text-white font-medium">
-                        {job.product?.name} <span className="text-red-400 text-xs ml-1 font-mono">(JOB-{job.id.slice(0,6).toUpperCase()})</span>
-                      </div>
-                      <div className="text-gray-500 text-xs mt-1">
-                        Due: {new Date(job.deadline).toLocaleDateString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit' })}
-                      </div>
-                    </div>
-                    <span className={`text-[10px] px-2 py-1 rounded-full uppercase font-bold tracking-wider ${
+        {/* Selected Day Job List */}
+        <div className="p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h4 className="text-sm font-bold text-gray-400 uppercase tracking-wider">
+              Targets for {new Date(selectedNextDay).toLocaleDateString("en-US", { weekday: 'long', month: 'short', day: 'numeric'})}
+            </h4>
+            <span className="bg-gray-800 text-white px-3 py-1 rounded-full text-xs font-bold">
+              {jobsCompletingSelectedDay.length} Jobs
+            </span>
+          </div>
+
+          {jobsCompletingSelectedDay.length === 0 ? (
+            <div className="py-12 text-center flex flex-col items-center justify-center text-gray-500 border border-dashed border-gray-800 rounded-lg">
+              <svg className="w-12 h-12 mb-3 text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
+              No deadlines fall on this day.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {jobsCompletingSelectedDay.map(job => (
+                <div key={job.id} className="bg-gray-950 border border-gray-800 rounded-lg p-4 hover:border-gray-600 transition-colors">
+                  <div className="flex justify-between items-start mb-2">
+                    <span className="text-xs font-mono text-primary-400 bg-primary-500/10 px-2 py-0.5 rounded uppercase font-bold">
+                      JOB-{job.id.slice(0,6)}
+                    </span>
+                    <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${
                       job.status === 'scheduled' ? 'bg-blue-500/10 text-blue-400' : 'bg-yellow-500/10 text-yellow-400'
                     }`}>
                       {job.status}
                     </span>
                   </div>
+                  <h5 className="font-bold text-white truncate">{job.title || job.product?.name}</h5>
+                  <p className="text-xs text-gray-500 mt-1">{job.customer}</p>
+                  
+                  <div className="mt-4 pt-3 border-t border-gray-800 flex justify-between items-center text-sm">
+                    <span className="text-gray-400">Target Qty:</span>
+                    <span className="text-white font-bold">{job.quantity_target?.toLocaleString()}</span>
+                  </div>
                 </div>
-              ))
-            )}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
-
       </div>
+
     </div>
   );
 }

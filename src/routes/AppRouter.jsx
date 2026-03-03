@@ -4,7 +4,6 @@ import AdminLayout from "../layouts/AdminLayout";
 import Login from "../pages/Login";
 import Machines from "../pages/Machines";
 import Jobs from "../pages/Jobs";
-import Scheduler from "../pages/Scheduler";
 import DashboardHome from "../pages/DashboardHome";
 import Unauthorized from "../pages/Unauthorized";
 import Analytics from "../pages/Analytics";
@@ -54,7 +53,6 @@ export const AppRouter = () => {
           {/* Add the Master Data route here */}
       <Route path="master-data" element={<MasterData />} />
           <Route path="jobs" element={<Jobs />} />
-          <Route path="scheduler" element={<Scheduler />} />
           <Route path="saved-schedules" element={<SavedSchedules />} />
           <Route path="product-management" element={<ProductManagement />} />
         </Route>

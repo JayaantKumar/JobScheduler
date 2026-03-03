@@ -42,7 +42,6 @@ export default function AdminLayout() {
         <nav className="flex-1 px-4 space-y-2 mt-2 overflow-y-auto pb-4">
           <NavLink to="/dashboard" end onClick={handleNavClick} className={navLinkClasses}>Dashboard</NavLink>
           <NavLink to="/dashboard/analytics" onClick={handleNavClick} className={navLinkClasses}>Analytics</NavLink>
-          <NavLink to="/dashboard/scheduler" onClick={handleNavClick} className={navLinkClasses}>Live Scheduler</NavLink>
           <NavLink to="/dashboard/saved-schedules" onClick={handleNavClick} className={navLinkClasses}>Saved Schedules</NavLink>
           <NavLink to="/dashboard/jobs" onClick={handleNavClick} className={navLinkClasses}>Job Management</NavLink>
           <NavLink to="/dashboard/machines" onClick={handleNavClick} className={navLinkClasses}>Machine Management</NavLink>
