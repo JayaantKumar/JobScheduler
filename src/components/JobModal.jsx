@@ -1,30 +1,38 @@
 import { useState } from "react";
 import { addJob } from "../services/job.service";
+import { useCustomers } from "../hooks/useCustomers";
+import { useProducts } from "../hooks/useProducts";
 
-// Dummy Master Data for Dropdowns
-const CUSTOMERS = ["Acme Corp", "Global Brands", "Local Retailer", "PrintShop Co"];
-const TEMPLATES = ["Standard Box", "Premium Rigid Box", "Flyer Batch", "Custom Packaging"];
+// Master list of processes
 const PROCESS_LIST = [
   { id: "proc_cutting", name: "Sheet Cutting" },
-  { id: "proc_printing", name: "UV Printing" },
+  { id: "proc_printing_uv", name: "UV Printing" },
+  { id: "proc_printing_offset", name: "Offset Printing" },
   { id: "proc_die_cut", name: "Die Cutting" },
-  { id: "proc_gluing", name: "Automatic Gluing" },
+  { id: "proc_gluing_auto", name: "Automatic Gluing" },
+  { id: "proc_gluing_manual", name: "Manual Gluing" },
   { id: "proc_pasting", name: "Side Pasting" },
-  { id: "proc_sorting", name: "Sorting" }
+  { id: "proc_sorting", name: "Sorting" },
+  { id: "proc_packing", name: "Packing" }
 ];
 
 export default function JobModal({ onClose }) {
   const [loading, setLoading] = useState(false);
+  
+  // Fetch Master Data
+  const { customers, loading: custLoading } = useCustomers();
+  const { products, loading: prodLoading } = useProducts();
 
   // --- SECTION 1: Job Information ---
   const [jobTitle, setJobTitle] = useState("");
+  const [customer, setCustomer] = useState("");
+  const [selectedProductId, setSelectedProductId] = useState(""); 
   const [productName, setProductName] = useState("");
   const [productCode, setProductCode] = useState("");
-  const [customer, setCustomer] = useState("");
   const [quantity, setQuantity] = useState("");
   const [productSize, setProductSize] = useState("");
   const [dueDate, setDueDate] = useState("");
-  const [template, setTemplate] = useState("");
+  const [template, setTemplate] = useState(""); // Captures the product category
 
   // --- SECTION 2: Sheet & Material ---
   const [sheetSize, setSheetSize] = useState("");
@@ -41,41 +49,58 @@ export default function JobModal({ onClose }) {
   const [artworkStatus, setArtworkStatus] = useState("Pending");
   const [artworkVersion, setArtworkVersion] = useState("v1.0");
 
-  // --- PROCESS ROUTING (Dynamic Array) ---
+  // --- PROCESS ROUTING & NOTES ---
   const [processes, setProcesses] = useState([
-    { id: Date.now(), process_id: "", setup: "15", run: "120", hold: "", inputQty: "", outputQty: "", remarks: "" }
+    { id: Date.now(), process_id: "", setup: "15", run: "120", hold: "0", inputQty: "", outputQty: "", remarks: "" }
   ]);
   const [jobNotes, setJobNotes] = useState("");
 
-  // Dynamic Process Handlers
-  const handleAddProcess = () => {
-    setProcesses([...processes, { id: Date.now(), process_id: "", setup: "", run: "", hold: "", inputQty: "", outputQty: "", remarks: "" }]);
-  };
+  // --- BULLETPROOF AUTO-FILL LOGIC ---
+  const handleProductChange = (e) => {
+    const prodId = e.target.value;
+    setSelectedProductId(prodId);
 
-  const handleRemoveProcess = (idToRemove) => {
-    if (processes.length > 1) {
-      setProcesses(processes.filter(p => p.id !== idToRemove));
+    if (!prodId) return;
+
+    const prod = products.find(p => p.id === prodId);
+    if (prod) {
+      setJobTitle(`${prod.name} - Run`);
+      setProductName(prod.name || "");
+      setProductCode(prod.sku || "");
+      setTemplate(prod.type || ""); 
+      setProductSize(prod.size || "");
+      setMaterialType(prod.paperType || "");
+      setSheetGsm(prod.paperGsm || "");
+
+      if (prod.default_sequence && prod.default_sequence.length > 0) {
+        const autoBuiltProcesses = prod.default_sequence.map((step, index) => {
+          const matchedProcess = PROCESS_LIST.find(pl => pl.name === step.process_name);
+          return {
+            id: Date.now() + index,
+            process_id: matchedProcess ? matchedProcess.id : "",
+            setup: "15", 
+            run: "120", 
+            hold: "0",
+            inputQty: quantity || "",
+            outputQty: quantity || "",
+            remarks: ""
+          };
+        });
+        setProcesses(autoBuiltProcesses);
+      } else {
+        setProcesses([{ id: Date.now(), process_id: "", setup: "15", run: "120", hold: "0", inputQty: quantity || "", outputQty: quantity || "", remarks: "No routing saved in template" }]);
+      }
     }
   };
 
-  const updateProcess = (id, field, value) => {
-    setProcesses(processes.map(p => p.id === id ? { ...p, [field]: value } : p));
-  };
+  const handleAddProcess = () => setProcesses([...processes, { id: Date.now(), process_id: "", setup: "15", run: "120", hold: "0", inputQty: quantity || "", outputQty: quantity || "", remarks: "" }]);
+  const handleRemoveProcess = (id) => processes.length > 1 && setProcesses(processes.filter(p => p.id !== id));
+  const updateProcess = (id, field, value) => setProcesses(processes.map(p => p.id === id ? { ...p, [field]: value } : p));
 
-  // AI Suggest Dummy Function
-  const handleAISuggest = () => {
-    setProcesses([
-      { id: Date.now(), process_id: "proc_printing", setup: "30", run: "240", hold: "0", inputQty: quantity || "5000", outputQty: quantity || "5000", remarks: "Standard 4-color run" },
-      { id: Date.now() + 1, process_id: "proc_die_cut", setup: "45", run: "180", hold: "15", inputQty: quantity || "5000", outputQty: quantity || "4950", remarks: "Watch for bleed edges" }
-    ]);
-  };
-
-  // --- SUBMIT HANDLER ---
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
 
-    // Format the processes for the Core Scheduler Engine
     const process_sequence = processes.map((proc, index) => {
       const matchedProcess = PROCESS_LIST.find(pl => pl.id === proc.process_id);
       return {
@@ -83,8 +108,8 @@ export default function JobModal({ onClose }) {
         process_id: proc.process_id || `custom_proc_${index}`,
         process_name: matchedProcess ? matchedProcess.name : "Unassigned Process",
         status: "pending",
-        setup_mins: proc.setup,
-        run_mins: proc.run,
+        setup_mins: proc.setup || "15",
+        run_mins: proc.run || "120",
         input_qty: proc.inputQty,
         output_qty: proc.outputQty,
         remarks: proc.remarks,
@@ -104,7 +129,8 @@ export default function JobModal({ onClose }) {
         size: productSize,
         material: materialType,
         gsm: sheetGsm,
-        sheet_size: sheetSize
+        sheet_size: sheetSize,
+        category: template // Saving the template type here
       },
       specifications: {
         colors: printColors,
@@ -127,22 +153,23 @@ export default function JobModal({ onClose }) {
       await addJob(newJobPayload);
       onClose();
     } catch (error) {
-      console.error("Error creating job:", error);
       alert("Failed to create job. Check console.");
+      console.error(error);
     } finally {
       setLoading(false);
     }
   };
 
-  // Reusable input style
   const inputClass = "w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-primary-500 placeholder-gray-600";
   const labelClass = "block text-xs font-semibold text-gray-400 mb-1.5";
+
+  const safeCustomer = customer?.trim()?.toLowerCase() || "";
+  const customerProducts = products ? products.filter(p => p.customerName?.trim()?.toLowerCase() === safeCustomer) : [];
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
         
-        {/* Header (Sticky) */}
         <div className="flex justify-between items-center p-6 border-b border-gray-800 bg-gray-900 shrink-0">
           <h2 className="text-xl font-bold text-white tracking-tight">Create New Job</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
@@ -150,7 +177,6 @@ export default function JobModal({ onClose }) {
           </button>
         </div>
 
-        {/* Scrollable Form Body */}
         <div className="p-6 overflow-y-auto custom-scrollbar flex-1 bg-[#0a0f1a]">
           <form id="jobForm" onSubmit={handleSubmit} className="space-y-8">
             
@@ -161,44 +187,79 @@ export default function JobModal({ onClose }) {
                 <h3 className="text-lg font-bold text-white">Job Information</h3>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                
+                <div>
+                  <label className={labelClass}>Customer *</label>
+                  <select 
+                    required 
+                    value={customer} 
+                    onChange={e => {
+                      setCustomer(e.target.value);
+                      setSelectedProductId(""); 
+                    }} 
+                    className={inputClass}
+                  >
+                    <option value="">{custLoading ? "Loading customers..." : "-- Select Customer --"}</option>
+                    {customers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                  </select>
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className={labelClass}>Saved Product Template (Auto-fill)</label>
+                  <select 
+                    value={selectedProductId} 
+                    onChange={handleProductChange} 
+                    disabled={!customer || customerProducts.length === 0}
+                    className={`${inputClass} ${(!customer || customerProducts.length === 0) ? 'opacity-50 cursor-not-allowed' : 'border-primary-500/50'}`}
+                  >
+                    <option value="">
+                      {!customer 
+                        ? "Select a customer first" 
+                        : prodLoading 
+                          ? "Loading products..." 
+                          : customerProducts.length === 0 
+                            ? "⚠️ No products found for this customer" 
+                            : "-- Select a product to auto-fill details --"}
+                    </option>
+                    {customerProducts.map(p => <option key={p.id} value={p.id}>{p.name} ({p.sku || "No SKU"})</option>)}
+                  </select>
+                </div>
+
                 <div>
                   <label className={labelClass}>Job Title *</label>
                   <input required type="text" value={jobTitle} onChange={e => setJobTitle(e.target.value)} placeholder="e.g., Luxury Perfume Box" className={inputClass} />
                 </div>
                 <div>
                   <label className={labelClass}>Client's Product Name</label>
-                  <input type="text" value={productName} onChange={e => setProductName(e.target.value)} placeholder="e.g., Armani Code 50ml" className={inputClass} />
+                  <input type="text" value={productName} onChange={e => setProductName(e.target.value)} placeholder="Auto-filled" className={inputClass} />
                 </div>
                 <div>
                   <label className={labelClass}>Client's Product Code</label>
-                  <input type="text" value={productCode} onChange={e => setProductCode(e.target.value)} placeholder="e.g., PK-ARM-050" className={inputClass} />
+                  <input type="text" value={productCode} onChange={e => setProductCode(e.target.value)} placeholder="Auto-filled" className={inputClass} />
                 </div>
-                <div>
-                  <label className={labelClass}>Customer *</label>
-                  <select required value={customer} onChange={e => setCustomer(e.target.value)} className={inputClass}>
-                    <option value="">-- Select Customer --</option>
-                    {CUSTOMERS.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </div>
+                
                 <div>
                   <label className={labelClass}>Final Job Quantity *</label>
-                  <input required type="number" value={quantity} onChange={e => setQuantity(e.target.value)} placeholder="1000" className={inputClass} />
+                  <input required type="number" value={quantity} onChange={e => {
+                    setQuantity(e.target.value);
+                    setProcesses(processes.map(p => ({ ...p, inputQty: e.target.value, outputQty: e.target.value })));
+                  }} placeholder="1000" className={inputClass} />
                 </div>
                 <div>
                   <label className={labelClass}>Product Size (L x W x H)</label>
-                  <input type="text" value={productSize} onChange={e => setProductSize(e.target.value)} placeholder="e.g., 12 x 8 x 4 inches" className={inputClass} />
+                  <input type="text" value={productSize} onChange={e => setProductSize(e.target.value)} placeholder="Auto-filled" className={inputClass} />
                 </div>
                 <div>
                   <label className={labelClass}>Due Date *</label>
                   <input required type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className={`${inputClass} [color-scheme:dark]`} />
                 </div>
-                <div className="md:col-span-2">
-                  <label className={labelClass}>Product Category (Template)</label>
-                  <select value={template} onChange={e => setTemplate(e.target.value)} className={inputClass}>
-                    <option value="">-- Select to apply template --</option>
-                    {TEMPLATES.map(t => <option key={t} value={t}>{t}</option>)}
-                  </select>
+                
+                {/* Fixed template assignment display */}
+                <div className="md:col-span-3">
+                  <label className={labelClass}>Product Category / Type</label>
+                  <input type="text" value={template} readOnly placeholder="Auto-filled category" className={`${inputClass} bg-gray-900/50 cursor-not-allowed`} />
                 </div>
+                
               </div>
             </div>
 
@@ -216,14 +277,14 @@ export default function JobModal({ onClose }) {
                 </div>
                 <div>
                   <label className={labelClass}>Sheet GSM</label>
-                  <input type="text" value={sheetGsm} onChange={e => setSheetGsm(e.target.value)} placeholder="e.g., 300" className={inputClass} />
+                  <input type="text" value={sheetGsm} onChange={e => setSheetGsm(e.target.value)} placeholder="Auto-filled" className={inputClass} />
                 </div>
                 <div>
                   <label className={labelClass}>Material Type *</label>
-                  <input required type="text" value={materialType} onChange={e => setMaterialType(e.target.value)} placeholder="150gsm Gloss" className={inputClass} />
+                  <input required type="text" value={materialType} onChange={e => setMaterialType(e.target.value)} placeholder="Auto-filled" className={inputClass} />
                 </div>
                 <div>
-                  <label className={labelClass}>Number of Colors (Printing)</label>
+                  <label className={labelClass}>Number of Colors</label>
                   <select value={printColors} onChange={e => setPrintColors(e.target.value)} className={inputClass}>
                     <option value="NA">NA</option>
                     <option value="1 Color">1 Color</option>
@@ -233,8 +294,8 @@ export default function JobModal({ onClose }) {
                 </div>
               </div>
 
-              {/* Guillotine Sub-section */}
-              <h4 className="text-sm font-bold text-gray-300 mb-3 flex items-center gap-2">
+              {/* Restored Guillotine Sub-section */}
+              <h4 className="text-sm font-bold text-gray-300 mb-3 flex items-center gap-2 mt-6">
                 <svg className="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243-4.243 3 3 0 004.243 4.243z" /></svg>
                 Guillotine Cutting Specifications
               </h4>
@@ -249,19 +310,16 @@ export default function JobModal({ onClose }) {
                 </div>
               </div>
 
-              {/* Die Cutting Sub-section */}
+              {/* Restored Die Cutting Sub-section */}
               <h4 className="text-sm font-bold text-gray-300 mb-3 flex items-center gap-2">
                 <svg className="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" /></svg>
                 Die Cutting Specifications
               </h4>
               <div>
                 <label className={labelClass}>Die (Die Cutting)</label>
-                <select value={dieSelect} onChange={e => setDieSelect(e.target.value)} className={inputClass}>
-                  <option value="">-- Select Customer First --</option>
-                  <option value="die_001">Die #001 - Perfume Box</option>
-                  <option value="die_002">Die #002 - Standard Mailer</option>
-                </select>
+                <input type="text" value={dieSelect} onChange={e => setDieSelect(e.target.value)} placeholder="e.g., Die #001" className={inputClass} />
               </div>
+
             </div>
 
             {/* 3. Prerequisites & Status */}
@@ -304,23 +362,18 @@ export default function JobModal({ onClose }) {
             <div className="mt-8">
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-lg font-bold text-white">Process Routing</h3>
-                <button type="button" onClick={handleAISuggest} className="flex items-center gap-2 bg-gray-800 hover:bg-gray-700 text-gray-300 px-3 py-1.5 rounded border border-gray-700 text-xs font-medium transition-colors">
-                  <svg className="w-4 h-4 text-primary-400" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5 2a1 1 0 011 1v1h1a1 1 0 010 2H6v1a1 1 0 01-2 0V6H3a1 1 0 010-2h1V3a1 1 0 011-1zm0 10a1 1 0 011 1v1h1a1 1 0 110 2H6v1a1 1 0 11-2 0v-1H3a1 1 0 110-2h1v-1a1 1 0 011-1zM12 2a1 1 0 01.967.744L14.146 7.2 17.5 8.4a1 1 0 010 1.9l-3.354 1.2-1.18 4.456a1 1 0 01-1.933 0L9.854 11.5 6.5 10.3a1 1 0 010-1.9l3.354-1.2 1.18-4.456A1 1 0 0112 2z" clipRule="evenodd" /></svg>
-                  AI Suggest
-                </button>
+                <span className="text-xs text-primary-400 italic">Automatically populated from Product Template</span>
               </div>
 
               <div className="space-y-4">
                 {processes.map((proc, index) => (
                   <div key={proc.id} className="bg-[#111827] border border-gray-800 rounded-lg p-5 flex gap-4">
-                    {/* Drag Handle & Number */}
                     <div className="flex flex-col items-center pt-2 text-gray-600 gap-2 shrink-0">
                       <svg className="w-5 h-5 cursor-grab" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 8h16M4 16h16" /></svg>
                       <span className="text-primary-500 font-bold text-sm">{index + 1}</span>
                     </div>
 
                     <div className="flex-1 space-y-4">
-                      {/* Process Name Row */}
                       <div className="flex items-start gap-4">
                         <div className="flex-1">
                           <label className={labelClass}>Process Name</label>
@@ -334,7 +387,6 @@ export default function JobModal({ onClose }) {
                         </button>
                       </div>
 
-                      {/* Timings Row */}
                       <div className="grid grid-cols-3 gap-4">
                         <div>
                           <label className={labelClass}>Setup (Mins)</label>
@@ -350,35 +402,27 @@ export default function JobModal({ onClose }) {
                         </div>
                       </div>
 
-                      {/* Quantities Row */}
                       <div className="grid grid-cols-2 gap-4">
                         <div>
-                          <label className={labelClass}>Input Qty (units)</label>
-                          <input type="number" value={proc.inputQty} onChange={(e) => updateProcess(proc.id, "inputQty", e.target.value)} placeholder="e.g., 5200" className={inputClass} />
+                          <label className={labelClass}>Input Qty</label>
+                          <input type="number" value={proc.inputQty} onChange={(e) => updateProcess(proc.id, "inputQty", e.target.value)} className={inputClass} />
                         </div>
                         <div>
-                          <label className={labelClass}>Output Qty (units)</label>
-                          <input type="number" value={proc.outputQty} onChange={(e) => updateProcess(proc.id, "outputQty", e.target.value)} placeholder="e.g., 5000" className={inputClass} />
+                          <label className={labelClass}>Output Qty</label>
+                          <input type="number" value={proc.outputQty} onChange={(e) => updateProcess(proc.id, "outputQty", e.target.value)} className={inputClass} />
                         </div>
-                      </div>
-
-                      {/* Remarks */}
-                      <div>
-                        <label className={labelClass}>Remarks</label>
-                        <input type="text" value={proc.remarks} onChange={(e) => updateProcess(proc.id, "remarks", e.target.value)} placeholder="e.g., Use specific ink, special instructions..." className={inputClass} />
                       </div>
                     </div>
                   </div>
                 ))}
               </div>
 
-              {/* Add Process Button */}
-              <button type="button" onClick={handleAddProcess} className="w-full mt-4 bg-gray-900 border border-gray-700 border-dashed hover:border-gray-500 hover:bg-gray-800 text-gray-400 hover:text-white py-3 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2">
-                <span>+</span> Add Process Step
+              <button type="button" onClick={handleAddProcess} className="w-full mt-4 bg-gray-900 border border-gray-700 border-dashed hover:border-gray-500 text-gray-400 hover:text-white py-3 rounded-lg text-sm font-medium transition-colors flex justify-center gap-2">
+                <span>+</span> Add Extra Process Step
               </button>
             </div>
 
-            {/* Job Notes */}
+            {/* Restored Job Notes Section */}
             <div className="mt-8 border-t border-gray-800 pt-8">
               <label className={labelClass}>Job Notes / Instructions</label>
               <textarea 
@@ -393,16 +437,12 @@ export default function JobModal({ onClose }) {
           </form>
         </div>
 
-        {/* Footer (Sticky) */}
         <div className="p-4 border-t border-gray-800 bg-gray-900 shrink-0 flex justify-end gap-3">
-          <button type="button" onClick={onClose} className="px-5 py-2.5 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors font-medium">
-            Cancel
-          </button>
-          <button type="submit" form="jobForm" disabled={loading} className="bg-primary-600 hover:bg-primary-500 disabled:opacity-50 text-white px-8 py-2.5 rounded-lg font-bold transition-colors shadow-lg shadow-primary-500/20">
+          <button type="button" onClick={onClose} className="px-5 py-2.5 rounded-lg text-gray-400 hover:text-white transition-colors font-medium">Cancel</button>
+          <button type="submit" form="jobForm" disabled={loading} className="bg-primary-600 hover:bg-primary-500 disabled:opacity-50 text-white px-8 py-2.5 rounded-lg font-bold transition-colors">
             {loading ? "Creating..." : "Create Job"}
           </button>
         </div>
-
       </div>
     </div>
   );
