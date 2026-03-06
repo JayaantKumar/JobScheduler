@@ -3,6 +3,7 @@ import { addJob } from "../services/job.service";
 import { useCustomers } from "../hooks/useCustomers";
 import { useProducts } from "../hooks/useProducts";
 import { useMachines } from "../hooks/useMachines";
+import { useJobs } from "../hooks/useJobs"; 
 
 // Master list of processes
 const PROCESS_LIST = [
@@ -17,23 +18,18 @@ const PROCESS_LIST = [
   { id: "proc_packing", name: "Packing" }
 ];
 
-// HELPER: Calculate 14 Working Days (Skipping Sat/Sun)
 const calculate14WorkingDays = () => {
   let count = 0;
   let date = new Date();
   while (count < 14) {
     date.setDate(date.getDate() + 1);
-    // 0 is Sunday, 6 is Saturday
-    if (date.getDay() !== 0 && date.getDay() !== 6) { 
-      count++;
-    }
+    if (date.getDay() !== 0 && date.getDay() !== 6) count++;
   }
   return date.toISOString().split('T')[0];
 };
 
-// HELPER: Get current Financial Year (e.g., "2526" for April 2025 - March 2026)
 const getFinancialYear = (dateObj = new Date()) => {
-  const month = dateObj.getMonth(); // 0-11 (April is 3)
+  const month = dateObj.getMonth(); 
   const year = dateObj.getFullYear();
   if (month >= 3) {
     return `${year.toString().slice(-2)}${(year + 1).toString().slice(-2)}`;
@@ -45,10 +41,11 @@ const getFinancialYear = (dateObj = new Date()) => {
 export default function JobModal({ onClose }) {
   const [loading, setLoading] = useState(false);
   
-  // Fetch Master Data
+  // Fetch Master Data & History
   const { customers, loading: custLoading } = useCustomers();
   const { products, loading: prodLoading } = useProducts();
   const { machines, loading: machLoading } = useMachines();
+  const { jobs } = useJobs(); 
 
   // --- SECTION 1: Job Information ---
   const [jobDate, setJobDate] = useState(new Date().toISOString().split('T')[0]);
@@ -61,6 +58,7 @@ export default function JobModal({ onClose }) {
   const [productSize, setProductSize] = useState("");
   const [dueDate, setDueDate] = useState(calculate14WorkingDays()); 
   const [template, setTemplate] = useState("");
+  const [fillSource, setFillSource] = useState(null); 
 
   // --- SECTION 2: Sheet & Material ---
   const [sheetSize, setSheetSize] = useState("");
@@ -77,20 +75,62 @@ export default function JobModal({ onClose }) {
   const [artworkStatus, setArtworkStatus] = useState("Pending");
   const [artworkVersion, setArtworkVersion] = useState("v1.0");
 
-  // --- PROCESS ROUTING & NOTES ---
+  // --- PROCESS ROUTING & NOTES (REMOVED SETUP/RUN/HOLD) ---
   const [processes, setProcesses] = useState([
-    { id: Date.now(), process_id: "", assigned_machine: "", setup: "15", run: "120", hold: "0", inputQty: "", outputQty: "", remarks: "" }
+    { id: Date.now(), process_id: "", assigned_machine: "", inputQty: "", outputQty: "", remarks: "" }
   ]);
   const [jobNotes, setJobNotes] = useState("");
 
-  // --- AUTO-FILL LOGIC ---
+  // ==========================================
+  // 🧠 SMART HISTORICAL AUTO-FILL LOGIC
+  // ==========================================
   const handleProductChange = (e) => {
     const prodId = e.target.value;
     setSelectedProductId(prodId);
+    setFillSource(null);
+
     if (!prodId) return;
 
     const prod = products.find(p => p.id === prodId);
-    if (prod) {
+    if (!prod) return;
+
+    const previousJobs = jobs.filter(j => j.product?.id === prodId || j.product?.name === prod.name);
+    const lastJob = previousJobs.length > 0 ? previousJobs[0] : null;
+
+    if (lastJob) {
+      setFillSource(`Previous Job (JOB-${lastJob.id.slice(0,6).toUpperCase()})`);
+      
+      setJobTitle(lastJob.title || `${prod.name} - Run`);
+      setProductName(lastJob.product?.name || prod.name);
+      setProductCode(lastJob.product?.sku || prod.sku);
+      setTemplate(lastJob.product?.category || prod.type || ""); 
+      setProductSize(lastJob.product?.size || prod.size || "");
+      setMaterialType(lastJob.product?.material || prod.paperType || "");
+      setSheetGsm(lastJob.product?.gsm || prod.paperGsm || "");
+      
+      setSheetSize(lastJob.product?.sheet_size || "");
+      setPrintColors(lastJob.specifications?.colors || "NA");
+      setSizeBeforeCut(lastJob.specifications?.size_before_cut || "");
+      setSizeAfterCut(lastJob.specifications?.size_after_cut || "");
+      setDieSelect(lastJob.specifications?.die || "");
+      setPriority(lastJob.priority || "normal");
+      setJobNotes(lastJob.notes || "");
+      setQuantity(lastJob.quantity_target || ""); 
+
+      if (lastJob.process_sequence && lastJob.process_sequence.length > 0) {
+        const restoredProcesses = lastJob.process_sequence.map((step, index) => ({
+          id: Date.now() + index,
+          process_id: step.process_id || "",
+          assigned_machine: step.assigned_machine_id || "", 
+          inputQty: step.input_qty || lastJob.quantity_target || "",
+          outputQty: step.output_qty || lastJob.quantity_target || "",
+          remarks: step.remarks || ""
+        }));
+        setProcesses(restoredProcesses);
+      }
+    } else {
+      setFillSource("Product Master Template");
+      
       setJobTitle(`${prod.name} - Run`);
       setProductName(prod.name || "");
       setProductCode(prod.sku || "");
@@ -98,6 +138,8 @@ export default function JobModal({ onClose }) {
       setProductSize(prod.size || "");
       setMaterialType(prod.paperType || "");
       setSheetGsm(prod.paperGsm || "");
+      
+      setSheetSize(""); setPrintColors("NA"); setSizeBeforeCut(""); setSizeAfterCut(""); setDieSelect(""); setJobNotes(""); setQuantity("");
 
       if (prod.default_sequence && prod.default_sequence.length > 0) {
         const autoBuiltProcesses = prod.default_sequence.map((step, index) => {
@@ -106,25 +148,23 @@ export default function JobModal({ onClose }) {
             id: Date.now() + index,
             process_id: matchedProcess ? matchedProcess.id : "",
             assigned_machine: "", 
-            setup: "15", 
-            run: "120", 
-            hold: "0",
-            inputQty: quantity || "",
-            outputQty: quantity || "",
-            remarks: ""
+            inputQty: "", outputQty: "", remarks: ""
           };
         });
         setProcesses(autoBuiltProcesses);
+      } else {
+        setProcesses([{ id: Date.now(), process_id: "", assigned_machine: "", inputQty: "", outputQty: "", remarks: "" }]);
       }
     }
   };
 
-  const handleAddProcess = () => setProcesses([...processes, { id: Date.now(), process_id: "", assigned_machine: "", setup: "15", run: "120", hold: "0", inputQty: quantity || "", outputQty: quantity || "", remarks: "" }]);
+  const handleAddProcess = () => setProcesses([...processes, { id: Date.now(), process_id: "", assigned_machine: "", inputQty: quantity || "", outputQty: quantity || "", remarks: "" }]);
   const handleRemoveProcess = (id) => processes.length > 1 && setProcesses(processes.filter(p => p.id !== id));
   const updateProcess = (id, field, value) => setProcesses(processes.map(p => p.id === id ? { ...p, [field]: value } : p));
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!selectedProductId) return alert("Please select a Product Template. Jobs must be linked to a product.");
     setLoading(true);
 
     const process_sequence = processes.map((proc, index) => {
@@ -136,8 +176,11 @@ export default function JobModal({ onClose }) {
         process_id: proc.process_id || `custom_proc_${index}`,
         process_name: matchedProcess ? matchedProcess.name : "Unassigned Process",
         status: "pending",
-        setup_mins: proc.setup || "15",
-        run_mins: proc.run || "120",
+        // We set these to 0 strictly to keep the database structure from crashing, 
+        // but the user never sees or uses them anymore.
+        setup_mins: 0,
+        run_mins: 0,
+        hold_mins: 0, 
         input_qty: proc.inputQty,
         output_qty: proc.outputQty,
         remarks: proc.remarks,
@@ -154,6 +197,7 @@ export default function JobModal({ onClose }) {
       priority: priority,
       job_date: new Date(jobDate).toISOString(),
       product: {
+        id: selectedProductId, 
         name: productName,
         sku: productCode,
         size: productSize,
@@ -195,7 +239,6 @@ export default function JobModal({ onClose }) {
 
   const safeCustomer = customer?.trim()?.toLowerCase() || "";
   const customerProducts = products ? products.filter(p => p.customerName?.trim()?.toLowerCase() === safeCustomer) : [];
-  
   const currentFY = getFinancialYear(new Date(jobDate));
 
   return (
@@ -227,20 +270,27 @@ export default function JobModal({ onClose }) {
                 
                 <div>
                   <label className={labelClass}>Customer *</label>
-                  <select required value={customer} onChange={e => { setCustomer(e.target.value); setSelectedProductId(""); }} className={inputClass}>
+                  <select required value={customer} onChange={e => { setCustomer(e.target.value); setSelectedProductId(""); setFillSource(null); }} className={inputClass}>
                     <option value="">{custLoading ? "Loading..." : "-- Select Customer --"}</option>
                     {customers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                   </select>
                 </div>
 
                 <div className="md:col-span-2">
-                  <label className={labelClass}>Saved Product Template (Auto-fill)</label>
-                  <select value={selectedProductId} onChange={handleProductChange} disabled={!customer || customerProducts.length === 0} className={`${inputClass} ${(!customer || customerProducts.length === 0) ? 'opacity-50 cursor-not-allowed' : 'border-primary-500/50'}`}>
+                  <label className={labelClass}>Saved Product Template *</label>
+                  <select required value={selectedProductId} onChange={handleProductChange} disabled={!customer || customerProducts.length === 0} className={`${inputClass} ${(!customer || customerProducts.length === 0) ? 'opacity-50 cursor-not-allowed' : 'border-primary-500/50'}`}>
                     <option value="">
                       {!customer ? "Select a customer first" : prodLoading ? "Loading products..." : customerProducts.length === 0 ? "⚠️ No products found for this customer" : "-- Select a product to auto-fill details --"}
                     </option>
                     {customerProducts.map(p => <option key={p.id} value={p.id}>{p.name} ({p.sku || "No SKU"})</option>)}
                   </select>
+                  
+                  {fillSource && (
+                    <div className="mt-1.5 text-xs font-medium flex items-center gap-1.5">
+                      <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                      <span className="text-green-400">Data automatically loaded from {fillSource}</span>
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -249,15 +299,15 @@ export default function JobModal({ onClose }) {
                 </div>
                 <div>
                   <label className={labelClass}>Product Name</label>
-                  <input type="text" value={productName} onChange={e => setProductName(e.target.value)} placeholder="Auto-filled" className={inputClass} />
+                  <input type="text" value={productName} readOnly placeholder="Auto-filled" className={`${inputClass} bg-gray-900/50`} />
                 </div>
                 <div>
                   <label className={labelClass}>Product Code</label>
-                  <input type="text" value={productCode} onChange={e => setProductCode(e.target.value)} placeholder="Auto-filled" className={inputClass} />
+                  <input type="text" value={productCode} readOnly placeholder="Auto-filled" className={`${inputClass} bg-gray-900/50`} />
                 </div>
                 
                 <div>
-                  <label className={labelClass}>Final Job Quantity *</label>
+                  <label className={labelClass}>Calculated Quantity *</label>
                   <input required type="number" value={quantity} onChange={e => {
                     setQuantity(e.target.value);
                     setProcesses(processes.map(p => ({ ...p, inputQty: e.target.value, outputQty: e.target.value })));
@@ -271,6 +321,11 @@ export default function JobModal({ onClose }) {
                 <div>
                   <label className={labelClass}>Expected End Date (Auto: 14 Days)</label>
                   <input required type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className={`${inputClass} [color-scheme:dark]`} />
+                </div>
+                
+                <div className="md:col-span-3">
+                  <label className={labelClass}>Product Category</label>
+                  <input type="text" value={template} readOnly placeholder="Auto-filled category" className={`${inputClass} bg-gray-900/50 cursor-not-allowed`} />
                 </div>
                 
               </div>
@@ -294,7 +349,6 @@ export default function JobModal({ onClose }) {
                 </div>
               </div>
 
-              {/* RESTORED: Guillotine Sub-section */}
               <h4 className="text-sm font-bold text-gray-300 mb-3 flex items-center gap-2 mt-6">
                 <svg className="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243-4.243 3 3 0 004.243 4.243z" /></svg>
                 Guillotine Cutting Specifications
@@ -310,7 +364,6 @@ export default function JobModal({ onClose }) {
                 </div>
               </div>
 
-              {/* RESTORED: Die Cutting Sub-section */}
               <h4 className="text-sm font-bold text-gray-300 mb-3 flex items-center gap-2">
                 <svg className="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" /></svg>
                 Die Cutting Specifications
@@ -328,7 +381,6 @@ export default function JobModal({ onClose }) {
                 <h3 className="text-lg font-bold text-white">Prerequisites & Urgency</h3>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                
                 <div>
                   <label className={labelClass}>Urgency</label>
                   <select value={priority} onChange={e => setPriority(e.target.value)} className={inputClass}>
@@ -339,7 +391,6 @@ export default function JobModal({ onClose }) {
                     <option value="highest">Highest</option>
                   </select>
                 </div>
-
                 <div>
                   <label className={labelClass}>Material Status</label>
                   <select value={materialStatus} onChange={e => setMaterialStatus(e.target.value)} className={inputClass}>
@@ -359,11 +410,11 @@ export default function JobModal({ onClose }) {
               </div>
             </div>
 
-            {/* PROCESS ROUTING */}
+            {/* 4. PROCESS ROUTING (Manual Location Assignment) */}
             <div className="mt-8">
               <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-bold text-white">Process Routing & Machine Assignment</h3>
-                <span className="text-xs text-primary-400 italic">Optional: Pre-assign specific machines</span>
+                <h3 className="text-lg font-bold text-white">Process Routing & Location Assignment</h3>
+                <span className="text-xs text-primary-400 italic">Assign specific locations manually</span>
               </div>
 
               <div className="space-y-4">
@@ -376,8 +427,8 @@ export default function JobModal({ onClose }) {
 
                     <div className="flex-1 space-y-4">
                       
-                      <div className="flex items-start gap-4">
-                        <div className="flex-1">
+                      <div className="flex flex-col md:flex-row items-start gap-4">
+                        <div className="flex-1 w-full">
                           <label className={labelClass}>Process Name</label>
                           <select required value={proc.process_id} onChange={(e) => updateProcess(proc.id, "process_id", e.target.value)} className={inputClass}>
                             <option value="">-- Select Process --</option>
@@ -385,18 +436,20 @@ export default function JobModal({ onClose }) {
                           </select>
                         </div>
                         
-                        <div className="flex-1">
-                          <label className={labelClass}>Assigned Machine & Location</label>
+                        {/* THE NEW FORCED MANUAL LOCATION DROPDOWN */}
+                        <div className="flex-1 w-full">
+                          <label className={labelClass}>Assigned Location / Machine *</label>
                           <select 
+                            required 
                             value={proc.assigned_machine} 
                             onChange={(e) => updateProcess(proc.id, "assigned_machine", e.target.value)} 
                             className={inputClass}
                             disabled={machLoading}
                           >
-                            <option value="">-- Let AI decide --</option>
+                            <option value="">-- Select Location / Machine --</option>
                             {machines.map(m => (
                               <option key={m.id} value={m.id}>
-                                {m.name} ({m.place || "No Location"})
+                                {m.place || "Unassigned"} - {m.name}
                               </option>
                             ))}
                           </select>
@@ -407,10 +460,10 @@ export default function JobModal({ onClose }) {
                         </button>
                       </div>
 
-                      <div className="grid grid-cols-3 gap-4">
-                        <div><label className={labelClass}>Setup (Mins)</label><input type="number" value={proc.setup} onChange={(e) => updateProcess(proc.id, "setup", e.target.value)} className={inputClass} /></div>
-                        <div><label className={labelClass}>Run (Mins)</label><input type="number" value={proc.run} onChange={(e) => updateProcess(proc.id, "run", e.target.value)} className={inputClass} /></div>
-                        <div><label className={labelClass}>Hold (Mins)</label><input type="number" value={proc.hold} onChange={(e) => updateProcess(proc.id, "hold", e.target.value)} className={inputClass} /></div>
+                      {/* QTY ROW ONLY */}
+                      <div className="grid grid-cols-2 gap-4">
+                        <div><label className={labelClass}>Input Qty</label><input type="number" value={proc.inputQty} onChange={(e) => updateProcess(proc.id, "inputQty", e.target.value)} className={inputClass} /></div>
+                        <div><label className={labelClass}>Output Qty</label><input type="number" value={proc.outputQty} onChange={(e) => updateProcess(proc.id, "outputQty", e.target.value)} className={inputClass} /></div>
                       </div>
 
                     </div>
@@ -423,7 +476,6 @@ export default function JobModal({ onClose }) {
               </button>
             </div>
 
-            {/* RESTORED: Job Notes Section */}
             <div className="mt-8 border-t border-gray-800 pt-8">
               <label className={labelClass}>Job Notes / Instructions</label>
               <textarea 
