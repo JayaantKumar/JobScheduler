@@ -1,4 +1,3 @@
-
 export default function JobViewModal({ job, onClose }) {
   if (!job) return null;
 
@@ -101,7 +100,7 @@ export default function JobViewModal({ job, onClose }) {
                 <div className="text-sm font-bold text-white">{job.specifications?.colors || 'NA'}</div>
               </div>
               
-              {/* Point G: Highlight Die Name if Die Cutting is involved */}
+              {/* Highlight Die Name if Die Cutting is involved */}
               {hasDieCutting && (
                 <div className="bg-primary-900/20 border border-primary-500/30 p-4 rounded-lg md:col-span-2">
                   <div className="text-xs text-primary-400 mb-1 font-bold flex items-center gap-2">
@@ -144,7 +143,7 @@ export default function JobViewModal({ job, onClose }) {
                     <div className="flex-1">
                       <div className="text-white font-bold">{step.process_name}</div>
                       <div className="text-xs text-gray-500 mt-1">
-                        {step.assigned_machine_name || 'Unassigned Machine'} • Run: {step.run_mins || 0} min
+                        {step.assigned_machine_name || 'Unassigned Machine'}
                       </div>
                     </div>
                     

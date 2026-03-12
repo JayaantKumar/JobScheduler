@@ -58,7 +58,7 @@ export default function MasterData() {
 
   // --- DELETE DATA FROM FIREBASE ---
   const handleDelete = async (id, collectionName) => {
-    if (window.confirm(`Are you sure you want to delete this ${collectionName}?`)) {
+    if (window.confirm(`Are you sure you want to delete this ${collectionName.slice(0, -1)}?`)) {
       try {
         await deleteDoc(doc(db, collectionName, id));
       } catch (error) {
@@ -120,7 +120,7 @@ export default function MasterData() {
                     <td className="py-4 px-6 text-gray-400">{cust.phone || '-'}</td>
                     <td className="py-4 px-6 text-gray-400">{cust.gstin || '-'}</td>
                     <td className="py-4 px-6 text-right">
-                      <button onClick={() => handleDelete(cust.id, "customers")} className="text-red-400 hover:text-red-300">Delete</button>
+                      <button onClick={() => handleDelete(cust.id, "customers")} className="text-red-400 hover:text-red-300 transition-colors text-sm font-medium">Delete</button>
                     </td>
                   </tr>
                 ))}
@@ -141,7 +141,7 @@ export default function MasterData() {
                     <td className="py-4 px-6 text-gray-300 font-medium">{prod.customerName}</td>
                     <td className="py-4 px-6 text-gray-400">{prod.category || '-'}</td>
                     <td className="py-4 px-6 text-right">
-                      <button onClick={() => handleDelete(prod.id, "products")} className="text-red-400 hover:text-red-300">Delete</button>
+                      <button onClick={() => handleDelete(prod.id, "products")} className="text-red-400 hover:text-red-300 transition-colors text-sm font-medium">Delete</button>
                     </td>
                   </tr>
                 ))}
@@ -149,20 +149,28 @@ export default function MasterData() {
             </table>
           )}
 
-          {/* RATES TABLE */}
+          {/* RATES TABLE - Updated Base Rate to Quantity */}
           {activeTab === "rates" && (
             <table className="w-full text-left border-collapse min-w-[900px]">
-              <thead><tr className="bg-gray-950/50 border-b border-gray-800 text-xs font-bold text-gray-400 uppercase tracking-wider"><th className="py-4 px-6">Product</th><th className="py-4 px-6">Customer</th><th className="py-4 px-6">Base Rate</th><th className="py-4 px-6">Bulk Rate</th><th className="py-4 px-6 text-right">Actions</th></tr></thead>
+              <thead>
+                <tr className="bg-gray-950/50 border-b border-gray-800 text-xs font-bold text-gray-400 uppercase tracking-wider">
+                  <th className="py-4 px-6">Product</th>
+                  <th className="py-4 px-6">Customer</th>
+                  <th className="py-4 px-6">Quantity</th>
+                  <th className="py-4 px-6">Bulk Rate</th>
+                  <th className="py-4 px-6 text-right">Actions</th>
+                </tr>
+              </thead>
               <tbody className="divide-y divide-gray-800">
                 {filteredRates.length === 0 && <tr><td colSpan="5" className="py-8 text-center text-gray-500">No rates found.</td></tr>}
                 {filteredRates.map((rate) => (
                   <tr key={rate.id} className="hover:bg-gray-800/30 transition-colors">
                     <td className="py-4 px-6 font-bold text-gray-200">{rate.productName}</td>
                     <td className="py-4 px-6 text-gray-300 font-medium">{rate.customerName}</td>
-                    <td className="py-4 px-6 text-gray-400 font-mono">₹ {rate.baseRate}</td>
+                    <td className="py-4 px-6 text-gray-400 font-mono">{rate.quantity ? parseInt(rate.quantity).toLocaleString() : '-'}</td>
                     <td className="py-4 px-6 text-green-400 font-mono">₹ {rate.bulkRate}</td>
                     <td className="py-4 px-6 text-right">
-                      <button onClick={() => handleDelete(rate.id, "rates")} className="text-red-400 hover:text-red-300">Delete</button>
+                      <button onClick={() => handleDelete(rate.id, "rates")} className="text-red-400 hover:text-red-300 transition-colors text-sm font-medium">Delete</button>
                     </td>
                   </tr>
                 ))}
@@ -183,35 +191,38 @@ export default function MasterData() {
               {/* Customer Inputs */}
               {activeTab === "customers" && (
                 <>
-                  <input required name="name" onChange={handleInputChange} placeholder="Customer/Company Name *" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white" />
-                  <input name="contactPerson" onChange={handleInputChange} placeholder="Contact Person" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white" />
-                  <input name="phone" onChange={handleInputChange} placeholder="Phone Number" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white" />
-                  <input name="gstin" onChange={handleInputChange} placeholder="GST Number" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white" />
+                  <input required name="name" onChange={handleInputChange} placeholder="Customer/Company Name *" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary-500" />
+                  <input name="contactPerson" onChange={handleInputChange} placeholder="Contact Person" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary-500" />
+                  <input name="phone" onChange={handleInputChange} placeholder="Phone Number" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary-500" />
+                  <input name="gstin" onChange={handleInputChange} placeholder="GST Number" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary-500" />
                 </>
               )}
 
               {/* Product Inputs */}
               {activeTab === "products" && (
                 <>
-                  <input required name="name" onChange={handleInputChange} placeholder="Product Name *" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white" />
-                  <input name="sku" onChange={handleInputChange} placeholder="SKU / Code" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white" />
-                  <input name="category" onChange={handleInputChange} placeholder="Category (e.g., Rigid Box)" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white" />
-                  <select required name="customerName" onChange={handleInputChange} className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white">
+                  <input required name="name" onChange={handleInputChange} placeholder="Product Name *" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary-500" />
+                  <input name="sku" onChange={handleInputChange} placeholder="SKU / Code" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary-500" />
+                  <input name="category" onChange={handleInputChange} placeholder="Category (e.g., Rigid Box)" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary-500" />
+                  <select required name="customerName" onChange={handleInputChange} className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary-500">
                     <option value="">-- Assign to Customer --</option>
                     {customers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                   </select>
                 </>
               )}
 
-              {/* Rate Inputs */}
+              {/* Rate Inputs - Updated Base Rate to Quantity */}
               {activeTab === "rates" && (
                 <>
-                  <select required name="productName" onChange={handleInputChange} className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white mb-2">
+                  <select required name="productName" onChange={handleInputChange} className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white mb-2 focus:outline-none focus:border-primary-500">
                     <option value="">-- Select Product --</option>
                     {products.map(p => <option key={p.id} value={p.name}>{p.name} ({p.customerName})</option>)}
                   </select>
-                  <input required name="baseRate" type="number" step="0.01" onChange={handleInputChange} placeholder="Base Rate (₹) *" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white" />
-                  <input name="bulkRate" type="number" step="0.01" onChange={handleInputChange} placeholder="Bulk Rate (₹)" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white" />
+                  
+                  {/* CHANGED FROM BASE RATE TO QUANTITY */}
+                  <input required name="quantity" type="number" onChange={handleInputChange} placeholder="Target Quantity (e.g. 5000) *" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary-500" />
+                  
+                  <input required name="bulkRate" type="number" step="0.01" onChange={handleInputChange} placeholder="Rate Amount (₹) *" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary-500" />
                 </>
               )}
 

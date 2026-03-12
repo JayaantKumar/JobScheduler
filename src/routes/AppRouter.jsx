@@ -10,6 +10,7 @@ import Analytics from "../pages/Analytics";
 import SavedSchedules from "../pages/SavedSchedules";
 import MasterData from "../pages/MasterData";
 import ProductManagement from "../pages/ProductManagement";
+import ProcessManagement from "../pages/ProcessManagement";
 
 const ProtectedRoute = ({ children, requiredRole }) => {
   const { user, role } = useAuth();
@@ -50,8 +51,9 @@ export const AppRouter = () => {
           
           {/* Sub-routes for the management pages */}
           <Route path="machines" element={<Machines />} />
+          <Route path="process-management" element={<ProcessManagement />} />
           {/* Add the Master Data route here */}
-      <Route path="master-data" element={<MasterData />} />
+        <Route path="master-data" element={<MasterData />} />
           <Route path="jobs" element={<Jobs />} />
           <Route path="saved-schedules" element={<SavedSchedules />} />
           <Route path="product-management" element={<ProductManagement />} />

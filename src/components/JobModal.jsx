@@ -4,19 +4,7 @@ import { useCustomers } from "../hooks/useCustomers";
 import { useProducts } from "../hooks/useProducts";
 import { useMachines } from "../hooks/useMachines";
 import { useJobs } from "../hooks/useJobs"; 
-
-// Master list of processes
-const PROCESS_LIST = [
-  { id: "proc_cutting", name: "Sheet Cutting" },
-  { id: "proc_printing_uv", name: "UV Printing" },
-  { id: "proc_printing_offset", name: "Offset Printing" },
-  { id: "proc_die_cut", name: "Die Cutting" },
-  { id: "proc_gluing_auto", name: "Automatic Gluing" },
-  { id: "proc_gluing_manual", name: "Manual Gluing" },
-  { id: "proc_pasting", name: "Side Pasting" },
-  { id: "proc_sorting", name: "Sorting" },
-  { id: "proc_packing", name: "Packing" }
-];
+import { useProcesses } from "../hooks/useProcesses"; 
 
 const calculate14WorkingDays = () => {
   let count = 0;
@@ -46,6 +34,7 @@ export default function JobModal({ onClose }) {
   const { products, loading: prodLoading } = useProducts();
   const { machines, loading: machLoading } = useMachines();
   const { jobs } = useJobs(); 
+  const { processes: dbProcesses, loading: procLoading } = useProcesses(); 
 
   // --- SECTION 1: Job Information ---
   const [jobDate, setJobDate] = useState(new Date().toISOString().split('T')[0]);
@@ -75,9 +64,9 @@ export default function JobModal({ onClose }) {
   const [artworkStatus, setArtworkStatus] = useState("Pending");
   const [artworkVersion, setArtworkVersion] = useState("v1.0");
 
-  // --- PROCESS ROUTING & NOTES (REMOVED SETUP/RUN/HOLD) ---
+  // --- PROCESS ROUTING ---
   const [processes, setProcesses] = useState([
-    { id: Date.now(), process_id: "", assigned_machine: "", inputQty: "", outputQty: "", remarks: "" }
+    { id: Date.now(), process_name: "", assigned_machine: "", inputQty: "", outputQty: "", remarks: "" }
   ]);
   const [jobNotes, setJobNotes] = useState("");
 
@@ -120,7 +109,7 @@ export default function JobModal({ onClose }) {
       if (lastJob.process_sequence && lastJob.process_sequence.length > 0) {
         const restoredProcesses = lastJob.process_sequence.map((step, index) => ({
           id: Date.now() + index,
-          process_id: step.process_id || "",
+          process_name: step.process_name || "",
           assigned_machine: step.assigned_machine_id || "", 
           inputQty: step.input_qty || lastJob.quantity_target || "",
           outputQty: step.output_qty || lastJob.quantity_target || "",
@@ -143,22 +132,21 @@ export default function JobModal({ onClose }) {
 
       if (prod.default_sequence && prod.default_sequence.length > 0) {
         const autoBuiltProcesses = prod.default_sequence.map((step, index) => {
-          const matchedProcess = PROCESS_LIST.find(pl => pl.name === step.process_name);
           return {
             id: Date.now() + index,
-            process_id: matchedProcess ? matchedProcess.id : "",
+            process_name: step.process_name || "",
             assigned_machine: "", 
             inputQty: "", outputQty: "", remarks: ""
           };
         });
         setProcesses(autoBuiltProcesses);
       } else {
-        setProcesses([{ id: Date.now(), process_id: "", assigned_machine: "", inputQty: "", outputQty: "", remarks: "" }]);
+        setProcesses([{ id: Date.now(), process_name: "", assigned_machine: "", inputQty: "", outputQty: "", remarks: "" }]);
       }
     }
   };
 
-  const handleAddProcess = () => setProcesses([...processes, { id: Date.now(), process_id: "", assigned_machine: "", inputQty: quantity || "", outputQty: quantity || "", remarks: "" }]);
+  const handleAddProcess = () => setProcesses([...processes, { id: Date.now(), process_name: "", assigned_machine: "", inputQty: quantity || "", outputQty: quantity || "", remarks: "" }]);
   const handleRemoveProcess = (id) => processes.length > 1 && setProcesses(processes.filter(p => p.id !== id));
   const updateProcess = (id, field, value) => setProcesses(processes.map(p => p.id === id ? { ...p, [field]: value } : p));
 
@@ -168,16 +156,13 @@ export default function JobModal({ onClose }) {
     setLoading(true);
 
     const process_sequence = processes.map((proc, index) => {
-      const matchedProcess = PROCESS_LIST.find(pl => pl.id === proc.process_id);
       const assignedMach = machines.find(m => m.id === proc.assigned_machine);
 
       return {
         step_order: index + 1,
-        process_id: proc.process_id || `custom_proc_${index}`,
-        process_name: matchedProcess ? matchedProcess.name : "Unassigned Process",
+        process_id: `custom_proc_${index}`,
+        process_name: proc.process_name || "Unassigned Process",
         status: "pending",
-        // We set these to 0 strictly to keep the database structure from crashing, 
-        // but the user never sees or uses them anymore.
         setup_mins: 0,
         run_mins: 0,
         hold_mins: 0, 
@@ -410,7 +395,7 @@ export default function JobModal({ onClose }) {
               </div>
             </div>
 
-            {/* 4. PROCESS ROUTING (Manual Location Assignment) */}
+            {/* 4. PROCESS ROUTING (Dynamic DB Connection!) */}
             <div className="mt-8">
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-lg font-bold text-white">Process Routing & Location Assignment</h3>
@@ -428,15 +413,23 @@ export default function JobModal({ onClose }) {
                     <div className="flex-1 space-y-4">
                       
                       <div className="flex flex-col md:flex-row items-start gap-4">
+                        
                         <div className="flex-1 w-full">
                           <label className={labelClass}>Process Name</label>
-                          <select required value={proc.process_id} onChange={(e) => updateProcess(proc.id, "process_id", e.target.value)} className={inputClass}>
-                            <option value="">-- Select Process --</option>
-                            {PROCESS_LIST.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                          <select 
+                            required 
+                            value={proc.process_name} 
+                            onChange={(e) => updateProcess(proc.id, "process_name", e.target.value)} 
+                            className={inputClass}
+                            disabled={procLoading}
+                          >
+                            <option value="">{procLoading ? "Loading..." : "-- Select Process --"}</option>
+                            {dbProcesses.map(p => (
+                              <option key={p.id} value={p.processName}>{p.processName}</option>
+                            ))}
                           </select>
                         </div>
                         
-                        {/* THE NEW FORCED MANUAL LOCATION DROPDOWN */}
                         <div className="flex-1 w-full">
                           <label className={labelClass}>Assigned Location / Machine *</label>
                           <select 
@@ -460,7 +453,6 @@ export default function JobModal({ onClose }) {
                         </button>
                       </div>
 
-                      {/* QTY ROW ONLY */}
                       <div className="grid grid-cols-2 gap-4">
                         <div><label className={labelClass}>Input Qty</label><input type="number" value={proc.inputQty} onChange={(e) => updateProcess(proc.id, "inputQty", e.target.value)} className={inputClass} /></div>
                         <div><label className={labelClass}>Output Qty</label><input type="number" value={proc.outputQty} onChange={(e) => updateProcess(proc.id, "outputQty", e.target.value)} className={inputClass} /></div>
