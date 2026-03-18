@@ -74,13 +74,6 @@ export default function AdminLayout() {
             Analytics
           </NavLink>
           <NavLink
-            to="/dashboard/saved-schedules"
-            onClick={handleNavClick}
-            className={navLinkClasses}
-          >
-            Saved Schedules
-          </NavLink>
-          <NavLink
             to="/dashboard/jobs"
             onClick={handleNavClick}
             className={navLinkClasses}

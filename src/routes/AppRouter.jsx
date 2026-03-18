@@ -7,7 +7,6 @@ import Jobs from "../pages/Jobs";
 import DashboardHome from "../pages/DashboardHome";
 import Unauthorized from "../pages/Unauthorized";
 import Analytics from "../pages/Analytics";
-import SavedSchedules from "../pages/SavedSchedules";
 import MasterData from "../pages/MasterData";
 import ProductManagement from "../pages/ProductManagement";
 import ProcessManagement from "../pages/ProcessManagement";
@@ -17,7 +16,6 @@ const ProtectedRoute = ({ children, requiredRole }) => {
   
   if (!user) return <Navigate to="/login" replace />;
   
-  // If we have a user, but role is still fetching, WAIT! Don't redirect yet.
   if (requiredRole && role === undefined) {
     return (
       <div className="h-screen bg-gray-950 flex items-center justify-center">
@@ -26,7 +24,6 @@ const ProtectedRoute = ({ children, requiredRole }) => {
     );
   }
 
-  // If role is fully loaded and doesn't match, THEN kick them out.
   if (requiredRole && role !== requiredRole) return <Navigate to="/unauthorized" replace />;
   
   return children;
@@ -44,22 +41,15 @@ export const AppRouter = () => {
             <AdminLayout />
           </ProtectedRoute>
         }>
-          {/* Default route loads the Analytics Dashboard */}
           <Route index element={<DashboardHome />} />
-
           <Route path="analytics" element={<Analytics />} />
-          
-          {/* Sub-routes for the management pages */}
           <Route path="machines" element={<Machines />} />
           <Route path="process-management" element={<ProcessManagement />} />
-          {/* Add the Master Data route here */}
-        <Route path="master-data" element={<MasterData />} />
+          <Route path="master-data" element={<MasterData />} />
           <Route path="jobs" element={<Jobs />} />
-          <Route path="saved-schedules" element={<SavedSchedules />} />
           <Route path="product-management" element={<ProductManagement />} />
         </Route>
         
-        {/* Catch-all redirects unknown URLs to the dashboard */}
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </BrowserRouter>
