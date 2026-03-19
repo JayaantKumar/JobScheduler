@@ -4,6 +4,7 @@ import { db } from "../firebase/config";
 import { useCustomers } from "../hooks/useCustomers";
 import { useProducts } from "../hooks/useProducts";
 import { useRates } from "../hooks/useRates";
+import ExportDataButton from "../components/ExportDataButton"; // <-- NEW IMPORT
 
 export default function MasterData() {
   const [activeTab, setActiveTab] = useState("customers");
@@ -78,9 +79,14 @@ export default function MasterData() {
 
   return (
     <div className="max-w-[1600px] mx-auto p-6 h-full flex flex-col">
-      <div className="mb-6">
-        <h2 className="text-3xl font-bold text-white tracking-tight">Master Data</h2>
-        <p className="text-gray-400 mt-1">Manage your customers, products, and pricing rates.</p>
+      
+      {/* HEADER WITH EXPORT BUTTON */}
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-6">
+        <div>
+          <h2 className="text-3xl font-bold text-white tracking-tight">Master Data</h2>
+          <p className="text-gray-400 mt-1">Manage your customers, products, and pricing rates.</p>
+        </div>
+        <ExportDataButton />
       </div>
 
       <div className="flex items-center gap-3 mb-6 overflow-x-auto pb-2 no-scrollbar whitespace-nowrap">
@@ -149,7 +155,7 @@ export default function MasterData() {
             </table>
           )}
 
-          {/* RATES TABLE - Updated Base Rate to Quantity */}
+          {/* RATES TABLE */}
           {activeTab === "rates" && (
             <table className="w-full text-left border-collapse min-w-[900px]">
               <thead>
@@ -211,7 +217,7 @@ export default function MasterData() {
                 </>
               )}
 
-              {/* Rate Inputs - Updated Base Rate to Quantity */}
+              {/* Rate Inputs */}
               {activeTab === "rates" && (
                 <>
                   <select required name="productName" onChange={handleInputChange} className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white mb-2 focus:outline-none focus:border-primary-500">
@@ -219,7 +225,6 @@ export default function MasterData() {
                     {products.map(p => <option key={p.id} value={p.name}>{p.name} ({p.customerName})</option>)}
                   </select>
                   
-                  {/* CHANGED FROM BASE RATE TO QUANTITY */}
                   <input required name="quantity" type="number" onChange={handleInputChange} placeholder="Target Quantity (e.g. 5000) *" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary-500" />
                   
                   <input required name="bulkRate" type="number" step="0.01" onChange={handleInputChange} placeholder="Rate Amount (₹) *" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary-500" />
