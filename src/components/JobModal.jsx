@@ -53,6 +53,7 @@ export default function JobModal({ onClose }) {
   const [sheetSize, setSheetSize] = useState("");
   const [sheetGsm, setSheetGsm] = useState("");
   const [materialType, setMaterialType] = useState("");
+  const [paperCompany, setPaperCompany] = useState(""); // <-- NEW: Paper Company State!
   const [printColors, setPrintColors] = useState("NA");
   const [sizeBeforeCut, setSizeBeforeCut] = useState("");
   const [sizeAfterCut, setSizeAfterCut] = useState("");
@@ -98,6 +99,7 @@ export default function JobModal({ onClose }) {
       setSheetGsm(lastJob.product?.gsm || prod.paperGsm || "");
       
       setSheetSize(lastJob.product?.sheet_size || "");
+      setPaperCompany(lastJob.specifications?.paper_company || ""); // <-- Auto-fills previous paper company!
       setPrintColors(lastJob.specifications?.colors || "NA");
       setSizeBeforeCut(lastJob.specifications?.size_before_cut || "");
       setSizeAfterCut(lastJob.specifications?.size_after_cut || "");
@@ -128,7 +130,7 @@ export default function JobModal({ onClose }) {
       setMaterialType(prod.paperType || "");
       setSheetGsm(prod.paperGsm || "");
       
-      setSheetSize(""); setPrintColors("NA"); setSizeBeforeCut(""); setSizeAfterCut(""); setDieSelect(""); setJobNotes(""); setQuantity("");
+      setSheetSize(""); setPaperCompany(""); setPrintColors("NA"); setSizeBeforeCut(""); setSizeAfterCut(""); setDieSelect(""); setJobNotes(""); setQuantity("");
 
       if (prod.default_sequence && prod.default_sequence.length > 0) {
         const autoBuiltProcesses = prod.default_sequence.map((step, index) => {
@@ -196,6 +198,7 @@ export default function JobModal({ onClose }) {
         size_before_cut: sizeBeforeCut,
         size_after_cut: sizeAfterCut,
         die: dieSelect,
+        paper_company: paperCompany, // <-- NEW: Saves to the database!
         material_status: materialStatus,
         artwork_status: artworkStatus,
         artwork_version: artworkVersion
@@ -322,10 +325,19 @@ export default function JobModal({ onClose }) {
                 <div className="w-6 h-6 rounded-full bg-primary-600 flex items-center justify-center text-white text-xs font-bold shadow-lg shadow-primary-500/30">2</div>
                 <h3 className="text-lg font-bold text-white">Sheet & Material Specifications</h3>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+              
+              {/* UPDATED GRID WITH NEW PAPER COMPANY FIELD */}
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
                 <div><label className={labelClass}>Sheet Size</label><input type="text" value={sheetSize} onChange={e => setSheetSize(e.target.value)} placeholder="e.g., 25 x 36 inches" className={inputClass} /></div>
                 <div><label className={labelClass}>Sheet GSM</label><input type="text" value={sheetGsm} onChange={e => setSheetGsm(e.target.value)} placeholder="Auto-filled" className={inputClass} /></div>
                 <div><label className={labelClass}>Material Type *</label><input required type="text" value={materialType} onChange={e => setMaterialType(e.target.value)} placeholder="Auto-filled" className={inputClass} /></div>
+                
+                {/* ⭐️ NEW PAPER COMPANY INPUT ⭐️ */}
+                <div>
+                  <label className={labelClass}>Paper Company</label>
+                  <input type="text" value={paperCompany} onChange={e => setPaperCompany(e.target.value)} placeholder="e.g., ITC, BILT" className={inputClass} />
+                </div>
+
                 <div>
                   <label className={labelClass}>Number of Colors</label>
                   <select value={printColors} onChange={e => setPrintColors(e.target.value)} className={inputClass}>
@@ -414,6 +426,7 @@ export default function JobModal({ onClose }) {
                       
                       <div className="flex flex-col md:flex-row items-start gap-4">
                         
+                        {/* 3. NEW: The Process Dropdown now pulls perfectly from the database! */}
                         <div className="flex-1 w-full">
                           <label className={labelClass}>Process Name</label>
                           <select 

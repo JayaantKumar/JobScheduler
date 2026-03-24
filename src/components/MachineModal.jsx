@@ -24,6 +24,8 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
   const [customType, setCustomType] = useState("");
   const [place, setPlace] = useState(editingMachine?.place || ""); 
   const [status, setStatus] = useState(editingMachine?.status || "Online");
+  
+  // Default to inches as requested!
   const [specs, setSpecs] = useState(editingMachine?.specs || { dimUnit: "in" });
   const [loading, setLoading] = useState(false);
 
@@ -36,11 +38,9 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
     }
   }, [name, place, editingMachine]);
 
-  // THIS IS THE FUNCTION ESLINT WAS COMPLAINING ABOUT!
-  // It handles text/dropdown specs (like Colours, Lamination Type, Mode)
   const handleSpecChange = (field, value) => setSpecs(prev => ({ ...prev, [field]: value }));
 
-  // This handles mathematical dimension specs
+  // UPDATED: Now only calculates Length x Width!
   const handleDimChange = (field, value) => {
     const newSpecs = { ...specs, [field]: value };
     const unit = newSpecs.dimUnit || "in";
@@ -51,8 +51,7 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
     const partsConverted = [];
 
     if (newSpecs.dimL) { parts.push(newSpecs.dimL); partsConverted.push((newSpecs.dimL * multiplier).toFixed(1)); }
-    if (newSpecs.dimB) { parts.push(newSpecs.dimB); partsConverted.push((newSpecs.dimB * multiplier).toFixed(1)); }
-    if (newSpecs.dimH) { parts.push(newSpecs.dimH); partsConverted.push((newSpecs.dimH * multiplier).toFixed(1)); }
+    if (newSpecs.dimW) { parts.push(newSpecs.dimW); partsConverted.push((newSpecs.dimW * multiplier).toFixed(1)); } // Changed to Width
 
     if (parts.length > 0) {
       newSpecs.size = `${parts.join(" x ")} ${unit} (${partsConverted.join(" x ")} ${otherUnit})`;
@@ -135,17 +134,19 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
           <div className="bg-gray-950/50 p-4 rounded-lg border border-gray-800">
             <h4 className="text-xs font-bold text-primary-400 uppercase tracking-wider mb-3">Capabilities & Specs</h4>
             
-            {/* A, B, E: Sheet Cutting, Corrugation, Die Cutting -> Size (L x B x H) */}
+            {/* UPDATED: Size (L x W) */}
             {["Sheet Cutting", "Corrugation", "Die Cutting"].includes(type) && (
               <div>
-                <label className="block text-sm text-gray-400 mb-2">Max Size / Format (L x B x H)</label>
+                <label className="block text-sm text-gray-400 mb-2">Max Size / Format (L x W)</label>
                 <div className="flex items-center gap-2 mb-2">
                   <input type="number" placeholder="L" value={specs.dimL || ""} onChange={e => handleDimChange('dimL', e.target.value)} className={`${inputClass} px-2 text-center`} />
                   <span className="text-gray-500 text-xs">x</span>
-                  <input type="number" placeholder="B" value={specs.dimB || ""} onChange={e => handleDimChange('dimB', e.target.value)} className={`${inputClass} px-2 text-center`} />
-                  <span className="text-gray-500 text-xs">x</span>
-                  <input type="number" placeholder="H" value={specs.dimH || ""} onChange={e => handleDimChange('dimH', e.target.value)} className={`${inputClass} px-2 text-center`} />
-                  <select value={specs.dimUnit || "in"} onChange={e => handleDimChange('dimUnit', e.target.value)} className={`${inputClass} px-2 w-auto`}><option value="in">in</option><option value="cm">cm</option></select>
+                  <input type="number" placeholder="W" value={specs.dimW || ""} onChange={e => handleDimChange('dimW', e.target.value)} className={`${inputClass} px-2 text-center`} />
+                  
+                  <select value={specs.dimUnit || "in"} onChange={e => handleDimChange('dimUnit', e.target.value)} className={`${inputClass} px-2 w-auto`}>
+                    <option value="in">in</option>
+                    <option value="cm">cm</option>
+                  </select>
                 </div>
                 {specs.size && (
                   <div className="text-xs text-primary-300 font-mono bg-primary-900/30 p-2 rounded border border-primary-500/20">
@@ -155,7 +156,7 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
               </div>
             )}
 
-            {/* C: Printing -> Colours & Size (L x B) */}
+            {/* C: Printing -> Colours & Size (L x W) */}
             {type === "Printing" && (
               <div className="space-y-4">
                 <div>
@@ -165,11 +166,12 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-400 mb-2">Max Print Size (L x B)</label>
+                  <label className="block text-sm text-gray-400 mb-2">Max Print Size (L x W)</label>
                   <div className="flex items-center gap-2 mb-2">
                     <input type="number" placeholder="L" value={specs.dimL || ""} onChange={e => handleDimChange('dimL', e.target.value)} className={`${inputClass} px-2 text-center`} />
                     <span className="text-gray-500 text-xs">x</span>
-                    <input type="number" placeholder="B" value={specs.dimB || ""} onChange={e => handleDimChange('dimB', e.target.value)} className={`${inputClass} px-2 text-center`} />
+                    <input type="number" placeholder="W" value={specs.dimW || ""} onChange={e => handleDimChange('dimW', e.target.value)} className={`${inputClass} px-2 text-center`} />
+                    
                     <select value={specs.dimUnit || "in"} onChange={e => handleDimChange('dimUnit', e.target.value)} className={`${inputClass} px-2 w-auto`}>
                       <option value="in">in</option>
                       <option value="cm">cm</option>

@@ -3,22 +3,6 @@ import { collection, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from "
 import { db } from "../firebase/config";
 import { useProcesses } from "../hooks/useProcesses";
 
-const PROCESS_NAMES = [
-  "Sheet Cutting", "Corrugation", "Printing", "Lamination", "Die Cutting",
-  "Punching", "Creasing", "Scoring", "Folding", "Gluing", "Side Pasting",
-  "Bottom Pasting", "Window Pasting", "Window Cutting", "Embossing",
-  "Debossing", "Foil Stamping", "Hot Foil Stamping", "UV Coating",
-  "Spot UV", "Varnishing", "Matt Lamination", "Gloss Lamination",
-  "Stripping", "Blanking", "Bundling", "Stitching", "Quality Check",
-  "Final Inspection", "Packing", "Dispatch", "Other"
-];
-
-const MACHINE_TYPES = [
-  "Corrugation", "Die Cutting", "Dispatch", "Embossing", "Foil Stamping",
-  "Lamination", "Packing", "Sheet Cutting", "Side Pasting", "Stripping",
-  "Window Pasting (Hand Work)"
-];
-
 export default function ProcessManagement() {
   const { processes, loading } = useProcesses();
   
@@ -26,8 +10,8 @@ export default function ProcessManagement() {
   const [editingProcess, setEditingProcess] = useState(null);
   const [saving, setSaving] = useState(false);
 
+  // Simplified Form State (No custom "Other" field needed anymore!)
   const [processName, setProcessName] = useState("");
-  const [customProcessName, setCustomProcessName] = useState(""); 
   const [machineType, setMachineType] = useState("");
   const [inputUnit, setInputUnit] = useState("");
   const [outputUnit, setOutputUnit] = useState("");
@@ -35,34 +19,40 @@ export default function ProcessManagement() {
   const openModal = (proc = null) => {
     if (proc) {
       setEditingProcess(proc);
-      if (PROCESS_NAMES.includes(proc.processName)) {
-        setProcessName(proc.processName);
-        setCustomProcessName("");
-      } else {
-        setProcessName("Other");
-        setCustomProcessName(proc.processName);
-      }
+      setProcessName(proc.processName || "");
       setMachineType(proc.machineType || "");
       setInputUnit(proc.inputUnit || "");
       setOutputUnit(proc.outputUnit || "");
     } else {
       setEditingProcess(null);
-      setProcessName(""); setCustomProcessName(""); setMachineType("");
-      setInputUnit(""); setOutputUnit("");
+      setProcessName(""); 
+      setMachineType("");
+      setInputUnit(""); 
+      setOutputUnit("");
     }
     setIsModalOpen(true);
   };
 
   const handleSave = async (e) => {
     e.preventDefault();
-    const finalProcessName = processName === "Other" ? customProcessName : processName;
-    if (!finalProcessName.trim()) return alert("Please select or enter a Process Name.");
+    
+    if (!processName.trim()) return alert("Please enter a Process Name.");
+    
     setSaving(true);
-    const payload = { processName: finalProcessName, machineType, inputUnit, outputUnit, updated_at: serverTimestamp() };
+    const payload = { 
+      processName: processName.trim(), 
+      machineType: machineType.trim(), 
+      inputUnit, 
+      outputUnit, 
+      updated_at: serverTimestamp() 
+    };
 
     try {
-      if (editingProcess) await updateDoc(doc(db, "processes", editingProcess.id), payload);
-      else await addDoc(collection(db, "processes"), { ...payload, created_at: serverTimestamp() });
+      if (editingProcess) {
+        await updateDoc(doc(db, "processes", editingProcess.id), payload);
+      } else {
+        await addDoc(collection(db, "processes"), { ...payload, created_at: serverTimestamp() });
+      }
       setIsModalOpen(false);
     } catch (error) {
       alert("Failed to save: " + error.message);
@@ -73,8 +63,11 @@ export default function ProcessManagement() {
 
   const handleDelete = async (id) => {
     if (window.confirm("Are you sure you want to delete this process?")) {
-      try { await deleteDoc(doc(db, "processes", id)); } 
-      catch (error) { alert("Failed to delete: " + error.message); }
+      try { 
+        await deleteDoc(doc(db, "processes", id)); 
+      } catch (error) { 
+        alert("Failed to delete: " + error.message); 
+      }
     }
   };
 
@@ -114,7 +107,7 @@ export default function ProcessManagement() {
             </thead>
             <tbody className="divide-y divide-gray-800">
               {processes.length === 0 ? (
-                <tr><td colSpan="5" className="py-12 text-center text-gray-500">No processes defined yet.</td></tr>
+                <tr><td colSpan="5" className="py-12 text-center text-gray-500">No processes defined yet. Start building your custom list!</td></tr>
               ) : (
                 processes.map((proc) => (
                   <tr key={proc.id} className="hover:bg-gray-800/30 transition-colors group">
@@ -145,21 +138,32 @@ export default function ProcessManagement() {
             </div>
             
             <form onSubmit={handleSave} className="space-y-5">
+              
+              {/* NOW A CLEAN TEXT INPUT INSTEAD OF A DROPDOWN */}
               <div>
-                <label className={labelClass}>Process Name</label>
-                <select required value={processName} onChange={e => setProcessName(e.target.value)} className={inputClass}>
-                  <option value="">-- Select Process --</option>
-                  {PROCESS_NAMES.map(p => <option key={p} value={p}>{p}</option>)}
-                </select>
-                {processName === "Other" && <input type="text" required value={customProcessName} onChange={e => setCustomProcessName(e.target.value)} placeholder="Type custom process name..." className={`${inputClass} mt-2 border-primary-500/50`} />}
+                <label className={labelClass}>Process Name *</label>
+                <input 
+                  type="text" 
+                  required 
+                  value={processName} 
+                  onChange={e => setProcessName(e.target.value)} 
+                  placeholder="e.g., Premium Foiling" 
+                  className={inputClass} 
+                />
               </div>
+
+              {/* NOW A CLEAN TEXT INPUT INSTEAD OF A DROPDOWN */}
               <div>
                 <label className={labelClass}>Default Machine Type</label>
-                <select value={machineType} onChange={e => setMachineType(e.target.value)} className={inputClass}>
-                  <option value="">-- Select Machine Type --</option>
-                  {MACHINE_TYPES.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
+                <input 
+                  type="text" 
+                  value={machineType} 
+                  onChange={e => setMachineType(e.target.value)} 
+                  placeholder="e.g., Foil Stamping Machine" 
+                  className={inputClass} 
+                />
               </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div><label className={labelClass}>Default Input Unit</label><input type="text" value={inputUnit} onChange={e => setInputUnit(e.target.value)} placeholder="e.g., sheets" className={inputClass} /></div>
                 <div><label className={labelClass}>Default Output Unit</label><input type="text" value={outputUnit} onChange={e => setOutputUnit(e.target.value)} placeholder="e.g., pieces" className={inputClass} /></div>
