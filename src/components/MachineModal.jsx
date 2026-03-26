@@ -1,31 +1,29 @@
 import { useState, useEffect } from "react";
 import { collection, addDoc, updateDoc, doc, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase/config";
-
-const PREDEFINED_TYPES = [
-  "Sheet Cutting", "Folding", "Corrugation", "Printing", "Lamination",
-  "Die Cutting", "Punching", "Creasing", "Gluing", "Side Pasting",
-  "Bottom Pasting", "Window Pasting", "Embossing", "Debossing",
-  "Foil Stamping", "UV Coating", "Varnishing", "Stripping",
-  "Bundling", "Stitching", "Quality Check", "Packing"
-];
+import { useProcesses } from "../hooks/useProcesses"; // <-- 1. NEW: Import the database hook!
 
 export default function MachineModal({ onClose, machines = [], editingMachine = null }) {
+  
+  // 2. NEW: Fetch your dynamic processes from the database
+  const { processes: dbProcesses, loading: procLoading } = useProcesses();
+
+  // 3. NEW: Combine database processes with any custom ones already in use
+  const dbProcessNames = dbProcesses.map(p => p.processName);
   const existingCustomTypes = [...new Set(machines.map(m => m.type))].filter(
-    type => type && !PREDEFINED_TYPES.includes(type)
+    type => type && !dbProcessNames.includes(type)
   );
-  const ALL_TYPES = [...PREDEFINED_TYPES, ...existingCustomTypes];
+  const ALL_TYPES = [...new Set([...dbProcessNames, ...existingCustomTypes])];
 
   // Form States
   const [name, setName] = useState(editingMachine?.name || "");
   const [machineCode, setMachineCode] = useState(editingMachine?.machineCode || ""); 
   const [company, setCompany] = useState(editingMachine?.company || ""); 
-  const [type, setType] = useState(editingMachine?.type || ALL_TYPES[0] || "");
+  const [type, setType] = useState(editingMachine?.type || ""); // Default to empty so they are forced to pick
   const [customType, setCustomType] = useState("");
   const [place, setPlace] = useState(editingMachine?.place || ""); 
   const [status, setStatus] = useState(editingMachine?.status || "Online");
   
-  // Default to inches as requested!
   const [specs, setSpecs] = useState(editingMachine?.specs || { dimUnit: "in" });
   const [loading, setLoading] = useState(false);
 
@@ -40,7 +38,6 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
 
   const handleSpecChange = (field, value) => setSpecs(prev => ({ ...prev, [field]: value }));
 
-  // UPDATED: Now only calculates Length x Width!
   const handleDimChange = (field, value) => {
     const newSpecs = { ...specs, [field]: value };
     const unit = newSpecs.dimUnit || "in";
@@ -51,7 +48,7 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
     const partsConverted = [];
 
     if (newSpecs.dimL) { parts.push(newSpecs.dimL); partsConverted.push((newSpecs.dimL * multiplier).toFixed(1)); }
-    if (newSpecs.dimW) { parts.push(newSpecs.dimW); partsConverted.push((newSpecs.dimW * multiplier).toFixed(1)); } // Changed to Width
+    if (newSpecs.dimW) { parts.push(newSpecs.dimW); partsConverted.push((newSpecs.dimW * multiplier).toFixed(1)); }
 
     if (parts.length > 0) {
       newSpecs.size = `${parts.join(" x ")} ${unit} (${partsConverted.join(" x ")} ${otherUnit})`;
@@ -66,8 +63,10 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
     if (!name.trim()) return alert("Error: Please enter a Machine Name.");
     if (!place.trim()) return alert("Error: Please enter a Machine Place.");
 
-    setLoading(true);
     const finalType = type === "Custom" ? customType : type;
+    if (!finalType || !finalType.trim()) return alert("Error: Please select a Machine Type.");
+
+    setLoading(true);
 
     const machineData = {
       name: name,
@@ -104,7 +103,7 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-400 mb-1">Machine Name *</label>
-            <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Die Cutter" className={inputClass} />
+            <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Die Cutter Alpha" className={inputClass} />
           </div>
 
           <div>
@@ -122,19 +121,26 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
             <input type="text" value={company} onChange={e => setCompany(e.target.value)} placeholder="e.g. Bobst (Optional)" className={inputClass} />
           </div>
 
+          {/* 4. NEW: DYNAMIC DATABASE DROPDOWN */}
           <div>
-            <label className="block text-sm font-medium text-gray-400 mb-1">Machine Type</label>
-            <select value={type} onChange={e => { setType(e.target.value); setSpecs({ dimUnit: "in" }); }} className={inputClass}>
+            <label className="block text-sm font-medium text-gray-400 mb-1">Machine Type *</label>
+            <select 
+              value={type} 
+              onChange={e => { setType(e.target.value); setSpecs({ dimUnit: "in" }); }} 
+              className={inputClass}
+              disabled={procLoading}
+            >
+              <option value="">{procLoading ? "Loading Processes..." : "-- Select Machine Type --"}</option>
               {ALL_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
               <option value="Custom" className="text-primary-400 font-bold">+ Add Custom Type...</option>
             </select>
-            {type === "Custom" && <input type="text" value={customType} onChange={e => setCustomType(e.target.value)} placeholder="Type custom type..." className={`${inputClass} mt-2`} />}
+            {type === "Custom" && <input type="text" value={customType} onChange={e => setCustomType(e.target.value)} placeholder="Type custom type..." className={`${inputClass} mt-2 animate-fade-in`} />}
           </div>
 
           <div className="bg-gray-950/50 p-4 rounded-lg border border-gray-800">
             <h4 className="text-xs font-bold text-primary-400 uppercase tracking-wider mb-3">Capabilities & Specs</h4>
             
-            {/* UPDATED: Size (L x W) */}
+            {/* Size (L x W) */}
             {["Sheet Cutting", "Corrugation", "Die Cutting"].includes(type) && (
               <div>
                 <label className="block text-sm text-gray-400 mb-2">Max Size / Format (L x W)</label>
@@ -156,7 +162,7 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
               </div>
             )}
 
-            {/* C: Printing -> Colours & Size (L x W) */}
+            {/* Printing -> Colours & Size (L x W) */}
             {type === "Printing" && (
               <div className="space-y-4">
                 <div>
@@ -186,7 +192,7 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
               </div>
             )}
 
-            {/* D: Lamination -> Type & Mode */}
+            {/* Lamination -> Type & Mode */}
             {type === "Lamination" && (
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -207,7 +213,7 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
               </div>
             )}
 
-            {/* G: Gluing -> Mode */}
+            {/* Gluing -> Mode */}
             {type === "Gluing" && (
               <div>
                 <label className="block text-sm text-gray-400 mb-1">Mode</label>
@@ -219,7 +225,7 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
               </div>
             )}
 
-            {/* H: Side Pasting -> Min & Max Size */}
+            {/* Side Pasting -> Min & Max Size */}
             {type === "Side Pasting" && (
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -233,7 +239,7 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
               </div>
             )}
 
-            {/* F: Pasting (Other) -> Manual Only */}
+            {/* Pasting (Other) -> Manual Only */}
             {["Bottom Pasting", "Window Pasting", "Pasting"].includes(type) && (
               <div>
                 <label className="block text-sm text-gray-400 mb-1">Mode</label>
