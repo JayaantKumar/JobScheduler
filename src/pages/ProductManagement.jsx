@@ -3,12 +3,14 @@ import { collection, addDoc, updateDoc, doc, deleteDoc, serverTimestamp } from "
 import { db } from "../firebase/config";
 import { useProducts } from "../hooks/useProducts";
 import { useCustomers } from "../hooks/useCustomers";
-import { useProcesses } from "../hooks/useProcesses"; // <-- NEW: Connected to the database!
+import { useProcesses } from "../hooks/useProcesses"; 
+import { useMachines } from "../hooks/useMachines"; // <-- NEW: Fetch machines!
 
 export default function ProductManagement() {
   const { products, loading: prodLoading } = useProducts();
   const { customers, loading: custLoading } = useCustomers();
-  const { processes: dbProcesses, loading: procLoading } = useProcesses(); // <-- NEW: Fetching processes
+  const { processes: dbProcesses, loading: procLoading } = useProcesses(); 
+  const { machines, loading: machLoading } = useMachines(); // <-- NEW: Load machines!
 
   const [isModalOpen, setModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
@@ -25,8 +27,8 @@ export default function ProductManagement() {
   const [paperGsm, setPaperGsm] = useState("");
   const [sheetSize, setSheetSize] = useState("");
   
-  // Default Process Sequence State
-  const [sequence, setSequence] = useState([{ id: Date.now(), process_name: "" }]);
+  // Sequence State now holds both Process Name AND Assigned Machine
+  const [sequence, setSequence] = useState([{ id: Date.now(), process_name: "", assigned_machine: "" }]);
 
   const openModal = (prod = null) => {
     if (prod) {
@@ -41,30 +43,40 @@ export default function ProductManagement() {
       setSheetSize(prod.sheet_size || "");
       
       if (prod.default_sequence && prod.default_sequence.length > 0) {
-        setSequence(prod.default_sequence.map((s, i) => ({ id: Date.now() + i, process_name: s.process_name })));
+        setSequence(prod.default_sequence.map((s, i) => ({ 
+          id: Date.now() + i, 
+          process_name: s.process_name || "",
+          assigned_machine: s.assigned_machine || "" 
+        })));
       } else {
-        setSequence([{ id: Date.now(), process_name: "" }]);
+        setSequence([{ id: Date.now(), process_name: "", assigned_machine: "" }]);
       }
     } else {
       setEditingProduct(null);
       setName(""); setSku(""); setCategory(""); setCustomerName("");
       setSize(""); setPaperType(""); setPaperGsm(""); setSheetSize("");
-      setSequence([{ id: Date.now(), process_name: "" }]);
+      setSequence([{ id: Date.now(), process_name: "", assigned_machine: "" }]);
     }
     setModalOpen(true);
   };
 
-  const handleSequenceAdd = () => setSequence([...sequence, { id: Date.now(), process_name: "" }]);
+  const handleSequenceAdd = () => setSequence([...sequence, { id: Date.now(), process_name: "", assigned_machine: "" }]);
   const handleSequenceRemove = (id) => sequence.length > 1 && setSequence(sequence.filter(s => s.id !== id));
-  const handleSequenceChange = (id, val) => setSequence(sequence.map(s => s.id === id ? { ...s, process_name: val } : s));
+  
+  // Updated to handle specific fields (Process OR Machine)
+  const handleSequenceChange = (id, field, val) => {
+    setSequence(sequence.map(s => s.id === id ? { ...s, [field]: val } : s));
+  };
 
   const handleSave = async (e) => {
     e.preventDefault();
     setSaving(true);
 
+    // Save both the process and the permanently assigned machine
     const cleanSequence = sequence.filter(s => s.process_name.trim() !== "").map((s, index) => ({
       step_order: index + 1,
-      process_name: s.process_name
+      process_name: s.process_name,
+      assigned_machine: s.assigned_machine
     }));
 
     const payload = {
@@ -111,7 +123,7 @@ export default function ProductManagement() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
         <div>
           <h2 className="text-3xl font-bold text-white tracking-tight">Product Management</h2>
-          <p className="text-gray-400 mt-1">Define product templates and standard process routing.</p>
+          <p className="text-gray-400 mt-1">Define product templates and permanently assign target machines.</p>
         </div>
         <button onClick={() => openModal()} className="bg-primary-600 hover:bg-primary-500 text-white px-5 py-2.5 rounded-lg font-medium transition-colors shadow-lg shadow-primary-500/20 flex items-center gap-2">
           <span>+</span> Add Product Template
@@ -122,7 +134,6 @@ export default function ProductManagement() {
         <input type="text" placeholder="Search products or customers..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className={inputClass} />
       </div>
 
-      {/* Main Table */}
       <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden shadow-xl flex-1 flex flex-col">
         <div className="overflow-x-auto flex-1">
           <table className="w-full text-left border-collapse min-w-[900px]">
@@ -131,7 +142,7 @@ export default function ProductManagement() {
                 <th className="py-4 px-6">Product & SKU</th>
                 <th className="py-4 px-6">Customer</th>
                 <th className="py-4 px-6">Material Specs</th>
-                <th className="py-4 px-6">Default Routing Steps</th>
+                <th className="py-4 px-6">Locked Production Route</th>
                 <th className="py-4 px-6 text-right">Actions</th>
               </tr>
             </thead>
@@ -152,13 +163,23 @@ export default function ProductManagement() {
                       <div className="text-xs mt-1">Size: {prod.size || "N/A"}</div>
                     </td>
                     <td className="py-4 px-6">
-                      <div className="flex flex-wrap gap-1">
+                      <div className="flex flex-col gap-1.5">
                         {prod.default_sequence?.length > 0 ? (
-                          prod.default_sequence.map((step, i) => (
-                            <span key={i} className="bg-gray-800 border border-gray-700 text-gray-300 text-[10px] px-2 py-0.5 rounded font-medium whitespace-nowrap">
-                              {i+1}. {step.process_name}
-                            </span>
-                          ))
+                          prod.default_sequence.map((step, i) => {
+                            const mach = machines.find(m => m.id === step.assigned_machine);
+                            return (
+                              <div key={i} className="flex items-center gap-2">
+                                <span className="bg-gray-800 border border-gray-700 text-gray-300 text-[10px] px-2 py-0.5 rounded font-medium whitespace-nowrap">
+                                  {i+1}. {step.process_name}
+                                </span>
+                                {mach && (
+                                  <span className="text-[10px] text-gray-500 font-mono truncate max-w-[120px]">
+                                    👉 {mach.name}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })
                         ) : (
                           <span className="text-gray-500 text-xs italic">No routing saved</span>
                         )}
@@ -178,7 +199,6 @@ export default function ProductManagement() {
         </div>
       </div>
 
-      {/* Add / Edit Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-3xl max-h-[90vh] flex flex-col shadow-2xl">
@@ -190,7 +210,6 @@ export default function ProductManagement() {
 
             <div className="p-6 overflow-y-auto custom-scrollbar flex-1 space-y-8">
               
-              {/* Info Section */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div><label className={labelClass}>Product Name *</label><input required type="text" value={name} onChange={e => setName(e.target.value)} className={inputClass} placeholder="e.g., 50ml Perfume Box" /></div>
                 <div><label className={labelClass}>SKU / Item Code</label><input type="text" value={sku} onChange={e => setSku(e.target.value)} className={inputClass} placeholder="e.g., BX-PRF-50" /></div>
@@ -204,7 +223,6 @@ export default function ProductManagement() {
                 <div><label className={labelClass}>Product Category</label><input type="text" value={category} onChange={e => setCategory(e.target.value)} className={inputClass} placeholder="e.g., Rigid Box" /></div>
               </div>
 
-              {/* Specs Section */}
               <div className="bg-gray-950/50 p-5 rounded-lg border border-gray-800">
                 <h3 className="text-sm font-bold text-gray-300 mb-4">Material Specifications</h3>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -215,27 +233,42 @@ export default function ProductManagement() {
                 </div>
               </div>
 
-              {/* Dynamic Process Routing Builder */}
+              {/* DYNAMIC PROCESS & MACHINE ROUTING BUILDER */}
               <div>
                 <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-sm font-bold text-gray-300">Default Process Routing</h3>
-                  <span className="text-xs text-gray-500">Jobs created from this template will auto-fill these steps.</span>
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-300">Locked Production Routing</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">Assign the exact processes AND machines required to build this product.</p>
+                  </div>
                 </div>
                 <div className="space-y-3">
                   {sequence.map((step, idx) => (
-                    <div key={step.id} className="flex items-center gap-3">
+                    <div key={step.id} className="flex flex-col md:flex-row items-center gap-3 bg-gray-950/50 p-3 rounded-lg border border-gray-800">
                       <div className="bg-gray-800 text-gray-400 w-8 h-8 rounded flex items-center justify-center font-bold text-xs shrink-0">{idx + 1}</div>
                       
-                      {/* DYNAMIC PROCESS DROPDOWN */}
                       <select 
+                        required
                         value={step.process_name} 
-                        onChange={(e) => handleSequenceChange(step.id, e.target.value)} 
+                        onChange={(e) => handleSequenceChange(step.id, 'process_name', e.target.value)} 
                         className={inputClass}
                         disabled={procLoading}
                       >
-                        <option value="">-- Select Process Step --</option>
+                        <option value="">-- Select Process --</option>
                         {dbProcesses.map(p => (
                           <option key={p.id} value={p.processName}>{p.processName}</option>
+                        ))}
+                      </select>
+
+                      <select 
+                        required
+                        value={step.assigned_machine} 
+                        onChange={(e) => handleSequenceChange(step.id, 'assigned_machine', e.target.value)} 
+                        className={inputClass}
+                        disabled={machLoading}
+                      >
+                        <option value="">-- Lock Target Machine --</option>
+                        {machines.map(m => (
+                          <option key={m.id} value={m.id}>{m.name} ({m.place})</option>
                         ))}
                       </select>
 
@@ -245,7 +278,7 @@ export default function ProductManagement() {
                     </div>
                   ))}
                   <button type="button" onClick={handleSequenceAdd} className="text-primary-400 hover:text-primary-300 text-sm font-bold flex items-center gap-1 mt-2 p-2 transition-colors">
-                    <span>+</span> Add Another Process Step
+                    <span>+</span> Add Process Step
                   </button>
                 </div>
               </div>

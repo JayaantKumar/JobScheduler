@@ -3,7 +3,6 @@ import { addJob } from "../services/job.service";
 import { useCustomers } from "../hooks/useCustomers";
 import { useProducts } from "../hooks/useProducts";
 import { useMachines } from "../hooks/useMachines";
-import { useJobs } from "../hooks/useJobs"; 
 import { useProcesses } from "../hooks/useProcesses"; 
 
 const calculate14WorkingDays = () => {
@@ -16,27 +15,15 @@ const calculate14WorkingDays = () => {
   return date.toISOString().split('T')[0];
 };
 
-const getFinancialYear = (dateObj = new Date()) => {
-  const month = dateObj.getMonth(); 
-  const year = dateObj.getFullYear();
-  if (month >= 3) {
-    return `${year.toString().slice(-2)}${(year + 1).toString().slice(-2)}`;
-  } else {
-    return `${(year - 1).toString().slice(-2)}${year.toString().slice(-2)}`;
-  }
-};
-
 export default function JobModal({ onClose }) {
   const [loading, setLoading] = useState(false);
   
-  // Fetch Master Data & History
   const { customers, loading: custLoading } = useCustomers();
   const { products, loading: prodLoading } = useProducts();
   const { machines, loading: machLoading } = useMachines();
-  const { jobs } = useJobs(); 
   const { processes: dbProcesses, loading: procLoading } = useProcesses(); 
 
-  // --- SECTION 1: Job Information ---
+  // Job Info
   const [jobDate, setJobDate] = useState(new Date().toISOString().split('T')[0]);
   const [jobTitle, setJobTitle] = useState("");
   const [customer, setCustomer] = useState("");
@@ -47,134 +34,91 @@ export default function JobModal({ onClose }) {
   const [productSize, setProductSize] = useState("");
   const [dueDate, setDueDate] = useState(calculate14WorkingDays()); 
   const [template, setTemplate] = useState("");
-  const [fillSource, setFillSource] = useState(null); 
 
-  // --- SECTION 2: Sheet & Material ---
+  // Material Specs
   const [sheetSize, setSheetSize] = useState("");
   const [sheetGsm, setSheetGsm] = useState("");
   const [materialType, setMaterialType] = useState("");
-  const [paperCompany, setPaperCompany] = useState(""); // <-- NEW: Paper Company State!
-  const [printColors, setPrintColors] = useState("NA");
+  const [paperCompany, setPaperCompany] = useState("");
   const [sizeBeforeCut, setSizeBeforeCut] = useState("");
   const [sizeAfterCut, setSizeAfterCut] = useState("");
   const [dieSelect, setDieSelect] = useState("");
 
-  // --- SECTION 3: Prerequisites & Status ---
   const [priority, setPriority] = useState("normal");
-  const [materialStatus, setMaterialStatus] = useState("Pending");
-  const [artworkStatus, setArtworkStatus] = useState("Pending");
-  const [artworkVersion, setArtworkVersion] = useState("v1.0");
+  const [jobNotes, setJobNotes] = useState("");
 
-  // --- PROCESS ROUTING ---
+  // MANUAL PROCESS ROUTING STATE
   const [processes, setProcesses] = useState([
     { id: Date.now(), process_name: "", assigned_machine: "", inputQty: "", outputQty: "", remarks: "" }
   ]);
-  const [jobNotes, setJobNotes] = useState("");
 
-  // ==========================================
-  // 🧠 SMART HISTORICAL AUTO-FILL LOGIC
-  // ==========================================
+  // Pull defaults from the Product Template, but keep them editable!
   const handleProductChange = (e) => {
     const prodId = e.target.value;
     setSelectedProductId(prodId);
-    setFillSource(null);
 
-    if (!prodId) return;
+    if (!prodId) {
+      setProcesses([{ id: Date.now(), process_name: "", assigned_machine: "", inputQty: "", outputQty: "", remarks: "" }]);
+      return;
+    }
 
     const prod = products.find(p => p.id === prodId);
     if (!prod) return;
 
-    const previousJobs = jobs.filter(j => j.product?.id === prodId || j.product?.name === prod.name);
-    const lastJob = previousJobs.length > 0 ? previousJobs[0] : null;
+    setJobTitle(`${prod.name} - Batch Run`);
+    setProductName(prod.name || "");
+    setProductCode(prod.sku || "");
+    setTemplate(prod.category || prod.type || ""); 
+    setProductSize(prod.size || "");
+    setMaterialType(prod.paperType || prod.material || "");
+    setSheetGsm(prod.paperGsm || prod.gsm || "");
+    setSheetSize(prod.sheet_size || "");
 
-    if (lastJob) {
-      setFillSource(`Previous Job (JOB-${lastJob.id.slice(0,6).toUpperCase()})`);
-      
-      setJobTitle(lastJob.title || `${prod.name} - Run`);
-      setProductName(lastJob.product?.name || prod.name);
-      setProductCode(lastJob.product?.sku || prod.sku);
-      setTemplate(lastJob.product?.category || prod.type || ""); 
-      setProductSize(lastJob.product?.size || prod.size || "");
-      setMaterialType(lastJob.product?.material || prod.paperType || "");
-      setSheetGsm(lastJob.product?.gsm || prod.paperGsm || "");
-      
-      setSheetSize(lastJob.product?.sheet_size || "");
-      setPaperCompany(lastJob.specifications?.paper_company || ""); // <-- Auto-fills previous paper company!
-      setPrintColors(lastJob.specifications?.colors || "NA");
-      setSizeBeforeCut(lastJob.specifications?.size_before_cut || "");
-      setSizeAfterCut(lastJob.specifications?.size_after_cut || "");
-      setDieSelect(lastJob.specifications?.die || "");
-      setPriority(lastJob.priority || "normal");
-      setJobNotes(lastJob.notes || "");
-      setQuantity(lastJob.quantity_target || ""); 
-
-      if (lastJob.process_sequence && lastJob.process_sequence.length > 0) {
-        const restoredProcesses = lastJob.process_sequence.map((step, index) => ({
-          id: Date.now() + index,
-          process_name: step.process_name || "",
-          assigned_machine: step.assigned_machine_id || "", 
-          inputQty: step.input_qty || lastJob.quantity_target || "",
-          outputQty: step.output_qty || lastJob.quantity_target || "",
-          remarks: step.remarks || ""
-        }));
-        setProcesses(restoredProcesses);
-      }
+    // Load template sequence into the MANUAL builder
+    if (prod.default_sequence && prod.default_sequence.length > 0) {
+      const manualProcesses = prod.default_sequence.map((step, index) => ({
+        id: Date.now() + index,
+        process_name: step.process_name || "",
+        assigned_machine: step.assigned_machine || "", 
+        inputQty: quantity, // Suggests the target quantity
+        outputQty: quantity,
+        remarks: ""
+      }));
+      setProcesses(manualProcesses);
     } else {
-      setFillSource("Product Master Template");
-      
-      setJobTitle(`${prod.name} - Run`);
-      setProductName(prod.name || "");
-      setProductCode(prod.sku || "");
-      setTemplate(prod.type || ""); 
-      setProductSize(prod.size || "");
-      setMaterialType(prod.paperType || "");
-      setSheetGsm(prod.paperGsm || "");
-      
-      setSheetSize(""); setPaperCompany(""); setPrintColors("NA"); setSizeBeforeCut(""); setSizeAfterCut(""); setDieSelect(""); setJobNotes(""); setQuantity("");
-
-      if (prod.default_sequence && prod.default_sequence.length > 0) {
-        const autoBuiltProcesses = prod.default_sequence.map((step, index) => {
-          return {
-            id: Date.now() + index,
-            process_name: step.process_name || "",
-            assigned_machine: "", 
-            inputQty: "", outputQty: "", remarks: ""
-          };
-        });
-        setProcesses(autoBuiltProcesses);
-      } else {
-        setProcesses([{ id: Date.now(), process_name: "", assigned_machine: "", inputQty: "", outputQty: "", remarks: "" }]);
-      }
+      setProcesses([{ id: Date.now(), process_name: "", assigned_machine: "", inputQty: quantity, outputQty: quantity, remarks: "" }]);
     }
   };
 
-  const handleAddProcess = () => setProcesses([...processes, { id: Date.now(), process_name: "", assigned_machine: "", inputQty: quantity || "", outputQty: quantity || "", remarks: "" }]);
+  // Update target quantity and automatically suggest it to all process steps to save typing
+  const handleQuantityChange = (e) => {
+    const newQty = e.target.value;
+    setQuantity(newQty);
+    setProcesses(processes.map(p => ({ ...p, inputQty: newQty, outputQty: newQty })));
+  };
+
+  const handleAddProcess = () => setProcesses([...processes, { id: Date.now(), process_name: "", assigned_machine: "", inputQty: quantity, outputQty: quantity, remarks: "" }]);
   const handleRemoveProcess = (id) => processes.length > 1 && setProcesses(processes.filter(p => p.id !== id));
   const updateProcess = (id, field, value) => setProcesses(processes.map(p => p.id === id ? { ...p, [field]: value } : p));
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!selectedProductId) return alert("Please select a Product Template. Jobs must be linked to a product.");
+    if (!selectedProductId) return alert("Please select a Product Template.");
     setLoading(true);
 
-    const process_sequence = processes.map((proc, index) => {
+    const final_process_sequence = processes.map((proc, index) => {
       const assignedMach = machines.find(m => m.id === proc.assigned_machine);
 
       return {
         step_order: index + 1,
-        process_id: `custom_proc_${index}`,
+        process_id: `manual_proc_${index}`,
         process_name: proc.process_name || "Unassigned Process",
         status: "pending",
-        setup_mins: 0,
-        run_mins: 0,
-        hold_mins: 0, 
-        input_qty: proc.inputQty,
-        output_qty: proc.outputQty,
-        remarks: proc.remarks,
+        input_qty: Number(proc.inputQty) || 0,
+        output_qty: Number(proc.outputQty) || 0,
+        remarks: proc.remarks || "",
         assigned_machine_id: proc.assigned_machine || null,          
-        assigned_machine_name: assignedMach ? assignedMach.name : null, 
-        scheduled_start: null,
-        scheduled_end: null
+        assigned_machine_name: assignedMach ? assignedMach.name : "Unassigned Machine", 
       };
     });
 
@@ -194,20 +138,17 @@ export default function JobModal({ onClose }) {
         category: template 
       },
       specifications: {
-        colors: printColors,
+        colors: "NA", 
         size_before_cut: sizeBeforeCut,
         size_after_cut: sizeAfterCut,
         die: dieSelect,
-        paper_company: paperCompany, // <-- NEW: Saves to the database!
-        material_status: materialStatus,
-        artwork_status: artworkStatus,
-        artwork_version: artworkVersion
+        paper_company: paperCompany, 
       },
       quantity_target: Number(quantity) || 0,
       quantity_completed: 0,
       deadline: dueDate ? new Date(dueDate).toISOString() : new Date().toISOString(),
       status: "pending",
-      process_sequence: process_sequence,
+      process_sequence: final_process_sequence,
       notes: jobNotes
     };
 
@@ -227,18 +168,17 @@ export default function JobModal({ onClose }) {
 
   const safeCustomer = customer?.trim()?.toLowerCase() || "";
   const customerProducts = products ? products.filter(p => p.customerName?.trim()?.toLowerCase() === safeCustomer) : [];
-  const currentFY = getFinancialYear(new Date(jobDate));
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+      <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-5xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
         
-        <div className="flex justify-between items-center p-6 border-b border-gray-800 bg-gray-900 shrink-0">
-          <div className="flex items-center gap-3">
-            <h2 className="text-xl font-bold text-white tracking-tight">Create New Job</h2>
-            <span className="bg-primary-500/20 text-primary-400 px-2 py-1 rounded text-xs font-mono font-bold border border-primary-500/30">
-              JOB-{currentFY}-AUTO
-            </span>
+        <div className="flex justify-between items-center p-6 border-b border-gray-800 bg-[#151724] shrink-0">
+          <div>
+            <h2 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
+              Create Job Card (Manual Setup)
+            </h2>
+            <p className="text-xs text-gray-400 mt-1">Assign product defaults, then manually adjust machines and targets.</p>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
             <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
@@ -248,170 +188,48 @@ export default function JobModal({ onClose }) {
         <div className="p-6 overflow-y-auto custom-scrollbar flex-1 bg-[#0a0f1a]">
           <form id="jobForm" onSubmit={handleSubmit} className="space-y-8">
             
-            {/* 1. Job Information */}
+            {/* 1. SELECTION & TARGETS */}
             <div>
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-6 h-6 rounded-full bg-primary-600 flex items-center justify-center text-white text-xs font-bold shadow-lg shadow-primary-500/30">1</div>
-                <h3 className="text-lg font-bold text-white">Job Information</h3>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className={labelClass}>Customer *</label>
-                  <select required value={customer} onChange={e => { setCustomer(e.target.value); setSelectedProductId(""); setFillSource(null); }} className={inputClass}>
+                  <label className={labelClass}>Select Customer *</label>
+                  <select required value={customer} onChange={e => { setCustomer(e.target.value); setSelectedProductId(""); setProcesses([{ id: Date.now(), process_name: "", assigned_machine: "", inputQty: "", outputQty: "", remarks: "" }]); }} className={inputClass}>
                     <option value="">{custLoading ? "Loading..." : "-- Select Customer --"}</option>
                     {customers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                   </select>
                 </div>
 
-                <div className="md:col-span-2">
-                  <label className={labelClass}>Saved Product Template *</label>
+                <div>
+                  <label className={labelClass}>Select Product Blueprint *</label>
                   <select required value={selectedProductId} onChange={handleProductChange} disabled={!customer || customerProducts.length === 0} className={`${inputClass} ${(!customer || customerProducts.length === 0) ? 'opacity-50 cursor-not-allowed' : 'border-primary-500/50'}`}>
                     <option value="">
-                      {!customer ? "Select a customer first" : prodLoading ? "Loading products..." : customerProducts.length === 0 ? "⚠️ No products found for this customer" : "-- Select a product to auto-fill details --"}
+                      {!customer ? "Select a customer first" : prodLoading ? "Loading products..." : customerProducts.length === 0 ? "⚠️ No products found" : "-- Load Defaults from Product --"}
                     </option>
                     {customerProducts.map(p => <option key={p.id} value={p.id}>{p.name} ({p.sku || "No SKU"})</option>)}
                   </select>
-                  
-                  {fillSource && (
-                    <div className="mt-1.5 text-xs font-medium flex items-center gap-1.5">
-                      <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                      <span className="text-green-400">Data automatically loaded from {fillSource}</span>
-                    </div>
-                  )}
                 </div>
 
-                <div>
-                  <label className={labelClass}>Job Card Name / Title *</label>
-                  <input required type="text" value={jobTitle} onChange={e => setJobTitle(e.target.value)} placeholder="e.g., Luxury Box Run" className={inputClass} />
+                <div className="md:col-span-2">
+                  <label className={labelClass}>Job Title (Internal)</label>
+                  <input required type="text" value={jobTitle} onChange={e => setJobTitle(e.target.value)} placeholder="e.g., Luxury Box - Q1 Run" className={inputClass} />
                 </div>
-                <div>
-                  <label className={labelClass}>Product Name</label>
-                  <input type="text" value={productName} readOnly placeholder="Auto-filled" className={`${inputClass} bg-gray-900/50`} />
+
+                <div className="md:col-span-2 bg-primary-900/10 border border-primary-500/30 p-4 rounded-lg flex items-center gap-4">
+                  <div className="flex-1">
+                    <label className="block text-sm font-bold text-primary-400 mb-1">Target Production Quantity *</label>
+                    <input required type="number" value={quantity} onChange={handleQuantityChange} placeholder="e.g. 10000" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-3 text-lg font-bold text-white focus:outline-none focus:border-primary-500" />
+                  </div>
                 </div>
-                <div>
-                  <label className={labelClass}>Product Code</label>
-                  <input type="text" value={productCode} readOnly placeholder="Auto-filled" className={`${inputClass} bg-gray-900/50`} />
-                </div>
-                
-                <div>
-                  <label className={labelClass}>Calculated Quantity *</label>
-                  <input required type="number" value={quantity} onChange={e => {
-                    setQuantity(e.target.value);
-                    setProcesses(processes.map(p => ({ ...p, inputQty: e.target.value, outputQty: e.target.value })));
-                  }} placeholder="1000" className={inputClass} />
-                </div>
-                
-                <div>
-                  <label className={labelClass}>Job Date</label>
-                  <input required type="date" value={jobDate} onChange={e => setJobDate(e.target.value)} className={`${inputClass} [color-scheme:dark]`} />
-                </div>
-                <div>
-                  <label className={labelClass}>Expected End Date (Auto: 14 Days)</label>
-                  <input required type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className={`${inputClass} [color-scheme:dark]`} />
-                </div>
-                
-                <div className="md:col-span-3">
-                  <label className={labelClass}>Product Category</label>
-                  <input type="text" value={template} readOnly placeholder="Auto-filled category" className={`${inputClass} bg-gray-900/50 cursor-not-allowed`} />
-                </div>
-                
+
+                <div><label className={labelClass}>Job Date</label><input required type="date" value={jobDate} onChange={e => setJobDate(e.target.value)} className={`${inputClass} [color-scheme:dark]`} /></div>
+                <div><label className={labelClass}>Deadline</label><input required type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className={`${inputClass} [color-scheme:dark]`} /></div>
               </div>
             </div>
 
-            {/* 2. Sheet & Material Specifications */}
-            <div className="bg-gray-900/50 p-5 rounded-xl border border-gray-800/60">
-              <div className="flex items-center gap-3 mb-5">
-                <div className="w-6 h-6 rounded-full bg-primary-600 flex items-center justify-center text-white text-xs font-bold shadow-lg shadow-primary-500/30">2</div>
-                <h3 className="text-lg font-bold text-white">Sheet & Material Specifications</h3>
-              </div>
-              
-              {/* UPDATED GRID WITH NEW PAPER COMPANY FIELD */}
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
-                <div><label className={labelClass}>Sheet Size</label><input type="text" value={sheetSize} onChange={e => setSheetSize(e.target.value)} placeholder="e.g., 25 x 36 inches" className={inputClass} /></div>
-                <div><label className={labelClass}>Sheet GSM</label><input type="text" value={sheetGsm} onChange={e => setSheetGsm(e.target.value)} placeholder="Auto-filled" className={inputClass} /></div>
-                <div><label className={labelClass}>Material Type *</label><input required type="text" value={materialType} onChange={e => setMaterialType(e.target.value)} placeholder="Auto-filled" className={inputClass} /></div>
-                
-                {/* ⭐️ NEW PAPER COMPANY INPUT ⭐️ */}
-                <div>
-                  <label className={labelClass}>Paper Company</label>
-                  <input type="text" value={paperCompany} onChange={e => setPaperCompany(e.target.value)} placeholder="e.g., ITC, BILT" className={inputClass} />
-                </div>
-
-                <div>
-                  <label className={labelClass}>Number of Colors</label>
-                  <select value={printColors} onChange={e => setPrintColors(e.target.value)} className={inputClass}>
-                    <option value="NA">NA</option><option value="1 Color">1 Color</option><option value="2 Colors">2 Colors</option><option value="4 Colors">4 Colors (CMYK)</option>
-                  </select>
-                </div>
-              </div>
-
-              <h4 className="text-sm font-bold text-gray-300 mb-3 flex items-center gap-2 mt-6">
-                <svg className="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243-4.243 3 3 0 004.243 4.243z" /></svg>
-                Guillotine Cutting Specifications
-              </h4>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-                <div>
-                  <label className={labelClass}>Sheet Size Before Cutting</label>
-                  <input type="text" value={sizeBeforeCut} onChange={e => setSizeBeforeCut(e.target.value)} placeholder="e.g., 25 x 36 inches" className={inputClass} />
-                </div>
-                <div>
-                  <label className={labelClass}>Sheet Size After Cutting</label>
-                  <input type="text" value={sizeAfterCut} onChange={e => setSizeAfterCut(e.target.value)} placeholder="e.g., 12.5 x 18 inches" className={inputClass} />
-                </div>
-              </div>
-
-              <h4 className="text-sm font-bold text-gray-300 mb-3 flex items-center gap-2">
-                <svg className="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" /></svg>
-                Die Cutting Specifications
-              </h4>
-              <div>
-                <label className={labelClass}>Die (Die Cutting)</label>
-                <input type="text" value={dieSelect} onChange={e => setDieSelect(e.target.value)} placeholder="e.g., Die #001" className={inputClass} />
-              </div>
-            </div>
-
-            {/* 3. Prerequisites & Urgency */}
-            <div>
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-6 h-6 rounded-full bg-primary-600 flex items-center justify-center text-white text-xs font-bold shadow-lg shadow-primary-500/30">3</div>
-                <h3 className="text-lg font-bold text-white">Prerequisites & Urgency</h3>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div>
-                  <label className={labelClass}>Urgency</label>
-                  <select value={priority} onChange={e => setPriority(e.target.value)} className={inputClass}>
-                    <option value="lowest">Lowest</option>
-                    <option value="low">Low</option>
-                    <option value="normal">Normal</option>
-                    <option value="high">High</option>
-                    <option value="highest">Highest</option>
-                  </select>
-                </div>
-                <div>
-                  <label className={labelClass}>Material Status</label>
-                  <select value={materialStatus} onChange={e => setMaterialStatus(e.target.value)} className={inputClass}>
-                    <option value="Pending">Pending</option><option value="Ready">Ready</option>
-                  </select>
-                </div>
-                <div>
-                  <label className={labelClass}>Artwork Status</label>
-                  <select value={artworkStatus} onChange={e => setArtworkStatus(e.target.value)} className={inputClass}>
-                    <option value="Pending">Pending</option><option value="Approved">Approved</option>
-                  </select>
-                </div>
-                <div>
-                  <label className={labelClass}>Artwork Version</label>
-                  <input type="text" value={artworkVersion} onChange={e => setArtworkVersion(e.target.value)} placeholder="v1.0" className={inputClass} />
-                </div>
-              </div>
-            </div>
-
-            {/* 4. PROCESS ROUTING (Dynamic DB Connection!) */}
+            {/* 2. MANUAL ROUTING (Fully Editable) */}
             <div className="mt-8">
               <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-bold text-white">Process Routing & Location Assignment</h3>
-                <span className="text-xs text-primary-400 italic">Assign specific locations manually</span>
+                <h3 className="text-lg font-bold text-white">Manual Process Routing & Machine Assignment</h3>
               </div>
 
               <div className="space-y-4">
@@ -425,39 +243,19 @@ export default function JobModal({ onClose }) {
                     <div className="flex-1 space-y-4">
                       
                       <div className="flex flex-col md:flex-row items-start gap-4">
-                        
-                        {/* 3. NEW: The Process Dropdown now pulls perfectly from the database! */}
                         <div className="flex-1 w-full">
                           <label className={labelClass}>Process Name</label>
-                          <select 
-                            required 
-                            value={proc.process_name} 
-                            onChange={(e) => updateProcess(proc.id, "process_name", e.target.value)} 
-                            className={inputClass}
-                            disabled={procLoading}
-                          >
+                          <select required value={proc.process_name} onChange={(e) => updateProcess(proc.id, "process_name", e.target.value)} className={inputClass} disabled={procLoading}>
                             <option value="">{procLoading ? "Loading..." : "-- Select Process --"}</option>
-                            {dbProcesses.map(p => (
-                              <option key={p.id} value={p.processName}>{p.processName}</option>
-                            ))}
+                            {dbProcesses.map(p => <option key={p.id} value={p.processName}>{p.processName}</option>)}
                           </select>
                         </div>
                         
                         <div className="flex-1 w-full">
-                          <label className={labelClass}>Assigned Location / Machine *</label>
-                          <select 
-                            required 
-                            value={proc.assigned_machine} 
-                            onChange={(e) => updateProcess(proc.id, "assigned_machine", e.target.value)} 
-                            className={inputClass}
-                            disabled={machLoading}
-                          >
-                            <option value="">-- Select Location / Machine --</option>
-                            {machines.map(m => (
-                              <option key={m.id} value={m.id}>
-                                {m.place || "Unassigned"} - {m.name}
-                              </option>
-                            ))}
+                          <label className={labelClass}>Target Machine</label>
+                          <select required value={proc.assigned_machine} onChange={(e) => updateProcess(proc.id, "assigned_machine", e.target.value)} className={inputClass} disabled={machLoading}>
+                            <option value="">-- Assign Machine --</option>
+                            {machines.map(m => <option key={m.id} value={m.id}>{m.name} ({m.place})</option>)}
                           </select>
                         </div>
 
@@ -477,28 +275,41 @@ export default function JobModal({ onClose }) {
               </div>
 
               <button type="button" onClick={handleAddProcess} className="w-full mt-4 bg-gray-900 border border-gray-700 border-dashed hover:border-gray-500 text-gray-400 hover:text-white py-3 rounded-lg text-sm font-medium transition-colors flex justify-center gap-2">
-                <span>+</span> Add Extra Process Step
+                <span>+</span> Add Custom Process Step
               </button>
             </div>
 
-            <div className="mt-8 border-t border-gray-800 pt-8">
-              <label className={labelClass}>Job Notes / Instructions</label>
-              <textarea 
-                rows="3" 
-                value={jobNotes}
-                onChange={e => setJobNotes(e.target.value)}
-                className={`${inputClass} resize-none`} 
-                placeholder="Enter any general notes for the factory floor..."
-              ></textarea>
+            {/* 3. MATERIAL OVERRIDES */}
+            <div className="pt-6 border-t border-gray-800">
+              <h3 className="text-sm font-bold text-gray-300 mb-4">Batch Material Overrides (Optional)</h3>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div><label className={labelClass}>Material</label><input type="text" value={materialType} onChange={e => setMaterialType(e.target.value)} className={inputClass} /></div>
+                <div><label className={labelClass}>GSM</label><input type="text" value={sheetGsm} onChange={e => setSheetGsm(e.target.value)} className={inputClass} /></div>
+                <div><label className={labelClass}>Paper Company</label><input type="text" value={paperCompany} onChange={e => setPaperCompany(e.target.value)} className={inputClass} /></div>
+                <div><label className={labelClass}>Die # (If needed)</label><input type="text" value={dieSelect} onChange={e => setDieSelect(e.target.value)} className={inputClass} /></div>
+                <div><label className={labelClass}>Raw Sheet Size</label><input type="text" value={sizeBeforeCut} onChange={e => setSizeBeforeCut(e.target.value)} className={inputClass} /></div>
+                <div><label className={labelClass}>Cut Sheet Size</label><input type="text" value={sizeAfterCut} onChange={e => setSizeAfterCut(e.target.value)} className={inputClass} /></div>
+                <div>
+                  <label className={labelClass}>Priority</label>
+                  <select value={priority} onChange={e => setPriority(e.target.value)} className={inputClass}>
+                    <option value="normal">Normal</option><option value="high">High</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label className={labelClass}>Specific Batch Instructions</label>
+              <textarea rows="2" value={jobNotes} onChange={e => setJobNotes(e.target.value)} className={`${inputClass} resize-none`} placeholder="Enter notes for operators running this specific batch..."></textarea>
             </div>
 
           </form>
         </div>
 
-        <div className="p-4 border-t border-gray-800 bg-gray-900 shrink-0 flex justify-end gap-3">
+        <div className="p-4 border-t border-gray-800 bg-[#151724] shrink-0 flex justify-end gap-3">
           <button type="button" onClick={onClose} className="px-5 py-2.5 rounded-lg text-gray-400 hover:text-white transition-colors font-medium">Cancel</button>
-          <button type="submit" form="jobForm" disabled={loading} className="bg-primary-600 hover:bg-primary-500 disabled:opacity-50 text-white px-8 py-2.5 rounded-lg font-bold transition-colors">
-            {loading ? "Creating..." : "Create Job"}
+          <button type="submit" form="jobForm" disabled={loading || processes.length === 0} className="bg-primary-600 hover:bg-primary-500 disabled:opacity-50 text-white px-8 py-2.5 rounded-lg font-bold transition-colors">
+            {loading ? "Generating..." : "Generate Job Cards"}
           </button>
         </div>
       </div>
