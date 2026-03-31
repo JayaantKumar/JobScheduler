@@ -4,20 +4,28 @@ import { db } from "../firebase/config";
 import { useProducts } from "../hooks/useProducts";
 import { useCustomers } from "../hooks/useCustomers";
 import { useProcesses } from "../hooks/useProcesses"; 
-import { useMachines } from "../hooks/useMachines"; // <-- NEW: Fetch machines!
+import { useMachines } from "../hooks/useMachines"; 
+import { addJob } from "../services/job.service"; // <-- NEW: Imported to generate jobs!
 
 export default function ProductManagement() {
   const { products, loading: prodLoading } = useProducts();
   const { customers, loading: custLoading } = useCustomers();
   const { processes: dbProcesses, loading: procLoading } = useProcesses(); 
-  const { machines, loading: machLoading } = useMachines(); // <-- NEW: Load machines!
+  const { machines, loading: machLoading } = useMachines(); 
 
   const [isModalOpen, setModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [saving, setSaving] = useState(false);
 
-  // Form States
+  // --- NEW: QUICK PRODUCE MODAL STATES ---
+  const [isProduceModalOpen, setProduceModalOpen] = useState(false);
+  const [activeProduceProduct, setActiveProduceProduct] = useState(null);
+  const [produceQty, setProduceQty] = useState("");
+  const [produceDate, setProduceDate] = useState("");
+  const [producing, setProducing] = useState(false);
+
+  // Form States for Product Template
   const [name, setName] = useState("");
   const [sku, setSku] = useState("");
   const [category, setCategory] = useState("");
@@ -26,10 +34,9 @@ export default function ProductManagement() {
   const [paperType, setPaperType] = useState("");
   const [paperGsm, setPaperGsm] = useState("");
   const [sheetSize, setSheetSize] = useState("");
-  
-  // Sequence State now holds both Process Name AND Assigned Machine
   const [sequence, setSequence] = useState([{ id: Date.now(), process_name: "", assigned_machine: "" }]);
 
+  // --- MODAL CONTROLS ---
   const openModal = (prod = null) => {
     if (prod) {
       setEditingProduct(prod);
@@ -60,19 +67,24 @@ export default function ProductManagement() {
     setModalOpen(true);
   };
 
+  const openProduceModal = (prod) => {
+    setActiveProduceProduct(prod);
+    setProduceQty("");
+    // Set default date to 14 days from now
+    const defaultDate = new Date();
+    defaultDate.setDate(defaultDate.getDate() + 14);
+    setProduceDate(defaultDate.toISOString().split('T')[0]);
+    setProduceModalOpen(true);
+  };
+
+  // --- SAVE PRODUCT TEMPLATE ---
   const handleSequenceAdd = () => setSequence([...sequence, { id: Date.now(), process_name: "", assigned_machine: "" }]);
   const handleSequenceRemove = (id) => sequence.length > 1 && setSequence(sequence.filter(s => s.id !== id));
-  
-  // Updated to handle specific fields (Process OR Machine)
-  const handleSequenceChange = (id, field, val) => {
-    setSequence(sequence.map(s => s.id === id ? { ...s, [field]: val } : s));
-  };
+  const handleSequenceChange = (id, field, val) => setSequence(sequence.map(s => s.id === id ? { ...s, [field]: val } : s));
 
   const handleSave = async (e) => {
     e.preventDefault();
     setSaving(true);
-
-    // Save both the process and the permanently assigned machine
     const cleanSequence = sequence.filter(s => s.process_name.trim() !== "").map((s, index) => ({
       step_order: index + 1,
       process_name: s.process_name,
@@ -87,26 +99,80 @@ export default function ProductManagement() {
     };
 
     try {
-      if (editingProduct) {
-        await updateDoc(doc(db, "products", editingProduct.id), payload);
-      } else {
-        await addDoc(collection(db, "products"), { ...payload, created_at: serverTimestamp() });
-      }
+      if (editingProduct) await updateDoc(doc(db, "products", editingProduct.id), payload);
+      else await addDoc(collection(db, "products"), { ...payload, created_at: serverTimestamp() });
       setModalOpen(false);
-    } catch (error) {
-      alert("Error saving product: " + error.message);
-    } finally {
-      setSaving(false);
-    }
+    } catch (error) { alert("Error saving product: " + error.message); } 
+    finally { setSaving(false); }
   };
 
   const handleDelete = async (id) => {
     if (window.confirm("Are you sure you want to delete this product template?")) {
-      try {
-        await deleteDoc(doc(db, "products", id));
-      } catch (error) {
-        alert("Failed to delete: " + error.message);
-      }
+      try { await deleteDoc(doc(db, "products", id)); } 
+      catch (error) { alert("Failed to delete: " + error.message); }
+    }
+  };
+
+  // --- THE MAGIC "QUICK PRODUCE" GENERATOR ---
+  const handleQuickProduce = async (e) => {
+    e.preventDefault();
+    if (!produceQty || !produceDate) return alert("Please enter quantity and due date.");
+    
+    if (!activeProduceProduct.default_sequence || activeProduceProduct.default_sequence.length === 0) {
+      return alert("This product has no locked machines. Please edit the product and add routing steps first!");
+    }
+
+    setProducing(true);
+    const targetQtyNum = Number(produceQty);
+
+    // Auto-build the locked sequence
+    const final_process_sequence = activeProduceProduct.default_sequence.map((step, index) => {
+      const assignedMach = machines.find(m => m.id === step.assigned_machine);
+      return {
+        step_order: index + 1,
+        process_id: `sys_proc_${index}`,
+        process_name: step.process_name || "Unassigned Process",
+        status: "pending",
+        input_qty: targetQtyNum,
+        output_qty: targetQtyNum,
+        remarks: "",
+        assigned_machine_id: step.assigned_machine || null,
+        assigned_machine_name: assignedMach ? assignedMach.name : "Unassigned Machine",
+      };
+    });
+
+    const newJobPayload = {
+      title: `${activeProduceProduct.name} - Auto Batch`,
+      customer: activeProduceProduct.customerName || "Unknown",
+      priority: "normal",
+      job_date: new Date().toISOString(),
+      product: {
+        id: activeProduceProduct.id,
+        name: activeProduceProduct.name,
+        sku: activeProduceProduct.sku || "",
+        size: activeProduceProduct.size || "",
+        material: activeProduceProduct.paperType || "",
+        gsm: activeProduceProduct.paperGsm || "",
+        sheet_size: activeProduceProduct.sheet_size || "",
+        category: activeProduceProduct.category || ""
+      },
+      specifications: { colors: "NA", size_before_cut: "", size_after_cut: "", die: "", paper_company: "" },
+      quantity_target: targetQtyNum,
+      quantity_completed: 0,
+      deadline: new Date(produceDate).toISOString(),
+      status: "pending",
+      process_sequence: final_process_sequence,
+      notes: "Auto-generated from Product Management Quick Produce."
+    };
+
+    try {
+      await addJob(newJobPayload);
+      setProduceModalOpen(false);
+      alert("Success! Job Cards have been generated and sent to the floor.");
+    } catch (error) {
+      alert("Failed to generate job: " + error.message);
+    } finally {
+      setProducing(false);
     }
   };
 
@@ -186,8 +252,17 @@ export default function ProductManagement() {
                       </div>
                     </td>
                     <td className="py-4 px-6 text-right">
-                      <div className="flex justify-end gap-3">
-                        <button onClick={() => openModal(prod)} className="text-gray-400 hover:text-white border border-gray-700 hover:bg-gray-800 px-3 py-1.5 rounded-md text-sm transition-colors">Edit</button>
+                      <div className="flex justify-end gap-2 items-center">
+                        
+                        {/* ⭐️ NEW: QUICK PRODUCE BUTTON ⭐️ */}
+                        <button 
+                          onClick={() => openProduceModal(prod)} 
+                          className="bg-primary-500/20 text-primary-400 hover:bg-primary-500 hover:text-white border border-primary-500/30 px-3 py-1.5 rounded-md text-xs font-bold transition-colors flex items-center gap-1"
+                        >
+                          <span>🚀</span> Produce
+                        </button>
+
+                        <button onClick={() => openModal(prod)} className="text-gray-400 hover:text-white border border-gray-700 hover:bg-gray-800 px-3 py-1.5 rounded-md text-xs font-medium transition-colors">Edit</button>
                         <button onClick={() => handleDelete(prod.id)} className="text-gray-500 hover:text-red-400 p-1.5 hover:bg-red-500/10 rounded-md transition-colors">Delete</button>
                       </div>
                     </td>
@@ -199,6 +274,53 @@ export default function ProductManagement() {
         </div>
       </div>
 
+      {/* --- 🚀 THE QUICK PRODUCE MODAL --- */}
+      {isProduceModalOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-primary-500/30 rounded-xl w-full max-w-md p-6 shadow-2xl shadow-primary-500/10">
+            <div className="flex items-center gap-3 mb-2">
+              <span className="text-2xl">🚀</span>
+              <h3 className="text-xl font-bold text-white">Generate Job Cards</h3>
+            </div>
+            <p className="text-sm text-gray-400 mb-6">
+              Instantly push <strong className="text-white">{activeProduceProduct?.name}</strong> to the factory floor using its locked machine routing.
+            </p>
+            
+            <form onSubmit={handleQuickProduce} className="space-y-4">
+              <div>
+                <label className="block text-sm font-bold text-primary-400 mb-1">Target Production Quantity *</label>
+                <input 
+                  required 
+                  type="number" 
+                  value={produceQty} 
+                  onChange={e => setProduceQty(e.target.value)} 
+                  placeholder="e.g. 5000" 
+                  className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-3 text-lg font-bold text-white focus:outline-none focus:border-primary-500" 
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Expected Deadline *</label>
+                <input 
+                  required 
+                  type="date" 
+                  value={produceDate} 
+                  onChange={e => setProduceDate(e.target.value)} 
+                  className={`${inputClass} [color-scheme:dark]`} 
+                />
+              </div>
+
+              <div className="flex justify-end gap-3 mt-8 pt-4 border-t border-gray-800">
+                <button type="button" onClick={() => setProduceModalOpen(false)} className="px-5 py-2.5 text-gray-400 hover:text-white transition-colors font-medium">Cancel</button>
+                <button type="submit" disabled={producing} className="bg-primary-600 hover:bg-primary-500 disabled:opacity-50 text-white px-6 py-2.5 rounded-lg font-bold transition-colors shadow-lg">
+                  {producing ? "Generating..." : "Push to Floor"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* --- ADD / EDIT PRODUCT MODAL --- */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-3xl max-h-[90vh] flex flex-col shadow-2xl">
@@ -233,7 +355,6 @@ export default function ProductManagement() {
                 </div>
               </div>
 
-              {/* DYNAMIC PROCESS & MACHINE ROUTING BUILDER */}
               <div>
                 <div className="flex justify-between items-center mb-4">
                   <div>
