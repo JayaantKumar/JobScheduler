@@ -1,25 +1,48 @@
 import { useState, useEffect } from "react";
 import { collection, addDoc, updateDoc, doc, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase/config";
-import { useProcesses } from "../hooks/useProcesses"; // <-- 1. NEW: Import the database hook!
+import { useProcesses } from "../hooks/useProcesses";
+
+// 1. MASTER HARDCODED LIST 
+const PREDEFINED_TYPES = [
+  // The client's specific requested additions:
+  "Manual Work (Hand Labour)", 
+  "Forming + conveyor", 
+  "Automatic gluing", 
+  "Manual Gluing", 
+  "UV Printing", 
+  "Manual Side Pasting", 
+  "Sorting",
+  // The core machines that require dynamic fields:
+  "Sheet Cutting", 
+  "Corrugation", 
+  "Printing", 
+  "Lamination", 
+  "Die Cutting", 
+  "Pasting", 
+  "Gluing", 
+  "Side Pasting"
+];
 
 export default function MachineModal({ onClose, machines = [], editingMachine = null }) {
   
-  // 2. NEW: Fetch your dynamic processes from the database
+  // Fetch dynamic processes from the database
   const { processes: dbProcesses, loading: procLoading } = useProcesses();
 
-  // 3. NEW: Combine database processes with any custom ones already in use
+  // Combine Hardcoded + Database Processes + Existing Custom Types into one master dropdown
   const dbProcessNames = dbProcesses.map(p => p.processName);
   const existingCustomTypes = [...new Set(machines.map(m => m.type))].filter(
-    type => type && !dbProcessNames.includes(type)
+    type => type && !dbProcessNames.includes(type) && !PREDEFINED_TYPES.includes(type)
   );
-  const ALL_TYPES = [...new Set([...dbProcessNames, ...existingCustomTypes])];
+  
+  // Sort alphabetically to make it easy for the client to read
+  const ALL_TYPES = [...new Set([...PREDEFINED_TYPES, ...dbProcessNames, ...existingCustomTypes])].sort();
 
   // Form States
   const [name, setName] = useState(editingMachine?.name || "");
   const [machineCode, setMachineCode] = useState(editingMachine?.machineCode || ""); 
   const [company, setCompany] = useState(editingMachine?.company || ""); 
-  const [type, setType] = useState(editingMachine?.type || ""); // Default to empty so they are forced to pick
+  const [type, setType] = useState(editingMachine?.type || ""); 
   const [customType, setCustomType] = useState("");
   const [place, setPlace] = useState(editingMachine?.place || ""); 
   const [status, setStatus] = useState(editingMachine?.status || "Online");
@@ -38,6 +61,7 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
 
   const handleSpecChange = (field, value) => setSpecs(prev => ({ ...prev, [field]: value }));
 
+  // Calculates Length x Width for the Size fields
   const handleDimChange = (field, value) => {
     const newSpecs = { ...specs, [field]: value };
     const unit = newSpecs.dimUnit || "in";
@@ -98,7 +122,7 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-md p-6 shadow-2xl overflow-y-auto max-h-[90vh] custom-scrollbar">
-        <h3 className="text-xl font-bold text-white mb-2">{editingMachine ? "Edit Machine" : "Add New Machine"}</h3>
+        <h3 className="text-xl font-bold text-white mb-4">{editingMachine ? "Edit Machine" : "Add New Machine"}</h3>
         
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
@@ -121,34 +145,31 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
             <input type="text" value={company} onChange={e => setCompany(e.target.value)} placeholder="e.g. Bobst (Optional)" className={inputClass} />
           </div>
 
-          {/* 4. NEW: DYNAMIC DATABASE DROPDOWN */}
           <div>
             <label className="block text-sm font-medium text-gray-400 mb-1">Machine Type *</label>
             <select 
               value={type} 
               onChange={e => { setType(e.target.value); setSpecs({ dimUnit: "in" }); }} 
               className={inputClass}
-              disabled={procLoading}
             >
-              <option value="">{procLoading ? "Loading Processes..." : "-- Select Machine Type --"}</option>
+              <option value="">{procLoading ? "Loading..." : "-- Select Machine Type --"}</option>
               {ALL_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
               <option value="Custom" className="text-primary-400 font-bold">+ Add Custom Type...</option>
             </select>
-            {type === "Custom" && <input type="text" value={customType} onChange={e => setCustomType(e.target.value)} placeholder="Type custom type..." className={`${inputClass} mt-2 animate-fade-in`} />}
+            {type === "Custom" && <input type="text" value={customType} onChange={e => setCustomType(e.target.value)} placeholder="Type custom type..." className={`${inputClass} mt-2`} />}
           </div>
 
           <div className="bg-gray-950/50 p-4 rounded-lg border border-gray-800">
             <h4 className="text-xs font-bold text-primary-400 uppercase tracking-wider mb-3">Capabilities & Specs</h4>
             
-            {/* Size (L x W) */}
+            {/* A, B, E: Size (L x W) */}
             {["Sheet Cutting", "Corrugation", "Die Cutting"].includes(type) && (
               <div>
-                <label className="block text-sm text-gray-400 mb-2">Max Size / Format (L x W)</label>
+                <label className="block text-sm text-gray-400 mb-2">Max Size (L x W)</label>
                 <div className="flex items-center gap-2 mb-2">
                   <input type="number" placeholder="L" value={specs.dimL || ""} onChange={e => handleDimChange('dimL', e.target.value)} className={`${inputClass} px-2 text-center`} />
                   <span className="text-gray-500 text-xs">x</span>
                   <input type="number" placeholder="W" value={specs.dimW || ""} onChange={e => handleDimChange('dimW', e.target.value)} className={`${inputClass} px-2 text-center`} />
-                  
                   <select value={specs.dimUnit || "in"} onChange={e => handleDimChange('dimUnit', e.target.value)} className={`${inputClass} px-2 w-auto`}>
                     <option value="in">in</option>
                     <option value="cm">cm</option>
@@ -156,13 +177,13 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
                 </div>
                 {specs.size && (
                   <div className="text-xs text-primary-300 font-mono bg-primary-900/30 p-2 rounded border border-primary-500/20">
-                    <span className="text-gray-500">Auto-calculated:</span><br/>{specs.size}
+                    <span className="text-gray-500">Calculated:</span><br/>{specs.size}
                   </div>
                 )}
               </div>
             )}
 
-            {/* Printing -> Colours & Size (L x W) */}
+            {/* C: Printing -> Colours & Size (L x W) */}
             {type === "Printing" && (
               <div className="space-y-4">
                 <div>
@@ -177,22 +198,15 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
                     <input type="number" placeholder="L" value={specs.dimL || ""} onChange={e => handleDimChange('dimL', e.target.value)} className={`${inputClass} px-2 text-center`} />
                     <span className="text-gray-500 text-xs">x</span>
                     <input type="number" placeholder="W" value={specs.dimW || ""} onChange={e => handleDimChange('dimW', e.target.value)} className={`${inputClass} px-2 text-center`} />
-                    
                     <select value={specs.dimUnit || "in"} onChange={e => handleDimChange('dimUnit', e.target.value)} className={`${inputClass} px-2 w-auto`}>
-                      <option value="in">in</option>
-                      <option value="cm">cm</option>
+                      <option value="in">in</option><option value="cm">cm</option>
                     </select>
                   </div>
-                  {specs.size && (
-                    <div className="text-xs text-primary-300 font-mono bg-primary-900/30 p-2 rounded border border-primary-500/20">
-                      <span className="text-gray-500">Auto-calculated:</span><br/>{specs.size}
-                    </div>
-                  )}
                 </div>
               </div>
             )}
 
-            {/* Lamination -> Type & Mode */}
+            {/* D: Lamination -> Type & Mode */}
             {type === "Lamination" && (
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -206,26 +220,34 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
                   <label className="block text-sm text-gray-400 mb-1">Mode</label>
                   <select value={specs.mode || "Manual"} onChange={e => handleSpecChange('mode', e.target.value)} className={inputClass}>
                     <option value="Manual">Manual</option>
-                    <option value="Semi-automatic">Semi-automatic</option>
                     <option value="Automatic">Automatic</option>
                   </select>
                 </div>
               </div>
             )}
 
-            {/* Gluing -> Mode */}
+            {/* F: Pasting -> Mode (Manual Only) */}
+            {type === "Pasting" && (
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Mode</label>
+                <select value={specs.mode || "Manual"} onChange={e => handleSpecChange('mode', e.target.value)} className={inputClass}>
+                  <option value="Manual">Manual</option>
+                </select>
+              </div>
+            )}
+
+            {/* G: Gluing -> Mode (Manual or Automatic) */}
             {type === "Gluing" && (
               <div>
                 <label className="block text-sm text-gray-400 mb-1">Mode</label>
                 <select value={specs.mode || "Manual"} onChange={e => handleSpecChange('mode', e.target.value)} className={inputClass}>
                   <option value="Manual">Manual</option>
-                  <option value="Semi-automatic">Semi-automatic</option>
                   <option value="Automatic">Automatic</option>
                 </select>
               </div>
             )}
 
-            {/* Side Pasting -> Min & Max Size */}
+            {/* H: Side Pasting -> Min & Max Size */}
             {type === "Side Pasting" && (
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -239,18 +261,8 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
               </div>
             )}
 
-            {/* Pasting (Other) -> Manual Only */}
-            {["Bottom Pasting", "Window Pasting", "Pasting"].includes(type) && (
-              <div>
-                <label className="block text-sm text-gray-400 mb-1">Mode</label>
-                <select value={specs.mode || "Manual"} onChange={e => handleSpecChange('mode', e.target.value)} className={inputClass}>
-                  <option value="Manual">Manual</option>
-                </select>
-              </div>
-            )}
-
-            {/* Fallback for other processes */}
-            {!["Sheet Cutting", "Corrugation", "Die Cutting", "Printing", "Lamination", "Gluing", "Side Pasting", "Bottom Pasting", "Window Pasting", "Pasting"].includes(type) && (
+            {/* Fallback Message */}
+            {!["Sheet Cutting", "Corrugation", "Die Cutting", "Printing", "Lamination", "Pasting", "Gluing", "Side Pasting"].includes(type) && (
               <p className="text-xs text-gray-500 italic mt-1">No additional specifications required for this process type.</p>
             )}
           </div>
