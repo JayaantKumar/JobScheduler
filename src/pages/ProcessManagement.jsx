@@ -2,17 +2,33 @@ import { useState } from "react";
 import { collection, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { useProcesses } from "../hooks/useProcesses";
+import { useMachines } from "../hooks/useMachines"; // <-- NEW: Import machines to get existing types
+
+// The master list of Machine Types
+const PREDEFINED_TYPES = [
+  "Manual Work (Hand Labour)", "Forming + conveyor", "Automatic gluing", 
+  "Manual Gluing", "UV Printing", "Manual Side Pasting", "Sorting",
+  "Sheet Cutting", "Corrugation", "Printing", "Lamination", 
+  "Die Cutting", "Pasting", "Gluing", "Side Pasting"
+];
 
 export default function ProcessManagement() {
   const { processes, loading } = useProcesses();
+  const { machines } = useMachines(); // <-- NEW: Fetch existing machines
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProcess, setEditingProcess] = useState(null);
   const [saving, setSaving] = useState(false);
 
-  // Simplified Form State (No custom "Other" field needed anymore!)
+  // Combine Hardcoded + Any Existing Custom Types into one master dropdown
+  const existingCustomTypes = [...new Set(machines.map(m => m.type))].filter(
+    type => type && !PREDEFINED_TYPES.includes(type)
+  );
+  const ALL_TYPES = [...new Set([...PREDEFINED_TYPES, ...existingCustomTypes])].sort();
+
   const [processName, setProcessName] = useState("");
   const [machineType, setMachineType] = useState("");
+  const [customMachineType, setCustomMachineType] = useState(""); // For "Other"
   const [inputUnit, setInputUnit] = useState("");
   const [outputUnit, setOutputUnit] = useState("");
 
@@ -20,13 +36,23 @@ export default function ProcessManagement() {
     if (proc) {
       setEditingProcess(proc);
       setProcessName(proc.processName || "");
-      setMachineType(proc.machineType || "");
+      
+      // If it's a weird type not in the list, set to Custom
+      if (proc.machineType && !ALL_TYPES.includes(proc.machineType)) {
+         setMachineType("Custom");
+         setCustomMachineType(proc.machineType);
+      } else {
+         setMachineType(proc.machineType || "");
+         setCustomMachineType("");
+      }
+
       setInputUnit(proc.inputUnit || "");
       setOutputUnit(proc.outputUnit || "");
     } else {
       setEditingProcess(null);
       setProcessName(""); 
       setMachineType("");
+      setCustomMachineType("");
       setInputUnit(""); 
       setOutputUnit("");
     }
@@ -35,13 +61,15 @@ export default function ProcessManagement() {
 
   const handleSave = async (e) => {
     e.preventDefault();
-    
     if (!processName.trim()) return alert("Please enter a Process Name.");
+    
+    // Resolve the final machine type
+    const finalMachineType = machineType === "Custom" ? customMachineType : machineType;
     
     setSaving(true);
     const payload = { 
       processName: processName.trim(), 
-      machineType: machineType.trim(), 
+      machineType: finalMachineType.trim(), 
       inputUnit, 
       outputUnit, 
       updated_at: serverTimestamp() 
@@ -139,29 +167,22 @@ export default function ProcessManagement() {
             
             <form onSubmit={handleSave} className="space-y-5">
               
-              {/* NOW A CLEAN TEXT INPUT INSTEAD OF A DROPDOWN */}
               <div>
                 <label className={labelClass}>Process Name *</label>
-                <input 
-                  type="text" 
-                  required 
-                  value={processName} 
-                  onChange={e => setProcessName(e.target.value)} 
-                  placeholder="e.g., Premium Foiling" 
-                  className={inputClass} 
-                />
+                <input type="text" required value={processName} onChange={e => setProcessName(e.target.value)} placeholder="e.g., Premium Foiling" className={inputClass} />
               </div>
 
-              {/* NOW A CLEAN TEXT INPUT INSTEAD OF A DROPDOWN */}
+              {/* THE FIX: NOW A DROPDOWN OF MASTER MACHINE TYPES */}
               <div>
                 <label className={labelClass}>Default Machine Type</label>
-                <input 
-                  type="text" 
-                  value={machineType} 
-                  onChange={e => setMachineType(e.target.value)} 
-                  placeholder="e.g., Foil Stamping Machine" 
-                  className={inputClass} 
-                />
+                <select value={machineType} onChange={e => setMachineType(e.target.value)} className={inputClass}>
+                  <option value="">-- Select Default Machine Type --</option>
+                  {ALL_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                  <option value="Custom" className="text-primary-400 font-bold">+ Add Custom Type...</option>
+                </select>
+                {machineType === "Custom" && (
+                  <input type="text" required value={customMachineType} onChange={e => setCustomMachineType(e.target.value)} placeholder="Type custom machine type..." className={`${inputClass} mt-2 animate-fade-in`} />
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-4">
