@@ -2,33 +2,19 @@ import { useState } from "react";
 import { collection, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { useProcesses } from "../hooks/useProcesses";
-import { useMachines } from "../hooks/useMachines"; // <-- NEW: Import machines to get existing types
-
-// The master list of Machine Types
-const PREDEFINED_TYPES = [
-  "Manual Work (Hand Labour)", "Forming + conveyor", "Automatic gluing", 
-  "Manual Gluing", "UV Printing", "Manual Side Pasting", "Sorting",
-  "Sheet Cutting", "Corrugation", "Printing", "Lamination", 
-  "Die Cutting", "Pasting", "Gluing", "Side Pasting"
-];
+import { useMachines } from "../hooks/useMachines"; 
 
 export default function ProcessManagement() {
-  const { processes, loading } = useProcesses();
-  const { machines } = useMachines(); // <-- NEW: Fetch existing machines
+  const { processes, loading: procLoading } = useProcesses();
+  const { machines, loading: machLoading } = useMachines(); 
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProcess, setEditingProcess] = useState(null);
   const [saving, setSaving] = useState(false);
 
-  // Combine Hardcoded + Any Existing Custom Types into one master dropdown
-  const existingCustomTypes = [...new Set(machines.map(m => m.type))].filter(
-    type => type && !PREDEFINED_TYPES.includes(type)
-  );
-  const ALL_TYPES = [...new Set([...PREDEFINED_TYPES, ...existingCustomTypes])].sort();
-
+  // Form States
   const [processName, setProcessName] = useState("");
-  const [machineType, setMachineType] = useState("");
-  const [customMachineType, setCustomMachineType] = useState(""); // For "Other"
+  const [defaultMachineId, setDefaultMachineId] = useState("");
   const [inputUnit, setInputUnit] = useState("");
   const [outputUnit, setOutputUnit] = useState("");
 
@@ -36,23 +22,13 @@ export default function ProcessManagement() {
     if (proc) {
       setEditingProcess(proc);
       setProcessName(proc.processName || "");
-      
-      // If it's a weird type not in the list, set to Custom
-      if (proc.machineType && !ALL_TYPES.includes(proc.machineType)) {
-         setMachineType("Custom");
-         setCustomMachineType(proc.machineType);
-      } else {
-         setMachineType(proc.machineType || "");
-         setCustomMachineType("");
-      }
-
+      setDefaultMachineId(proc.defaultMachineId || "");
       setInputUnit(proc.inputUnit || "");
       setOutputUnit(proc.outputUnit || "");
     } else {
       setEditingProcess(null);
       setProcessName(""); 
-      setMachineType("");
-      setCustomMachineType("");
+      setDefaultMachineId("");
       setInputUnit(""); 
       setOutputUnit("");
     }
@@ -63,13 +39,17 @@ export default function ProcessManagement() {
     e.preventDefault();
     if (!processName.trim()) return alert("Please enter a Process Name.");
     
-    // Resolve the final machine type
-    const finalMachineType = machineType === "Custom" ? customMachineType : machineType;
-    
     setSaving(true);
+
+    // Find the specific machine name to save alongside the ID for easy display
+    const selectedMach = machines.find(m => m.id === defaultMachineId);
+    const defaultMachineName = selectedMach ? selectedMach.name : "";
+
     const payload = { 
       processName: processName.trim(), 
-      machineType: finalMachineType.trim(), 
+      defaultMachineId: defaultMachineId,
+      defaultMachineName: defaultMachineName,
+      machineType: defaultMachineName, // Kept for backward compatibility with older data
       inputUnit, 
       outputUnit, 
       updated_at: serverTimestamp() 
@@ -99,7 +79,7 @@ export default function ProcessManagement() {
     }
   };
 
-  if (loading) return <div className="p-8 text-primary-500 animate-pulse font-medium">Loading Processes...</div>;
+  if (procLoading) return <div className="p-8 text-primary-500 animate-pulse font-medium">Loading Processes...</div>;
 
   const inputClass = "w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary-500 placeholder-gray-600";
   const labelClass = "block text-xs font-semibold text-gray-400 mb-1.5";
@@ -111,7 +91,7 @@ export default function ProcessManagement() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 sm:mb-8">
         <div>
           <h2 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">Process Management</h2>
-          <p className="text-sm sm:text-base text-gray-400 mt-1">Define the standard processes for your workflows.</p>
+          <p className="text-sm sm:text-base text-gray-400 mt-1">Define standard factory processes and link them to physical machines.</p>
         </div>
         <button 
           onClick={() => openModal()} 
@@ -127,7 +107,7 @@ export default function ProcessManagement() {
             <thead>
               <tr className="bg-gray-950/50 border-b border-gray-800 text-xs font-bold text-gray-400 uppercase tracking-wider">
                 <th className="py-4 px-6">Process Name</th>
-                <th className="py-4 px-6">Default Machine Type</th>
+                <th className="py-4 px-6">Default Assigned Machine</th>
                 <th className="py-4 px-6">Input Unit</th>
                 <th className="py-4 px-6">Output Unit</th>
                 <th className="py-4 px-6 text-right">Actions</th>
@@ -140,7 +120,9 @@ export default function ProcessManagement() {
                 processes.map((proc) => (
                   <tr key={proc.id} className="hover:bg-gray-800/30 transition-colors group">
                     <td className="py-4 px-6 font-bold text-gray-200">{proc.processName}</td>
-                    <td className="py-4 px-6 text-gray-400">{proc.machineType || "-"}</td>
+                    <td className="py-4 px-6 text-primary-400 font-medium">
+                      {proc.defaultMachineName || proc.machineType || <span className="text-gray-500 italic">Unassigned</span>}
+                    </td>
                     <td className="py-4 px-6 text-gray-400">{proc.inputUnit || "-"}</td>
                     <td className="py-4 px-6 text-gray-400">{proc.outputUnit || "-"}</td>
                     <td className="py-4 px-6 text-right">
@@ -172,17 +154,15 @@ export default function ProcessManagement() {
                 <input type="text" required value={processName} onChange={e => setProcessName(e.target.value)} placeholder="e.g., Premium Foiling" className={inputClass} />
               </div>
 
-              {/* THE FIX: NOW A DROPDOWN OF MASTER MACHINE TYPES */}
+              {/* NEW: DROPDOWN PULLS EXACT PHYSICAL MACHINES */}
               <div>
-                <label className={labelClass}>Default Machine Type</label>
-                <select value={machineType} onChange={e => setMachineType(e.target.value)} className={inputClass}>
-                  <option value="">-- Select Default Machine Type --</option>
-                  {ALL_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                  <option value="Custom" className="text-primary-400 font-bold">+ Add Custom Type...</option>
+                <label className={labelClass}>Default Assigned Machine (Optional)</label>
+                <select value={defaultMachineId} onChange={e => setDefaultMachineId(e.target.value)} className={inputClass} disabled={machLoading}>
+                  <option value="">-- Leave Unassigned --</option>
+                  {machines.map(m => (
+                    <option key={m.id} value={m.id}>{m.name} ({m.place})</option>
+                  ))}
                 </select>
-                {machineType === "Custom" && (
-                  <input type="text" required value={customMachineType} onChange={e => setCustomMachineType(e.target.value)} placeholder="Type custom machine type..." className={`${inputClass} mt-2 animate-fade-in`} />
-                )}
               </div>
 
               <div className="grid grid-cols-2 gap-4">
