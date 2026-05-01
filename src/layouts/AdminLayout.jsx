@@ -5,6 +5,19 @@ import { logoutUser } from "../services/auth.service";
 export default function AdminLayout() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
+  // --- NEW: Feature Toggle State with LocalStorage ---
+  const [showProductMgmt, setShowProductMgmt] = useState(() => {
+    return localStorage.getItem('showProductMgmt') !== 'false';
+  });
+
+  const toggleProductMgmt = () => {
+    setShowProductMgmt(prev => {
+      const newVal = !prev;
+      localStorage.setItem('showProductMgmt', newVal);
+      return newVal;
+    });
+  };
+
   const navLinkClasses = ({ isActive }) =>
     `block px-4 py-3 rounded-lg transition-all font-medium ${
       isActive
@@ -57,7 +70,7 @@ export default function AdminLayout() {
           </button>
         </div>
 
-        <nav className="flex-1 px-4 space-y-2 mt-2 overflow-y-auto pb-4">
+        <nav className="flex-1 px-4 space-y-2 mt-2 overflow-y-auto pb-4 custom-scrollbar">
           <NavLink
             to="/dashboard"
             end
@@ -101,20 +114,35 @@ export default function AdminLayout() {
           >
             Master Data
           </NavLink>
-          <NavLink
-            to="/dashboard/product-management"
-            onClick={handleNavClick}
-            className={navLinkClasses}
-          >
-            Product Management
-          </NavLink>
+          
+          {/* ⭐️ NEW: Hidden dynamically based on toggle */}
+          {showProductMgmt && (
+            <NavLink
+              to="/dashboard/product-management"
+              onClick={handleNavClick}
+              className={navLinkClasses}
+            >
+              Product Management
+            </NavLink>
+          )}
         </nav>
 
-        <div className="p-4 border-t border-gray-800 shrink-0 bg-gray-900">
+        {/* ⭐️ NEW: Product Management Toggle Switch */}
+        <div className="px-5 py-4 border-t border-gray-800 shrink-0 bg-gray-900">
+          <label className="flex items-center justify-between cursor-pointer mb-4 group">
+            <span className="text-xs font-bold text-gray-500 uppercase tracking-wider group-hover:text-gray-300 transition-colors">Product Mgmt UI</span>
+            <div className="relative">
+              <input type="checkbox" className="sr-only" checked={showProductMgmt} onChange={toggleProductMgmt} />
+              <div className={`block w-8 h-5 rounded-full transition-colors ${showProductMgmt ? 'bg-primary-600' : 'bg-gray-800 border border-gray-700'}`}></div>
+              <div className={`dot absolute left-1 top-1 bg-white w-3 h-3 rounded-full transition-transform ${showProductMgmt ? 'transform translate-x-3' : ''}`}></div>
+            </div>
+          </label>
+
           <button
             onClick={logoutUser}
-            className="w-full px-4 py-2 text-left text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors font-medium"
+            className="w-full px-4 py-2 text-left text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors font-medium flex items-center gap-2"
           >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
             Logout
           </button>
         </div>
@@ -148,12 +176,12 @@ export default function AdminLayout() {
             </h1>
           </div>
 
-          <div className="w-8 h-8 rounded-full bg-primary-600/20 border border-primary-500/50 flex items-center justify-center text-primary-500 text-xs font-bold">
+          <div className="w-8 h-8 rounded-full bg-primary-600/20 border border-primary-500/50 flex items-center justify-center text-primary-500 text-xs font-bold shadow-lg shadow-primary-500/20">
             AD
           </div>
         </header>
 
-        <div className="flex-1 overflow-auto p-4 md:p-8 bg-gray-950">
+        <div className="flex-1 overflow-auto p-4 md:p-8 bg-gray-950 custom-scrollbar">
           <Outlet />
         </div>
       </main>
