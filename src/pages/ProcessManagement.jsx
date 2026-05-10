@@ -4,6 +4,15 @@ import { db } from "../firebase/config";
 import { useProcesses } from "../hooks/useProcesses";
 import { useMachines } from "../hooks/useMachines"; 
 
+// ⭐️ NEW: Master list of processes that cannot be deleted
+const LOCKED_PROCESS_NAMES = [
+  "die cutting", 
+  "lamination", 
+  "corrugation pasting", 
+  "side pasting", 
+  "side pasting (machine)"
+];
+
 export default function ProcessManagement() {
   const { processes, loading: procLoading } = useProcesses();
   const { machines, loading: machLoading } = useMachines(); 
@@ -41,7 +50,6 @@ export default function ProcessManagement() {
     
     setSaving(true);
 
-    // Find the specific machine name to save alongside the ID for easy display
     const selectedMach = machines.find(m => m.id === defaultMachineId);
     const defaultMachineName = selectedMach ? selectedMach.name : "";
 
@@ -49,7 +57,7 @@ export default function ProcessManagement() {
       processName: processName.trim(), 
       defaultMachineId: defaultMachineId,
       defaultMachineName: defaultMachineName,
-      machineType: defaultMachineName, // Kept for backward compatibility with older data
+      machineType: defaultMachineName, 
       inputUnit, 
       outputUnit, 
       updated_at: serverTimestamp() 
@@ -69,7 +77,12 @@ export default function ProcessManagement() {
     }
   };
 
-  const handleDelete = async (id) => {
+  const handleDelete = async (id, name) => {
+    // ⭐️ NEW: Double-layer security to prevent deletion
+    if (name && LOCKED_PROCESS_NAMES.includes(name.toLowerCase().trim())) {
+      return alert("SECURITY ALERT: This is a core factory process and cannot be deleted.");
+    }
+
     if (window.confirm("Are you sure you want to delete this process?")) {
       try { 
         await deleteDoc(doc(db, "processes", id)); 
@@ -87,7 +100,6 @@ export default function ProcessManagement() {
   return (
     <div className="max-w-[1600px] mx-auto p-4 sm:p-6 h-full flex flex-col">
       
-      {/* RESPONSIVE HEADER */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 sm:mb-8">
         <div>
           <h2 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">Process Management</h2>
@@ -117,22 +129,49 @@ export default function ProcessManagement() {
               {processes.length === 0 ? (
                 <tr><td colSpan="5" className="py-12 text-center text-gray-500">No processes defined yet. Start building your custom list!</td></tr>
               ) : (
-                processes.map((proc) => (
-                  <tr key={proc.id} className="hover:bg-gray-800/30 transition-colors group">
-                    <td className="py-4 px-6 font-bold text-gray-200">{proc.processName}</td>
-                    <td className="py-4 px-6 text-primary-400 font-medium">
-                      {proc.defaultMachineName || proc.machineType || <span className="text-gray-500 italic">Unassigned</span>}
-                    </td>
-                    <td className="py-4 px-6 text-gray-400">{proc.inputUnit || "-"}</td>
-                    <td className="py-4 px-6 text-gray-400">{proc.outputUnit || "-"}</td>
-                    <td className="py-4 px-6 text-right">
-                      <div className="flex justify-end gap-3">
-                        <button onClick={() => openModal(proc)} className="text-yellow-500 hover:text-yellow-400 p-1.5"><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg></button>
-                        <button onClick={() => handleDelete(proc.id)} className="text-red-500 hover:text-red-400 p-1.5"><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
+                processes.map((proc) => {
+                  // ⭐️ NEW: Check if this row is a locked process
+                  const isLocked = proc.processName && LOCKED_PROCESS_NAMES.includes(proc.processName.toLowerCase().trim());
+
+                  return (
+                    <tr key={proc.id} className={`hover:bg-gray-800/30 transition-colors group ${isLocked ? 'bg-red-900/5' : ''}`}>
+                      
+                      <td className={`py-4 px-6 font-bold flex items-center gap-2 ${isLocked ? 'text-red-400' : 'text-gray-200'}`}>
+                        {proc.processName}
+                        {isLocked && (
+                          <span className="text-[9px] bg-red-500/10 text-red-400 px-2 py-0.5 rounded border border-red-500/20 uppercase tracking-widest font-bold">
+                            Locked
+                          </span>
+                        )}
+                      </td>
+
+                      <td className="py-4 px-6 text-primary-400 font-medium">
+                        {proc.defaultMachineName || proc.machineType || <span className="text-gray-500 italic">Unassigned</span>}
+                      </td>
+                      <td className="py-4 px-6 text-gray-400">{proc.inputUnit || "-"}</td>
+                      <td className="py-4 px-6 text-gray-400">{proc.outputUnit || "-"}</td>
+                      <td className="py-4 px-6 text-right">
+                        <div className="flex justify-end gap-3 items-center">
+                          <button onClick={() => openModal(proc)} className="text-yellow-500 hover:text-yellow-400 p-1.5 transition-colors">
+                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                          </button>
+                          
+                          {/* ⭐️ NEW: Show Padlock if locked, Trash Can if unlocked */}
+                          {isLocked ? (
+                            <div className="p-1.5 text-gray-600/50 cursor-not-allowed" title="System Locked Process - Cannot be deleted">
+                              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
+                            </div>
+                          ) : (
+                            <button onClick={() => handleDelete(proc.id, proc.processName)} className="text-red-500 hover:text-red-400 p-1.5 transition-colors">
+                              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                            </button>
+                          )}
+
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -151,10 +190,18 @@ export default function ProcessManagement() {
               
               <div>
                 <label className={labelClass}>Process Name *</label>
-                <input type="text" required value={processName} onChange={e => setProcessName(e.target.value)} placeholder="e.g., Premium Foiling" className={inputClass} />
+                <input 
+                  type="text" 
+                  required 
+                  value={processName} 
+                  onChange={e => setProcessName(e.target.value)} 
+                  placeholder="e.g., Premium Foiling" 
+                  className={inputClass} 
+                  disabled={editingProcess && LOCKED_PROCESS_NAMES.includes(processName.toLowerCase().trim())}
+                  title={editingProcess && LOCKED_PROCESS_NAMES.includes(processName.toLowerCase().trim()) ? "Locked Process names cannot be edited" : ""}
+                />
               </div>
 
-              {/* NEW: DROPDOWN PULLS EXACT PHYSICAL MACHINES */}
               <div>
                 <label className={labelClass}>Default Assigned Machine (Optional)</label>
                 <select value={defaultMachineId} onChange={e => setDefaultMachineId(e.target.value)} className={inputClass} disabled={machLoading}>

@@ -38,7 +38,8 @@ export default function ProductManagement() {
   const [sheetSize, setSheetSize] = useState("");
   const [customMaterial, setCustomMaterial] = useState(""); 
   
-  const [sequence, setSequence] = useState([{ id: Date.now(), process_name: "", assigned_machine: "", process_details: {} }]);
+  // ⭐️ UPDATE: Added 'remarks' to the sequence state
+  const [sequence, setSequence] = useState([{ id: Date.now(), process_name: "", assigned_machine: "", process_details: {}, remarks: "" }]);
 
   // --- SMART MACHINE FILTERING LOGIC ---
   const getFilteredMachines = (processName) => {
@@ -49,10 +50,8 @@ export default function ProductManagement() {
 
     const filtered = machines.filter(m => {
       if (defaultMachId && m.id === defaultMachId) return true;
-      
       const mType = (m.type || "").toLowerCase();
       const pName = processName.toLowerCase();
-      
       return mType === pName || pName.includes(mType) || mType.includes(pName);
     });
     
@@ -78,16 +77,17 @@ export default function ProductManagement() {
           id: Date.now() + i, 
           process_name: s.process_name || "",
           assigned_machine: s.assigned_machine || "",
-          process_details: s.process_details || {} 
+          process_details: s.process_details || {},
+          remarks: s.remarks || "" // Load remarks
         })));
       } else {
-        setSequence([{ id: Date.now(), process_name: "", assigned_machine: "", process_details: {} }]);
+        setSequence([{ id: Date.now(), process_name: "", assigned_machine: "", process_details: {}, remarks: "" }]);
       }
     } else {
       setEditingProduct(null);
       setName(""); setSku(""); setCategory(""); setCustomerName("");
       setSize(""); setPaperType(""); setPaperGsm(""); setSheetSize(""); setCustomMaterial(""); 
-      setSequence([{ id: Date.now(), process_name: "", assigned_machine: "", process_details: {} }]);
+      setSequence([{ id: Date.now(), process_name: "", assigned_machine: "", process_details: {}, remarks: "" }]);
     }
     setModalOpen(true);
   };
@@ -102,12 +102,12 @@ export default function ProductManagement() {
   };
 
   // --- SEQUENCE & DYNAMIC FIELD HANDLERS ---
-  const handleSequenceAdd = () => setSequence([...sequence, { id: Date.now(), process_name: "", assigned_machine: "", process_details: {} }]);
+  const handleSequenceAdd = () => setSequence([...sequence, { id: Date.now(), process_name: "", assigned_machine: "", process_details: {}, remarks: "" }]);
   const handleSequenceRemove = (id) => sequence.length > 1 && setSequence(sequence.filter(s => s.id !== id));
   
   const handleSequenceChange = (id, field, val) => {
     setSequence(sequence.map(s => {
-      if (s.id === id && field === 'process_name') return { ...s, [field]: val, assigned_machine: "", process_details: {} };
+      if (s.id === id && field === 'process_name') return { ...s, [field]: val, assigned_machine: "", process_details: {}, remarks: "" };
       return s.id === id ? { ...s, [field]: val } : s;
     }));
   };
@@ -121,11 +121,13 @@ export default function ProductManagement() {
     e.preventDefault();
     setSaving(true);
     
+    // ⭐️ UPDATE: Make sure 'remarks' gets saved to the database
     const cleanSequence = sequence.filter(s => s.process_name.trim() !== "").map((s, index) => ({
       step_order: index + 1,
       process_name: s.process_name,
       assigned_machine: s.assigned_machine,
-      process_details: s.process_details || {} 
+      process_details: s.process_details || {},
+      remarks: s.remarks || ""
     }));
 
     const payload = {
@@ -175,10 +177,17 @@ export default function ProductManagement() {
     const final_process_sequence = activeProduceProduct.default_sequence.map((step, index) => {
       const assignedMach = machines.find(m => m.id === step.assigned_machine);
       let instructions = "";
+      
+      // Combine dynamic details
       if (step.process_details && Object.keys(step.process_details).length > 0) {
         instructions = Object.entries(step.process_details)
           .map(([key, val]) => `${key.replace(/([A-Z])/g, ' $1').toUpperCase()}: ${val}`)
           .join(" | ");
+      }
+      
+      // ⭐️ UPDATE: Append the custom remarks to the final job card instructions
+      if (step.remarks && step.remarks.trim() !== "") {
+        instructions = instructions ? `${instructions} | REMARKS: ${step.remarks}` : `REMARKS: ${step.remarks}`;
       }
 
       return {
@@ -190,8 +199,7 @@ export default function ProductManagement() {
         output_qty: targetQtyNum,
         remarks: instructions, 
         assigned_machine_id: step.assigned_machine || null,
-        assigned_machine_name: assignedMach ? assignedMach.name : "Unassigned Machine",
-        process_details: step.process_details || {} 
+        assigned_machine_name: assignedMach ? assignedMach.name : "Unassigned Machine"
       };
     });
 
@@ -246,33 +254,34 @@ export default function ProductManagement() {
         </div>
       );
     }
+    
+    // ⭐️ UPDATE: Client's requested Lamination terms
     if (pName.includes("lamination")) {
       return (
-        <div className="mt-2 grid grid-cols-2 gap-3 pl-11">
+        <div className="mt-2 grid grid-cols-3 gap-3 pl-11">
+          <div><span className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Size Needed</span><input type="text" placeholder="Size" value={details.sizeNeeded || ""} onChange={e => handleSequenceDetailChange(step.id, 'sizeNeeded', e.target.value)} className={miniInputClass} /></div>
+          <div><span className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Type</span><input type="text" placeholder="Type" value={details.laminationType || ""} onChange={e => handleSequenceDetailChange(step.id, 'laminationType', e.target.value)} className={miniInputClass} /></div>
           <div>
-            <span className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Type</span>
-            <select value={details.laminationType || ""} onChange={e => handleSequenceDetailChange(step.id, 'laminationType', e.target.value)} className={miniInputClass}>
-              <option value="">Select Type</option><option value="Cold">Cold</option><option value="Thermal">Thermal</option>
-            </select>
-          </div>
-          <div>
-            <span className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Mode</span>
-            <select value={details.mode || ""} onChange={e => handleSequenceDetailChange(step.id, 'mode', e.target.value)} className={miniInputClass}>
-              <option value="">Select Mode</option><option value="Manual">Manual</option><option value="Automatic">Automatic</option>
+            <span className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Cold/Thermal</span>
+            <select value={details.temp || ""} onChange={e => handleSequenceDetailChange(step.id, 'temp', e.target.value)} className={miniInputClass}>
+              <option value="">Select Temp</option><option value="Cold">Cold</option><option value="Thermal">Thermal</option>
             </select>
           </div>
         </div>
       );
     }
+
+    // ⭐️ UPDATE: Client's requested Die Cutting terms
     if (pName.includes("die cutting")) {
       return (
         <div className="mt-2 grid grid-cols-3 gap-3 pl-11">
-          <div><span className="text-[10px] text-purple-400 font-bold uppercase tracking-wider block mb-1">Die Size</span><input type="text" placeholder="Size" value={details.size || ""} onChange={e => handleSequenceDetailChange(step.id, 'size', e.target.value)} className={`${miniInputClass} border-purple-500/30`} /></div>
-          <div><span className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Sheet Size</span><input type="text" placeholder="Sheet Size" value={details.sheetSize || ""} onChange={e => handleSequenceDetailChange(step.id, 'sheetSize', e.target.value)} className={miniInputClass} /></div>
-          <div><span className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">No. of Colours</span><input type="text" placeholder="Colours" value={details.colors || ""} onChange={e => handleSequenceDetailChange(step.id, 'colors', e.target.value)} className={miniInputClass} /></div>
+          <div><span className="text-[10px] text-purple-400 font-bold uppercase tracking-wider block mb-1">Die Used</span><input type="text" placeholder="Die Name/No" value={details.dieUsed || ""} onChange={e => handleSequenceDetailChange(step.id, 'dieUsed', e.target.value)} className={`${miniInputClass} border-purple-500/30`} /></div>
+          <div><span className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Die Size</span><input type="text" placeholder="Die Size" value={details.dieSize || ""} onChange={e => handleSequenceDetailChange(step.id, 'dieSize', e.target.value)} className={miniInputClass} /></div>
+          <div><span className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Min Sheet Size Reqd.</span><input type="text" placeholder="Min Sheet Size" value={details.minSheetSize || ""} onChange={e => handleSequenceDetailChange(step.id, 'minSheetSize', e.target.value)} className={miniInputClass} /></div>
         </div>
       );
     }
+
     if (pName === "gluing") {
       return (
         <div className="mt-2 grid grid-cols-2 gap-3 pl-11">
@@ -285,14 +294,17 @@ export default function ProductManagement() {
         </div>
       );
     }
+
+    // ⭐️ UPDATE: Client's requested Side Pasting terms
     if (pName.includes("side pasting")) {
       return (
         <div className="mt-2 grid grid-cols-2 gap-3 pl-11">
-          <div><span className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Min Size</span><input type="text" placeholder="Min Size" value={details.minSize || ""} onChange={e => handleSequenceDetailChange(step.id, 'minSize', e.target.value)} className={miniInputClass} /></div>
-          <div><span className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Max Size</span><input type="text" placeholder="Max Size" value={details.maxSize || ""} onChange={e => handleSequenceDetailChange(step.id, 'maxSize', e.target.value)} className={miniInputClass} /></div>
+          <div><span className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Keep</span><input type="text" placeholder="Keep" value={details.keep || ""} onChange={e => handleSequenceDetailChange(step.id, 'keep', e.target.value)} className={miniInputClass} /></div>
+          <div><span className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Glue</span><input type="text" placeholder="Glue" value={details.glue || ""} onChange={e => handleSequenceDetailChange(step.id, 'glue', e.target.value)} className={miniInputClass} /></div>
         </div>
       );
     }
+
     if (pName.includes("pasting") && !pName.includes("side")) {
       return (
         <div className="mt-2 grid grid-cols-2 gap-3 pl-11">
@@ -468,7 +480,7 @@ export default function ProductManagement() {
                       <div className="flex flex-col md:flex-row items-start gap-3">
                         <div className="bg-gray-800 text-gray-400 w-8 h-8 rounded flex items-center justify-center font-bold text-xs shrink-0 mt-1">{idx + 1}</div>
                         
-                        <div className="flex-1 w-full space-y-2">
+                        <div className="flex-1 w-full space-y-3">
                           <div className="flex flex-col sm:flex-row gap-3">
                             <select required value={step.process_name} onChange={(e) => handleSequenceChange(step.id, 'process_name', e.target.value)} className={inputClass} disabled={procLoading}>
                               <option value="">-- Select Process --</option>
@@ -480,7 +492,20 @@ export default function ProductManagement() {
                               {getFilteredMachines(step.process_name).map(m => <option key={m.id} value={m.id}>{m.name} ({m.place})</option>)}
                             </select>
                           </div>
+                          
                           {renderDynamicProcessFields(step)}
+                          
+                          {/* ⭐️ UPDATE: Added the Remarks box for every single step */}
+                          <div className="pt-2 pl-11">
+                            <input 
+                              type="text" 
+                              placeholder="Remarks for operator (Optional) e.g., Run at half speed" 
+                              value={step.remarks || ""} 
+                              onChange={(e) => handleSequenceChange(step.id, 'remarks', e.target.value)} 
+                              className={`${inputClass} border-dashed focus:border-solid`} 
+                            />
+                          </div>
+
                         </div>
 
                         <button onClick={() => handleSequenceRemove(step.id)} type="button" className="text-gray-500 hover:text-red-400 p-2 shrink-0 transition-colors mt-1">
