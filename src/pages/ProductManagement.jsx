@@ -213,7 +213,7 @@ export default function ProductManagement() {
         size: activeProduceProduct.size || "", material: activeProduceProduct.paperType || "", gsm: activeProduceProduct.paperGsm || "",
         sheet_size: activeProduceProduct.sheet_size || "", category: activeProduceProduct.category || "", customMaterial: activeProduceProduct.customMaterial || ""
       },
-      specifications: { colors: "NA", size_before_cut: "", size_after_cut: "", die: "", paper_company: "" },
+      specifications: { colors: "NA", size_before_cut: "", size_after_cut: "", paper_company: "" },
       quantity_target: targetQtyNum, quantity_completed: 0, deadline: new Date(produceDate).toISOString(),
       status: "pending", process_sequence: final_process_sequence, notes: "Auto-generated from Product Management."
     };

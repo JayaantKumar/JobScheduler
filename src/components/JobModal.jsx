@@ -35,14 +35,13 @@ export default function JobModal({ onClose }) {
   const [dueDate, setDueDate] = useState(calculate14WorkingDays()); 
   const [template, setTemplate] = useState("");
 
-  // Material Specs
+  // Material Specs (Die removed completely)
   const [sheetSize, setSheetSize] = useState("");
   const [sheetGsm, setSheetGsm] = useState("");
   const [materialType, setMaterialType] = useState("");
   const [paperCompany, setPaperCompany] = useState("");
   const [sizeBeforeCut, setSizeBeforeCut] = useState("");
   const [sizeAfterCut, setSizeAfterCut] = useState("");
-  const [dieSelect, setDieSelect] = useState("");
 
   const [priority, setPriority] = useState("normal");
   const [jobNotes, setJobNotes] = useState("");
@@ -52,7 +51,6 @@ export default function JobModal({ onClose }) {
     { id: Date.now(), process_name: "", assigned_machine: "", inputQty: "", outputQty: "", remarks: "" }
   ]);
 
-  // Pull defaults from the Product Template, but keep them editable!
   const handleProductChange = (e) => {
     const prodId = e.target.value;
     setSelectedProductId(prodId);
@@ -74,13 +72,12 @@ export default function JobModal({ onClose }) {
     setSheetGsm(prod.paperGsm || prod.gsm || "");
     setSheetSize(prod.sheet_size || "");
 
-    // Load template sequence into the MANUAL builder
     if (prod.default_sequence && prod.default_sequence.length > 0) {
       const manualProcesses = prod.default_sequence.map((step, index) => ({
         id: Date.now() + index,
         process_name: step.process_name || "",
         assigned_machine: step.assigned_machine || "", 
-        inputQty: quantity, // Suggests the target quantity
+        inputQty: quantity, 
         outputQty: quantity,
         remarks: ""
       }));
@@ -90,7 +87,6 @@ export default function JobModal({ onClose }) {
     }
   };
 
-  // Update target quantity and automatically suggest it to all process steps to save typing
   const handleQuantityChange = (e) => {
     const newQty = e.target.value;
     setQuantity(newQty);
@@ -141,8 +137,7 @@ export default function JobModal({ onClose }) {
         colors: "NA", 
         size_before_cut: sizeBeforeCut,
         size_after_cut: sizeAfterCut,
-        die: dieSelect,
-        paper_company: paperCompany, 
+        paper_company: paperCompany, // Die removed here
       },
       quantity_target: Number(quantity) || 0,
       quantity_completed: 0,
@@ -188,7 +183,6 @@ export default function JobModal({ onClose }) {
         <div className="p-6 overflow-y-auto custom-scrollbar flex-1 bg-[#0a0f1a]">
           <form id="jobForm" onSubmit={handleSubmit} className="space-y-8">
             
-            {/* 1. SELECTION & TARGETS */}
             <div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
@@ -226,7 +220,6 @@ export default function JobModal({ onClose }) {
               </div>
             </div>
 
-            {/* 2. MANUAL ROUTING (Fully Editable) */}
             <div className="mt-8">
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-lg font-bold text-white">Manual Process Routing & Machine Assignment</h3>
@@ -241,7 +234,6 @@ export default function JobModal({ onClose }) {
                     </div>
 
                     <div className="flex-1 space-y-4">
-                      
                       <div className="flex flex-col md:flex-row items-start gap-4">
                         <div className="flex-1 w-full">
                           <label className={labelClass}>Process Name</label>
@@ -268,7 +260,6 @@ export default function JobModal({ onClose }) {
                         <div><label className={labelClass}>Input Qty</label><input type="number" value={proc.inputQty} onChange={(e) => updateProcess(proc.id, "inputQty", e.target.value)} className={inputClass} /></div>
                         <div><label className={labelClass}>Output Qty</label><input type="number" value={proc.outputQty} onChange={(e) => updateProcess(proc.id, "outputQty", e.target.value)} className={inputClass} /></div>
                       </div>
-
                     </div>
                   </div>
                 ))}
@@ -279,14 +270,12 @@ export default function JobModal({ onClose }) {
               </button>
             </div>
 
-            {/* 3. MATERIAL OVERRIDES */}
             <div className="pt-6 border-t border-gray-800">
               <h3 className="text-sm font-bold text-gray-300 mb-4">Batch Material Overrides (Optional)</h3>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div><label className={labelClass}>Material</label><input type="text" value={materialType} onChange={e => setMaterialType(e.target.value)} className={inputClass} /></div>
                 <div><label className={labelClass}>GSM</label><input type="text" value={sheetGsm} onChange={e => setSheetGsm(e.target.value)} className={inputClass} /></div>
                 <div><label className={labelClass}>Paper Company</label><input type="text" value={paperCompany} onChange={e => setPaperCompany(e.target.value)} className={inputClass} /></div>
-                <div><label className={labelClass}>Die # (If needed)</label><input type="text" value={dieSelect} onChange={e => setDieSelect(e.target.value)} className={inputClass} /></div>
                 <div><label className={labelClass}>Raw Sheet Size</label><input type="text" value={sizeBeforeCut} onChange={e => setSizeBeforeCut(e.target.value)} className={inputClass} /></div>
                 <div><label className={labelClass}>Cut Sheet Size</label><input type="text" value={sizeAfterCut} onChange={e => setSizeAfterCut(e.target.value)} className={inputClass} /></div>
                 <div>
