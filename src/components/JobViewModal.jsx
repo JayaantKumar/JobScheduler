@@ -13,8 +13,44 @@ export default function JobViewModal({ job, onClose }) {
   const dueDate = job.deadline ? new Date(job.deadline).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "N/A";
   const jobDate = job.job_date ? new Date(job.job_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "N/A";
 
-  // SMART LOGIC: Check if Die Cutting is in the sequence or if a Die was selected
-  const hasDieCutting = job.process_sequence?.some(p => p.process_name?.toLowerCase().includes("die")) || !!job.specifications?.die;
+  // ==========================================
+  // SMART EXTRACTION LOGIC (BUG FIX)
+  // ==========================================
+  let derivedColors = "NA";
+  let derivedDie = null;
+
+  if (job.process_sequence && Array.isArray(job.process_sequence)) {
+    job.process_sequence.forEach(step => {
+      // Method 1: Check structured process_details (if available)
+      if (step.process_details) {
+        if (step.process_name?.toLowerCase().includes("print") && step.process_details.colors) {
+          derivedColors = step.process_details.colors;
+        }
+        if (step.process_name?.toLowerCase().includes("die") && step.process_details.dieUsed) {
+          derivedDie = step.process_details.dieUsed;
+        }
+      }
+      
+      // Method 2: Check flattened remarks string (from the Quick Produce generator)
+      if (step.remarks && typeof step.remarks === 'string') {
+        const parts = step.remarks.split('|').map(s => s.trim());
+        parts.forEach(part => {
+          if (part.toUpperCase().startsWith("COLORS:")) {
+            derivedColors = part.replace(/COLORS:/i, '').trim();
+          }
+          if (part.toUpperCase().startsWith("DIE USED:")) {
+            derivedDie = part.replace(/DIE USED:/i, '').trim();
+          }
+        });
+      }
+    });
+  }
+
+  // Fallback to old specifications if deriving failed (keeps older jobs from breaking)
+  const displayColors = derivedColors !== "NA" ? derivedColors : (job.specifications?.colors || "NA");
+  const displayDie = derivedDie ? derivedDie : job.specifications?.die;
+
+  const hasDieCutting = job.process_sequence?.some(p => p.process_name?.toLowerCase().includes("die")) || !!displayDie;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm print:bg-white print:backdrop-blur-none print:absolute print:inset-0 print:p-0">
@@ -71,7 +107,7 @@ export default function JobViewModal({ job, onClose }) {
         {/* Scrollable Body */}
         <div className="p-6 overflow-y-auto custom-scrollbar flex-1 bg-[#0a0f1a] space-y-6">
           
-          {/* CLIENT SPECS GRID (H, I, J, K) */}
+          {/* CLIENT SPECS GRID */}
           <div>
             <h3 className="text-sm font-bold text-gray-400 mb-3 uppercase tracking-wider">Production Specifications</h3>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -97,7 +133,7 @@ export default function JobViewModal({ job, onClose }) {
               </div>
               <div className="bg-gray-900 border border-gray-800 p-4 rounded-lg">
                 <div className="text-xs text-gray-500 mb-1">Print Colors</div>
-                <div className="text-sm font-bold text-white">{job.specifications?.colors || 'NA'}</div>
+                <div className="text-sm font-bold text-white">{displayColors}</div>
               </div>
               
               {/* Highlight Die Name if Die Cutting is involved */}
@@ -107,7 +143,7 @@ export default function JobViewModal({ job, onClose }) {
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243-4.243 3 3 0 004.243 4.243z" /></svg>
                     Assigned Die (For Die Cutting)
                   </div>
-                  <div className="text-lg font-bold text-white">{job.specifications?.die || '⚠️ No Die Selected'}</div>
+                  <div className="text-lg font-bold text-white">{displayDie || '⚠️ No Die Selected'}</div>
                 </div>
               )}
             </div>
@@ -226,7 +262,7 @@ export default function JobViewModal({ job, onClose }) {
           </div>
           <div className="flex flex-col border border-black p-3">
             <span className="text-xs text-gray-600 font-bold uppercase">Colors</span>
-            <span className="text-lg font-bold">{job.specifications?.colors || "NA"}</span>
+            <span className="text-lg font-bold">{displayColors}</span>
           </div>
         </div>
 
@@ -235,7 +271,7 @@ export default function JobViewModal({ job, onClose }) {
           <div className="border-4 border-black p-4 mb-8 flex justify-between items-center bg-gray-100">
             <div>
               <h3 className="text-sm font-bold uppercase">Required Die for Cutting</h3>
-              <p className="text-2xl font-black">{job.specifications?.die || "⚠️ NO DIE SPECIFIED"}</p>
+              <p className="text-2xl font-black">{displayDie || "⚠️ NO DIE SPECIFIED"}</p>
             </div>
             <div className="w-16 h-16 border-2 border-black flex items-center justify-center text-xs font-bold text-gray-400">
               Verify
@@ -260,7 +296,13 @@ export default function JobViewModal({ job, onClose }) {
             {job.process_sequence?.map((step, idx) => (
               <tr key={idx}>
                 <td className="border border-black p-4 text-center font-bold">{idx + 1}</td>
-                <td className="border border-black p-4 font-bold">{step.process_name}</td>
+                <td className="border border-black p-4 font-bold">
+                  {step.process_name}
+                  {/* Append custom remarks below the process name on print */}
+                  {step.remarks && (
+                    <div className="text-[10px] font-normal text-gray-600 mt-1">{step.remarks}</div>
+                  )}
+                </td>
                 <td className="border border-black p-4">{step.assigned_machine_name || "Any Available"}</td>
                 <td className="border border-black p-4 text-center">{step.input_qty || ""}</td>
                 <td className="border border-black p-4 text-center"></td>

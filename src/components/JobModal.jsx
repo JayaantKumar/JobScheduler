@@ -4,6 +4,7 @@ import { useCustomers } from "../hooks/useCustomers";
 import { useProducts } from "../hooks/useProducts";
 import { useMachines } from "../hooks/useMachines";
 import { useProcesses } from "../hooks/useProcesses"; 
+import { useDies } from "../hooks/useDies"; // ⭐️ NEW: Pull dies for the reference field
 
 const calculate14WorkingDays = () => {
   let count = 0;
@@ -22,6 +23,7 @@ export default function JobModal({ onClose }) {
   const { products, loading: prodLoading } = useProducts();
   const { machines, loading: machLoading } = useMachines();
   const { processes: dbProcesses, loading: procLoading } = useProcesses(); 
+  const { dies } = useDies(); // ⭐️ NEW: Fetch dies
 
   // Job Info
   const [jobDate, setJobDate] = useState(new Date().toISOString().split('T')[0]);
@@ -35,7 +37,6 @@ export default function JobModal({ onClose }) {
   const [dueDate, setDueDate] = useState(calculate14WorkingDays()); 
   const [template, setTemplate] = useState("");
 
-  // Material Specs (Die removed completely)
   const [sheetSize, setSheetSize] = useState("");
   const [sheetGsm, setSheetGsm] = useState("");
   const [materialType, setMaterialType] = useState("");
@@ -47,8 +48,9 @@ export default function JobModal({ onClose }) {
   const [jobNotes, setJobNotes] = useState("");
 
   // MANUAL PROCESS ROUTING STATE
+  // ⭐️ UPDATE: Added process_details to state
   const [processes, setProcesses] = useState([
-    { id: Date.now(), process_name: "", assigned_machine: "", inputQty: "", outputQty: "", remarks: "" }
+    { id: Date.now(), process_name: "", assigned_machine: "", inputQty: "", outputQty: "", process_details: {}, remarks: "" }
   ]);
 
   const handleProductChange = (e) => {
@@ -56,7 +58,7 @@ export default function JobModal({ onClose }) {
     setSelectedProductId(prodId);
 
     if (!prodId) {
-      setProcesses([{ id: Date.now(), process_name: "", assigned_machine: "", inputQty: "", outputQty: "", remarks: "" }]);
+      setProcesses([{ id: Date.now(), process_name: "", assigned_machine: "", inputQty: "", outputQty: "", process_details: {}, remarks: "" }]);
       return;
     }
 
@@ -72,6 +74,7 @@ export default function JobModal({ onClose }) {
     setSheetGsm(prod.paperGsm || prod.gsm || "");
     setSheetSize(prod.sheet_size || "");
 
+    // ⭐️ UPDATE: Load process_details from template
     if (prod.default_sequence && prod.default_sequence.length > 0) {
       const manualProcesses = prod.default_sequence.map((step, index) => ({
         id: Date.now() + index,
@@ -79,11 +82,12 @@ export default function JobModal({ onClose }) {
         assigned_machine: step.assigned_machine || "", 
         inputQty: quantity, 
         outputQty: quantity,
-        remarks: ""
+        process_details: step.process_details || {},
+        remarks: step.remarks || ""
       }));
       setProcesses(manualProcesses);
     } else {
-      setProcesses([{ id: Date.now(), process_name: "", assigned_machine: "", inputQty: quantity, outputQty: quantity, remarks: "" }]);
+      setProcesses([{ id: Date.now(), process_name: "", assigned_machine: "", inputQty: quantity, outputQty: quantity, process_details: {}, remarks: "" }]);
     }
   };
 
@@ -93,9 +97,24 @@ export default function JobModal({ onClose }) {
     setProcesses(processes.map(p => ({ ...p, inputQty: newQty, outputQty: newQty })));
   };
 
-  const handleAddProcess = () => setProcesses([...processes, { id: Date.now(), process_name: "", assigned_machine: "", inputQty: quantity, outputQty: quantity, remarks: "" }]);
+  const handleAddProcess = () => setProcesses([...processes, { id: Date.now(), process_name: "", assigned_machine: "", inputQty: quantity, outputQty: quantity, process_details: {}, remarks: "" }]);
   const handleRemoveProcess = (id) => processes.length > 1 && setProcesses(processes.filter(p => p.id !== id));
-  const updateProcess = (id, field, value) => setProcesses(processes.map(p => p.id === id ? { ...p, [field]: value } : p));
+  
+  // ⭐️ UPDATE: Clear details if process changes
+  const updateProcess = (id, field, value) => {
+    setProcesses(processes.map(p => {
+      if (p.id === id) {
+        if (field === 'process_name') return { ...p, [field]: value, assigned_machine: "", process_details: {}, remarks: "" };
+        return { ...p, [field]: value };
+      }
+      return p;
+    }));
+  };
+
+  // ⭐️ NEW: Handle custom attribute inputs
+  const updateProcessDetail = (id, detailField, value) => {
+    setProcesses(processes.map(p => p.id === id ? { ...p, process_details: { ...p.process_details, [detailField]: value } } : p));
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -105,6 +124,17 @@ export default function JobModal({ onClose }) {
     const final_process_sequence = processes.map((proc, index) => {
       const assignedMach = machines.find(m => m.id === proc.assigned_machine);
 
+      // ⭐️ UPDATE: Serialize process_details for the Job Card
+      let instructions = "";
+      if (proc.process_details && Object.keys(proc.process_details).length > 0) {
+        instructions = Object.entries(proc.process_details)
+          .map(([key, val]) => `${key}: ${val}`)
+          .join(" | ");
+      }
+      if (proc.remarks && proc.remarks.trim() !== "") {
+        instructions = instructions ? `${instructions} | REMARKS: ${proc.remarks}` : `REMARKS: ${proc.remarks}`;
+      }
+
       return {
         step_order: index + 1,
         process_id: `manual_proc_${index}`,
@@ -112,7 +142,8 @@ export default function JobModal({ onClose }) {
         status: "pending",
         input_qty: Number(proc.inputQty) || 0,
         output_qty: Number(proc.outputQty) || 0,
-        remarks: proc.remarks || "",
+        remarks: instructions,
+        process_details: proc.process_details || {}, // Save structured data for job view
         assigned_machine_id: proc.assigned_machine || null,          
         assigned_machine_name: assignedMach ? assignedMach.name : "Unassigned Machine", 
       };
@@ -137,7 +168,7 @@ export default function JobModal({ onClose }) {
         colors: "NA", 
         size_before_cut: sizeBeforeCut,
         size_after_cut: sizeAfterCut,
-        paper_company: paperCompany, // Die removed here
+        paper_company: paperCompany, 
       },
       quantity_target: Number(quantity) || 0,
       quantity_completed: 0,
@@ -164,6 +195,57 @@ export default function JobModal({ onClose }) {
   const safeCustomer = customer?.trim()?.toLowerCase() || "";
   const customerProducts = products ? products.filter(p => p.customerName?.trim()?.toLowerCase() === safeCustomer) : [];
 
+  // ⭐️ NEW: DYNAMIC ATTRIBUTE RENDERER FOR JOB MODAL
+  const renderDynamicProcessFields = (proc) => {
+    const processData = dbProcesses.find(p => p.processName === proc.process_name);
+    if (!processData || !processData.attributes || processData.attributes.length === 0) return null;
+
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-3 border-t border-gray-800 mt-3">
+        {processData.attributes.map((attr, index) => {
+          const val = proc.process_details[attr.name] || "";
+          
+          // Reference Type (e.g. Dies)
+          if (attr.type === "reference" && attr.options === "dies") {
+            return (
+              <div key={index} className="flex-1">
+                <label className="block text-[10px] font-bold text-purple-400 uppercase mb-1 flex items-center gap-1">
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                  {attr.name}
+                </label>
+                <select value={val} onChange={e => updateProcessDetail(proc.id, attr.name, e.target.value)} className={`${inputClass} border-purple-500/30`}>
+                  <option value="">-- Select Die --</option>
+                  {dies.map(die => <option key={die.id} value={die.dieNumber}>{die.dieNumber} - {die.dieName}</option>)}
+                </select>
+              </div>
+            );
+          }
+
+          // Dropdown / Multi-Select
+          if (attr.type === "dropdown" || attr.type === "multi-select") {
+            return (
+              <div key={index} className="flex-1">
+                <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">{attr.name}</label>
+                <select value={val} onChange={e => updateProcessDetail(proc.id, attr.name, e.target.value)} className={inputClass}>
+                  <option value="">-- Select --</option>
+                  {attr.options?.split(",").map(opt => <option key={opt} value={opt.trim()}>{opt.trim()}</option>)}
+                </select>
+              </div>
+            );
+          }
+
+          // Text / Number
+          return (
+            <div key={index} className="flex-1">
+              <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">{attr.name}</label>
+              <input type={attr.type === 'number' ? 'number' : 'text'} placeholder={attr.name} value={val} onChange={e => updateProcessDetail(proc.id, attr.name, e.target.value)} className={inputClass} />
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-5xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
@@ -187,7 +269,7 @@ export default function JobModal({ onClose }) {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className={labelClass}>Select Customer *</label>
-                  <select required value={customer} onChange={e => { setCustomer(e.target.value); setSelectedProductId(""); setProcesses([{ id: Date.now(), process_name: "", assigned_machine: "", inputQty: "", outputQty: "", remarks: "" }]); }} className={inputClass}>
+                  <select required value={customer} onChange={e => { setCustomer(e.target.value); setSelectedProductId(""); setProcesses([{ id: Date.now(), process_name: "", assigned_machine: "", inputQty: "", outputQty: "", process_details: {}, remarks: "" }]); }} className={inputClass}>
                     <option value="">{custLoading ? "Loading..." : "-- Select Customer --"}</option>
                     {customers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                   </select>
@@ -234,6 +316,8 @@ export default function JobModal({ onClose }) {
                     </div>
 
                     <div className="flex-1 space-y-4">
+                      
+                      {/* Process & Machine Selection */}
                       <div className="flex flex-col md:flex-row items-start gap-4">
                         <div className="flex-1 w-full">
                           <label className={labelClass}>Process Name</label>
@@ -256,10 +340,20 @@ export default function JobModal({ onClose }) {
                         </button>
                       </div>
 
+                      {/* Quantities */}
                       <div className="grid grid-cols-2 gap-4">
                         <div><label className={labelClass}>Input Qty</label><input type="number" value={proc.inputQty} onChange={(e) => updateProcess(proc.id, "inputQty", e.target.value)} className={inputClass} /></div>
                         <div><label className={labelClass}>Output Qty</label><input type="number" value={proc.outputQty} onChange={(e) => updateProcess(proc.id, "outputQty", e.target.value)} className={inputClass} /></div>
                       </div>
+
+                      {/* ⭐️ NEW: Dynamic Fields */}
+                      {renderDynamicProcessFields(proc)}
+
+                      {/* Custom Operator Remarks */}
+                      <div className="pt-2">
+                        <input type="text" placeholder="Additional remarks for operator (Optional)" value={proc.remarks || ""} onChange={(e) => updateProcess(proc.id, "remarks", e.target.value)} className={`${inputClass} border-dashed focus:border-solid`} />
+                      </div>
+
                     </div>
                   </div>
                 ))}

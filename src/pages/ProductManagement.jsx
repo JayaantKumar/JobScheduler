@@ -1,10 +1,11 @@
-import { useState } from "react";
-import { collection, addDoc, updateDoc, doc, deleteDoc, serverTimestamp } from "firebase/firestore";
+import { useState, useEffect } from "react";
+import { collection, addDoc, updateDoc, doc, deleteDoc, serverTimestamp, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { useProducts } from "../hooks/useProducts";
 import { useCustomers } from "../hooks/useCustomers";
 import { useProcesses } from "../hooks/useProcesses"; 
 import { useMachines } from "../hooks/useMachines"; 
+import { useDies } from "../hooks/useDies"; // ⭐️ ADDED: To fetch reference data for dynamic attributes
 import { addJob } from "../services/job.service"; 
 
 export default function ProductManagement() {
@@ -12,11 +13,23 @@ export default function ProductManagement() {
   const { customers, loading: custLoading } = useCustomers();
   const { processes: dbProcesses, loading: procLoading } = useProcesses(); 
   const { machines, loading: machLoading } = useMachines(); 
+  const { dies } = useDies(); // ⭐️ Fetch the master dies list
 
   const [isModalOpen, setModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [saving, setSaving] = useState(false);
+
+  // --- ⭐️ Fetch Dynamic Categories ---
+  const [categories, setCategories] = useState([]);
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "productCategories"), (snapshot) => {
+      const cats = [];
+      snapshot.forEach(doc => cats.push({ id: doc.id, ...doc.data() }));
+      setCategories(cats);
+    });
+    return () => unsub();
+  }, []);
 
   // --- QUICK PRODUCE MODAL STATES ---
   const [isProduceModalOpen, setProduceModalOpen] = useState(false);
@@ -38,7 +51,6 @@ export default function ProductManagement() {
   const [sheetSize, setSheetSize] = useState("");
   const [customMaterial, setCustomMaterial] = useState(""); 
   
-  // ⭐️ UPDATE: Added 'remarks' to the sequence state
   const [sequence, setSequence] = useState([{ id: Date.now(), process_name: "", assigned_machine: "", process_details: {}, remarks: "" }]);
 
   // --- SMART MACHINE FILTERING LOGIC ---
@@ -78,7 +90,7 @@ export default function ProductManagement() {
           process_name: s.process_name || "",
           assigned_machine: s.assigned_machine || "",
           process_details: s.process_details || {},
-          remarks: s.remarks || "" // Load remarks
+          remarks: s.remarks || "" 
         })));
       } else {
         setSequence([{ id: Date.now(), process_name: "", assigned_machine: "", process_details: {}, remarks: "" }]);
@@ -121,7 +133,6 @@ export default function ProductManagement() {
     e.preventDefault();
     setSaving(true);
     
-    // ⭐️ UPDATE: Make sure 'remarks' gets saved to the database
     const cleanSequence = sequence.filter(s => s.process_name.trim() !== "").map((s, index) => ({
       step_order: index + 1,
       process_name: s.process_name,
@@ -178,14 +189,12 @@ export default function ProductManagement() {
       const assignedMach = machines.find(m => m.id === step.assigned_machine);
       let instructions = "";
       
-      // Combine dynamic details
       if (step.process_details && Object.keys(step.process_details).length > 0) {
         instructions = Object.entries(step.process_details)
           .map(([key, val]) => `${key.replace(/([A-Z])/g, ' $1').toUpperCase()}: ${val}`)
           .join(" | ");
       }
       
-      // ⭐️ UPDATE: Append the custom remarks to the final job card instructions
       if (step.remarks && step.remarks.trim() !== "") {
         instructions = instructions ? `${instructions} | REMARKS: ${step.remarks}` : `REMARKS: ${step.remarks}`;
       }
@@ -232,92 +241,66 @@ export default function ProductManagement() {
   const filteredProducts = products.filter(p => p.name?.toLowerCase().includes(searchQuery.toLowerCase()) || p.customerName?.toLowerCase().includes(searchQuery.toLowerCase()));
 
   // ==========================================
-  // DYNAMIC RENDER HELPER FOR SHAPE-SHIFTING FIELDS
+  // ⭐️ NEW: THE DYNAMIC ATTRIBUTE ENGINE
   // ==========================================
   const renderDynamicProcessFields = (step) => {
-    const pName = step.process_name?.toLowerCase() || "";
-    const details = step.process_details || {};
+    // 1. Find the process configuration built in Process Management
+    const processData = dbProcesses.find(p => p.processName === step.process_name);
+    
+    // 2. If it doesn't have custom attributes defined, render nothing
+    if (!processData || !processData.attributes || processData.attributes.length === 0) return null;
+
     const miniInputClass = "w-full bg-gray-900 border border-gray-700 rounded-md px-3 py-1.5 text-xs text-white focus:border-primary-500";
 
-    if (pName.includes("sheet cutting") || pName.includes("corrugation")) {
-      return (
-        <div className="mt-2 grid grid-cols-2 gap-3 pl-11">
-          <div><span className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Size</span><input type="text" placeholder="e.g. 25x36" value={details.size || ""} onChange={e => handleSequenceDetailChange(step.id, 'size', e.target.value)} className={miniInputClass} /></div>
-        </div>
-      );
-    }
-    if (pName.includes("printing")) {
-      return (
-        <div className="mt-2 grid grid-cols-2 gap-3 pl-11">
-          <div><span className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">No. of Colours</span><input type="text" placeholder="e.g. 4 (CMYK)" value={details.colors || ""} onChange={e => handleSequenceDetailChange(step.id, 'colors', e.target.value)} className={miniInputClass} /></div>
-          <div><span className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Size</span><input type="text" placeholder="e.g. 20x30" value={details.size || ""} onChange={e => handleSequenceDetailChange(step.id, 'size', e.target.value)} className={miniInputClass} /></div>
-        </div>
-      );
-    }
-    
-    // ⭐️ UPDATE: Client's requested Lamination terms
-    if (pName.includes("lamination")) {
-      return (
-        <div className="mt-2 grid grid-cols-3 gap-3 pl-11">
-          <div><span className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Size Needed</span><input type="text" placeholder="Size" value={details.sizeNeeded || ""} onChange={e => handleSequenceDetailChange(step.id, 'sizeNeeded', e.target.value)} className={miniInputClass} /></div>
-          <div><span className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Type</span><input type="text" placeholder="Type" value={details.laminationType || ""} onChange={e => handleSequenceDetailChange(step.id, 'laminationType', e.target.value)} className={miniInputClass} /></div>
-          <div>
-            <span className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Cold/Thermal</span>
-            <select value={details.temp || ""} onChange={e => handleSequenceDetailChange(step.id, 'temp', e.target.value)} className={miniInputClass}>
-              <option value="">Select Temp</option><option value="Cold">Cold</option><option value="Thermal">Thermal</option>
-            </select>
-          </div>
-        </div>
-      );
-    }
+    return (
+      <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pl-11">
+        {processData.attributes.map((attr, index) => {
+          const val = step.process_details[attr.name] || "";
 
-    // ⭐️ UPDATE: Client's requested Die Cutting terms
-    if (pName.includes("die cutting")) {
-      return (
-        <div className="mt-2 grid grid-cols-3 gap-3 pl-11">
-          <div><span className="text-[10px] text-purple-400 font-bold uppercase tracking-wider block mb-1">Die Used</span><input type="text" placeholder="Die Name/No" value={details.dieUsed || ""} onChange={e => handleSequenceDetailChange(step.id, 'dieUsed', e.target.value)} className={`${miniInputClass} border-purple-500/30`} /></div>
-          <div><span className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Die Size</span><input type="text" placeholder="Die Size" value={details.dieSize || ""} onChange={e => handleSequenceDetailChange(step.id, 'dieSize', e.target.value)} className={miniInputClass} /></div>
-          <div><span className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Min Sheet Size Reqd.</span><input type="text" placeholder="Min Sheet Size" value={details.minSheetSize || ""} onChange={e => handleSequenceDetailChange(step.id, 'minSheetSize', e.target.value)} className={miniInputClass} /></div>
-        </div>
-      );
-    }
+          // Render Database References (e.g. Dies list)
+          if (attr.type === "reference" && attr.options === "dies") {
+            return (
+              <div key={index}>
+                <span className="text-[10px] font-bold text-purple-400 uppercase tracking-wider block mb-1">
+                  {attr.name}
+                </span>
+                <select value={val} onChange={e => handleSequenceDetailChange(step.id, attr.name, e.target.value)} className={`${miniInputClass} border-purple-500/30`}>
+                  <option value="">-- Select Die --</option>
+                  {dies && dies.map(die => <option key={die.id} value={die.dieNumber}>{die.dieNumber} - {die.dieName}</option>)}
+                </select>
+              </div>
+            );
+          }
 
-    if (pName === "gluing") {
-      return (
-        <div className="mt-2 grid grid-cols-2 gap-3 pl-11">
-          <div>
-            <span className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Mode</span>
-            <select value={details.mode || ""} onChange={e => handleSequenceDetailChange(step.id, 'mode', e.target.value)} className={miniInputClass}>
-              <option value="">Select Mode</option><option value="Manual">Manual</option><option value="Automatic">Automatic</option>
-            </select>
-          </div>
-        </div>
-      );
-    }
+          // Render Dropdowns and Multi-Selects
+          if (attr.type === "dropdown" || attr.type === "multi-select") {
+            return (
+              <div key={index}>
+                <span className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">{attr.name}</span>
+                <select value={val} onChange={e => handleSequenceDetailChange(step.id, attr.name, e.target.value)} className={miniInputClass}>
+                  <option value="">-- Select --</option>
+                  {attr.options?.split(",").map(opt => <option key={opt} value={opt.trim()}>{opt.trim()}</option>)}
+                </select>
+              </div>
+            );
+          }
 
-    // ⭐️ UPDATE: Client's requested Side Pasting terms
-    if (pName.includes("side pasting")) {
-      return (
-        <div className="mt-2 grid grid-cols-2 gap-3 pl-11">
-          <div><span className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Keep</span><input type="text" placeholder="Keep" value={details.keep || ""} onChange={e => handleSequenceDetailChange(step.id, 'keep', e.target.value)} className={miniInputClass} /></div>
-          <div><span className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Glue</span><input type="text" placeholder="Glue" value={details.glue || ""} onChange={e => handleSequenceDetailChange(step.id, 'glue', e.target.value)} className={miniInputClass} /></div>
-        </div>
-      );
-    }
-
-    if (pName.includes("pasting") && !pName.includes("side")) {
-      return (
-        <div className="mt-2 grid grid-cols-2 gap-3 pl-11">
-          <div>
-            <span className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">Mode</span>
-            <select value={details.mode || ""} onChange={e => handleSequenceDetailChange(step.id, 'mode', e.target.value)} className={miniInputClass}>
-              <option value="">Select Mode</option><option value="Manual">Manual</option>
-            </select>
-          </div>
-        </div>
-      );
-    }
-    return null; 
+          // Render basic Text and Number fields
+          return (
+            <div key={index}>
+              <span className="text-[10px] text-gray-500 uppercase tracking-wider block mb-1">{attr.name}</span>
+              <input 
+                type={attr.type === 'number' ? 'number' : 'text'} 
+                placeholder={attr.name} 
+                value={val} 
+                onChange={e => handleSequenceDetailChange(step.id, attr.name, e.target.value)} 
+                className={miniInputClass} 
+              />
+            </div>
+          );
+        })}
+      </div>
+    );
   };
 
   if (prodLoading) return <div className="p-8 text-primary-500 animate-pulse font-medium">Loading Products...</div>;
@@ -453,7 +436,16 @@ export default function ProductManagement() {
                     {customers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                   </select>
                 </div>
-                <div><label className={labelClass}>Product Category</label><input type="text" value={category} onChange={e => setCategory(e.target.value)} className={inputClass} placeholder="e.g., Rigid Box" /></div>
+                
+                <div>
+                  <label className={labelClass}>Product Category</label>
+                  <select value={category} onChange={e => setCategory(e.target.value)} className={inputClass}>
+                    <option value="">-- Select Category --</option>
+                    {categories.map(cat => (
+                      <option key={cat.id} value={cat.name}>{cat.name}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               <div className="bg-gray-950/50 p-5 rounded-lg border border-gray-800">
@@ -493,9 +485,9 @@ export default function ProductManagement() {
                             </select>
                           </div>
                           
+                          {/* ⭐️ NEW ENGINE RUNNING HERE */}
                           {renderDynamicProcessFields(step)}
                           
-                          {/* ⭐️ UPDATE: Added the Remarks box for every single step */}
                           <div className="pt-2 pl-11">
                             <input 
                               type="text" 

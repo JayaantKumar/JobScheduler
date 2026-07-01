@@ -1,11 +1,11 @@
-import { useState } from "react";
-import { collection, addDoc, serverTimestamp, doc, deleteDoc } from "firebase/firestore";
+import { useState, useEffect } from "react";
+import { collection, addDoc, serverTimestamp, doc, deleteDoc, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { useCustomers } from "../hooks/useCustomers";
 import { useProducts } from "../hooks/useProducts";
 import { useRates } from "../hooks/useRates";
-import { useDies } from "../hooks/useDies"; // <-- NEW HOOK
-import { useMachines } from "../hooks/useMachines"; // <-- Needed to link dies to machines
+import { useDies } from "../hooks/useDies"; 
+import { useMachines } from "../hooks/useMachines"; 
 import ExportDataButton from "../components/ExportDataButton"; 
 
 export default function MasterData() {
@@ -21,6 +21,20 @@ export default function MasterData() {
   const { dies, loading: diesLoading } = useDies();
   const { machines, loading: machLoading } = useMachines();
 
+  // ⭐️ NEW: Fetch Product Categories dynamically
+  const [categories, setCategories] = useState([]);
+  const [catLoading, setCatLoading] = useState(true);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "productCategories"), (snapshot) => {
+      const cats = [];
+      snapshot.forEach(doc => cats.push({ id: doc.id, ...doc.data() }));
+      setCategories(cats);
+      setCatLoading(false);
+    });
+    return () => unsub();
+  }, []);
+
   // Form States
   const [formData, setFormData] = useState({});
 
@@ -32,7 +46,8 @@ export default function MasterData() {
     if (activeTab === "customers") return "+ Add Customer";
     if (activeTab === "products") return "+ Add Product";
     if (activeTab === "rates") return "+ Add Rate";
-    return "+ Add Die"; // <-- New Button Text
+    if (activeTab === "categories") return "+ Add Category";
+    return "+ Add Die"; 
   };
 
   // --- SAVE DATA TO FIREBASE ---
@@ -52,11 +67,16 @@ export default function MasterData() {
           created_at: serverTimestamp() 
         });
       } else if (activeTab === "dies") {
-        // Find the linked product to auto-attach the customer
         const linkedProduct = products.find(p => p.name === formData.productName);
         await addDoc(collection(db, "dies"), {
           ...formData,
           customerName: linkedProduct ? linkedProduct.customerName : formData.customerName || "Unknown",
+          created_at: serverTimestamp()
+        });
+      } else if (activeTab === "categories") {
+        // ⭐️ NEW: Save dynamic product category
+        await addDoc(collection(db, "productCategories"), {
+          ...formData,
           created_at: serverTimestamp()
         });
       }
@@ -71,7 +91,7 @@ export default function MasterData() {
 
   // --- DELETE DATA FROM FIREBASE ---
   const handleDelete = async (id, collectionName) => {
-    if (window.confirm(`Are you sure you want to delete this ${collectionName.slice(0, -1)}?`)) {
+    if (window.confirm(`Are you sure you want to delete this ${collectionName === 'productCategories' ? 'category' : collectionName.slice(0, -1)}?`)) {
       try {
         await deleteDoc(doc(db, collectionName, id));
       } catch (error) {
@@ -80,7 +100,7 @@ export default function MasterData() {
     }
   };
 
-  if (custLoading || prodLoading || ratesLoading || diesLoading || machLoading) {
+  if (custLoading || prodLoading || ratesLoading || diesLoading || machLoading || catLoading) {
     return <div className="p-8 text-primary-500 animate-pulse font-medium">Loading Master Data...</div>;
   }
 
@@ -89,6 +109,7 @@ export default function MasterData() {
   const filteredProducts = products.filter(p => p.name?.toLowerCase().includes(searchQuery.toLowerCase()));
   const filteredRates = rates.filter(r => r.productName?.toLowerCase().includes(searchQuery.toLowerCase()));
   const filteredDies = dies.filter(d => d.dieName?.toLowerCase().includes(searchQuery.toLowerCase()) || d.dieNumber?.toLowerCase().includes(searchQuery.toLowerCase()));
+  const filteredCategories = categories.filter(c => c.name?.toLowerCase().includes(searchQuery.toLowerCase()));
 
   return (
     <div className="max-w-[1600px] mx-auto p-6 h-full flex flex-col">
@@ -110,11 +131,12 @@ export default function MasterData() {
         <button onClick={() => setActiveTab("products")} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${activeTab === "products" ? "bg-primary-600 text-white shadow-lg shadow-primary-500/20" : "bg-gray-800 text-gray-400 hover:text-white"}`}>
           Products ({products.length})
         </button>
+        <button onClick={() => setActiveTab("categories")} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${activeTab === "categories" ? "bg-primary-600 text-white shadow-lg shadow-primary-500/20" : "bg-gray-800 text-gray-400 hover:text-white"}`}>
+          Categories ({categories.length})
+        </button>
         <button onClick={() => setActiveTab("rates")} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${activeTab === "rates" ? "bg-primary-600 text-white shadow-lg shadow-primary-500/20" : "bg-gray-800 text-gray-400 hover:text-white"}`}>
           Rates ({rates.length})
         </button>
-        
-        {/* NEW DIES TAB */}
         <button onClick={() => setActiveTab("dies")} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${activeTab === "dies" ? "bg-purple-600 text-white shadow-lg shadow-purple-500/20" : "bg-gray-800 text-gray-400 hover:text-white"}`}>
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>
           Dies ({dies.length})
@@ -175,6 +197,24 @@ export default function MasterData() {
             </table>
           )}
 
+          {/* ⭐️ NEW: CATEGORIES TABLE */}
+          {activeTab === "categories" && (
+            <table className="w-full text-left border-collapse min-w-[900px]">
+              <thead><tr className="bg-gray-950/50 border-b border-gray-800 text-xs font-bold text-gray-400 uppercase tracking-wider"><th className="py-4 px-6">Category Name</th><th className="py-4 px-6 text-right">Actions</th></tr></thead>
+              <tbody className="divide-y divide-gray-800">
+                {filteredCategories.length === 0 && <tr><td colSpan="2" className="py-8 text-center text-gray-500">No categories found. Add your first category!</td></tr>}
+                {filteredCategories.map((cat) => (
+                  <tr key={cat.id} className="hover:bg-gray-800/30 transition-colors">
+                    <td className="py-4 px-6 font-bold text-gray-200">{cat.name}</td>
+                    <td className="py-4 px-6 text-right">
+                      <button onClick={() => handleDelete(cat.id, "productCategories")} className="text-red-400 hover:text-red-300 transition-colors text-sm font-medium">Delete</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+
           {/* RATES TABLE */}
           {activeTab === "rates" && (
             <table className="w-full text-left border-collapse min-w-[900px]">
@@ -204,7 +244,7 @@ export default function MasterData() {
             </table>
           )}
 
-          {/* NEW DIES TABLE */}
+          {/* DIES TABLE */}
           {activeTab === "dies" && (
             <table className="w-full text-left border-collapse min-w-[900px]">
               <thead>
@@ -245,7 +285,7 @@ export default function MasterData() {
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-md p-6 shadow-2xl">
-            <h3 className="text-xl font-bold text-white mb-6">Add {activeTab.slice(0, -1)}</h3>
+            <h3 className="text-xl font-bold text-white mb-6">Add {activeTab === 'productCategories' ? 'Category' : activeTab.slice(0, -1)}</h3>
             
             <form onSubmit={handleSave} className="space-y-4">
               
@@ -259,12 +299,25 @@ export default function MasterData() {
                 </>
               )}
 
+              {/* ⭐️ NEW: Category Inputs */}
+              {activeTab === "categories" && (
+                <>
+                  <input required name="name" onChange={handleInputChange} placeholder="Category Name (e.g., Rigid Box) *" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary-500" />
+                </>
+              )}
+
               {/* Product Inputs */}
               {activeTab === "products" && (
                 <>
                   <input required name="name" onChange={handleInputChange} placeholder="Product Name *" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary-500" />
                   <input name="sku" onChange={handleInputChange} placeholder="SKU / Code" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary-500" />
-                  <input name="category" onChange={handleInputChange} placeholder="Category (e.g., Rigid Box)" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary-500" />
+                  
+                  {/* ⭐️ UPDATE: Converted from text input to dynamic select dropdown */}
+                  <select required name="category" onChange={handleInputChange} className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary-500">
+                    <option value="">-- Select Category --</option>
+                    {categories.map(cat => <option key={cat.id} value={cat.name}>{cat.name}</option>)}
+                  </select>
+
                   <select required name="customerName" onChange={handleInputChange} className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary-500">
                     <option value="">-- Assign to Customer --</option>
                     {customers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
@@ -286,7 +339,7 @@ export default function MasterData() {
                 </>
               )}
 
-              {/* NEW DIES INPUTS */}
+              {/* DIES INPUTS */}
               {activeTab === "dies" && (
                 <>
                   <input required name="dieNumber" onChange={handleInputChange} placeholder="Die Number (e.g., B6-Inner) *" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-purple-500" />
