@@ -64,17 +64,23 @@ export default function JobModal({ onClose }) {
     const prod = products.find(p => p.id === prodId);
     if (!prod) return;
 
-    setJobTitle(`${prod.name} - Batch Run`);
+    // ⭐️ ROUND 3 MIGRATION: Safely extract data whether it's a legacy product or a new Multi-Part product
+    const mainPart = prod.parts && prod.parts.length > 0 ? prod.parts[0] : prod;
+    const routingSequence = mainPart.sequence || prod.default_sequence || [];
+
+    setJobTitle(`${prod.name} - Manual Custom Run`);
     setProductName(prod.name || "");
     setProductCode(prod.sku || "");
     setTemplate(prod.category || prod.type || ""); 
-    setProductSize(prod.size || "");
-    setMaterialType(prod.paperType || prod.material || "");
-    setSheetGsm(prod.paperGsm || prod.gsm || "");
-    setSheetSize(prod.sheet_size || "");
+    
+    // Pull material specs from the main part
+    setProductSize(mainPart.size || prod.size || "");
+    setMaterialType(mainPart.paperType || prod.paperType || prod.material || "");
+    setSheetGsm(mainPart.paperGsm || prod.paperGsm || prod.gsm || "");
+    setSheetSize(mainPart.sheet_size || prod.sheet_size || "");
 
-    if (prod.default_sequence && prod.default_sequence.length > 0) {
-      const manualProcesses = prod.default_sequence.map((step, index) => ({
+    if (routingSequence.length > 0) {
+      const manualProcesses = routingSequence.map((step, index) => ({
         id: Date.now() + index,
         process_name: step.process_name || "",
         assigned_machine: step.assigned_machine || "", 
@@ -112,21 +118,21 @@ export default function JobModal({ onClose }) {
     setProcesses(processes.map(p => p.id === id ? { ...p, process_details: { ...p.process_details, [detailField]: value } } : p));
   };
 
-  // --- ⭐️ UPDATED: SUBMIT HANDLER (SNAPSHOT & FILTER ENGINE) ---
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!selectedProductId) return alert("Please select a Product Template.");
     setLoading(true);
 
+    // ⭐️ NEW: Generate universal Set properties even for manual single jobs
+    const set_code = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const display_id = `JOB-${set_code}`; // Single cards have no A/B suffix
+
     const final_process_sequence = processes.map((proc, index) => {
       const assignedMach = machines.find(m => m.id === proc.assigned_machine);
-      
-      // 1. Fetch the master process config to check the "Prints" flag
       const processData = dbProcesses.find(p => p.processName === proc.process_name);
       
       let instructionsArray = [];
 
-      // 2. Only add attributes to the printed instructions IF the prints flag is true
       if (proc.process_details && processData && processData.attributes) {
         processData.attributes.forEach(attr => {
           if (attr.prints && proc.process_details[attr.name]) {
@@ -136,7 +142,6 @@ export default function JobModal({ onClose }) {
       }
 
       let instructions = instructionsArray.join(" | ");
-      
       if (proc.remarks && proc.remarks.trim() !== "") {
         instructions = instructions ? `${instructions} | REMARKS: ${proc.remarks}` : `REMARKS: ${proc.remarks}`;
       }
@@ -148,8 +153,8 @@ export default function JobModal({ onClose }) {
         status: "pending",
         input_qty: Number(proc.inputQty) || 0,
         output_qty: Number(proc.outputQty) || 0,
-        remarks: instructions, // Only contains printable attributes
-        process_details: proc.process_details || {}, // ⭐️ Snapshot raw data for the permanent record
+        remarks: instructions, 
+        process_details: proc.process_details || {}, 
         assigned_machine_id: proc.assigned_machine || null,          
         assigned_machine_name: assignedMach ? assignedMach.name : "Unassigned Machine", 
       };
@@ -160,20 +165,30 @@ export default function JobModal({ onClose }) {
       customer: customer,
       priority: priority,
       job_date: new Date(jobDate).toISOString(),
+      
+      // ⭐️ ROUND 3: Injecting required Set variables so lists don't break
+      set_code: set_code,
+      display_id: display_id,
+      part_name: "Custom Manual Run",
+      part_index: 1,
+      parts_total: 1,
+      sets_qty: Number(quantity) || 0,
+      qty_per_set: 1,
+
       product: {
         id: selectedProductId, 
         name: productName,
         sku: productCode,
+        category: template,
         size: productSize,
         material: materialType,
         gsm: sheetGsm,
         sheet_size: sheetSize,
-        category: template 
       },
       specifications: {
         size_before_cut: sizeBeforeCut,
         size_after_cut: sizeAfterCut,
-        paper_company: paperCompany, // ⭐️ Removed legacy colors field
+        paper_company: paperCompany, 
       },
       quantity_target: Number(quantity) || 0,
       quantity_completed: 0,

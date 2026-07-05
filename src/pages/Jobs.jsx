@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, Fragment } from "react";
 import { useJobs } from "../hooks/useJobs";
 import JobModal from "../components/JobModal";
 import JobViewModal from "../components/JobViewModal";
@@ -22,15 +22,37 @@ export default function Jobs() {
     }
   };
 
-  // Filter logic based purely on tabs now
-  const filteredJobs = jobs.filter(job => {
-    if (activeTab === "All") return true;
-    if (activeTab === "Pending") return job.status === "pending";
-    if (activeTab === "In Progress") return job.status === "in_progress" || job.status === "scheduled";
-    if (activeTab === "Completed") return job.status === "completed";
-    if (activeTab === "Overdue") {
-      return job.status !== "completed" && new Date(job.deadline) < new Date();
+  // ⭐️ ROUND 3: GROUPING ALGORITHM
+  // Group jobs by set_code if they are multi-part. Single jobs are kept as individual arrays.
+  const groupedJobs = [];
+  const setMap = {};
+
+  jobs.forEach(job => {
+    if (job.set_code && job.parts_total > 1) {
+      if (!setMap[job.set_code]) setMap[job.set_code] = [];
+      setMap[job.set_code].push(job);
+    } else {
+      groupedJobs.push([job]); // Single-part product or legacy job
     }
+  });
+
+  // Add the grouped multi-part sets into the main array
+  Object.values(setMap).forEach(group => groupedJobs.push(group));
+
+  // ⭐️ FILTER ALGORITHM (Evaluates the entire set)
+  const filteredGroups = groupedJobs.filter(group => {
+    if (activeTab === "All") return true;
+
+    const hasPending = group.some(j => j.status === "pending");
+    const hasInProgress = group.some(j => j.status === "in_progress" || j.status === "scheduled");
+    const allCompleted = group.every(j => j.status === "completed");
+    const hasOverdue = group.some(j => j.status !== "completed" && new Date(j.deadline) < new Date());
+
+    if (activeTab === "Completed") return allCompleted;
+    if (activeTab === "Overdue") return hasOverdue;
+    if (activeTab === "Pending") return hasPending && !allCompleted;
+    if (activeTab === "In Progress") return hasInProgress;
+
     return true;
   });
 
@@ -45,7 +67,7 @@ export default function Jobs() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 sm:mb-8">
         <div>
           <h2 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">Job Management</h2>
-          <p className="text-sm sm:text-base text-gray-400 mt-1">Create, view, and manage all manual job cards.</p>
+          <p className="text-sm sm:text-base text-gray-400 mt-1">Create, view, and manage all factory job cards and linked sets.</p>
         </div>
         <button 
           onClick={() => setCreateModalOpen(true)} 
@@ -75,87 +97,156 @@ export default function Jobs() {
       {/* DATA TABLE */}
       <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden shadow-xl flex-1 flex flex-col">
         <div className="overflow-x-auto flex-1">
-          <table className="w-full text-left border-collapse min-w-[900px]">
+          <table className="w-full text-left border-collapse min-w-[1000px]">
             <thead>
               <tr className="bg-gray-950/50 border-b border-gray-800 text-[10px] font-bold text-gray-500 uppercase tracking-wider">
-                <th className="py-4 px-6">Job ID</th>
-                <th className="py-4 px-6">Product</th>
-                <th className="py-4 px-6">Target Qty</th>
-                <th className="py-4 px-6">Status</th>
-                <th className="py-4 px-6">Processes</th>
-                <th className="py-4 px-6 text-right">Actions</th>
+                <th className="py-4 px-6 w-[15%]">Job / Set ID</th>
+                <th className="py-4 px-6 w-[25%]">Product / Part Name</th>
+                <th className="py-4 px-6 w-[15%]">Target Qty</th>
+                <th className="py-4 px-6 w-[15%]">Status</th>
+                <th className="py-4 px-6 w-[15%]">Processes / Rollup</th>
+                <th className="py-4 px-6 w-[15%] text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800">
-              {filteredJobs.length === 0 ? (
+              
+              {filteredGroups.length === 0 ? (
                 <tr><td colSpan="6" className="py-12 text-center text-gray-500">No jobs found in this category.</td></tr>
               ) : (
-                filteredJobs.map(job => (
-                  <tr key={job.id} className="hover:bg-gray-800/30 transition-colors">
+                filteredGroups.map((group) => {
+                  const isSet = group.length > 1 || (group[0].parts_total > 1 && group[0].set_code);
+
+                  // -----------------------------------------------------
+                  // RENDER 1: MULTI-PART SET GROUPING
+                  // -----------------------------------------------------
+                  if (isSet) {
+                    const setCode = group[0].set_code;
+                    const completedCount = group.filter(j => j.status === 'completed').length;
+                    const isSetCompleted = completedCount === group.length;
+                    const isSetOverdue = group.some(j => j.status !== "completed" && new Date(j.deadline) < new Date());
                     
-                    {/* ID */}
-                    <td className="py-4 px-6">
-                      <span className="font-mono text-sm font-bold text-gray-200">JOB-{job.id.slice(0,6).toUpperCase()}</span>
-                    </td>
-                    
-                    {/* PRODUCT */}
-                    <td className="py-4 px-6">
-                      <div className="font-bold text-white text-sm">{job.title || job.product?.name}</div>
-                      <div className="text-xs text-gray-500 mt-0.5">{job.product?.sku || "N/A"}</div>
-                    </td>
-                    
-                    {/* TARGET QTY */}
-                    <td className="py-4 px-6 text-gray-300 text-sm">
-                      {job.quantity_target?.toLocaleString() || 0}
-                    </td>
-                    
-                    {/* STATUS */}
-                    <td className="py-4 px-6">
-                       <span className={`px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wider border ${
-                          job.status === 'completed' ? 'bg-green-500/10 text-green-400 border-green-500/20' : 
-                          job.status === 'in_progress' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 
-                          'bg-yellow-500/10 text-yellow-400 border-yellow-500/20'
-                        }`}>
-                          {job.status}
-                        </span>
-                    </td>
-                    
-                    {/* PROCESS DOTS */}
-                    <td className="py-4 px-6">
-                      <div className="flex gap-1.5 items-center">
-                        {job.process_sequence?.map((step, i) => (
-                          <div 
-                            key={i} 
-                            title={step.process_name}
-                            className={`w-2.5 h-2.5 rounded-full ${
-                              step.status === 'completed' ? 'bg-green-500' :
-                              step.status === 'in_progress' ? 'bg-blue-500' :
-                              'bg-gray-700'
-                            }`}
-                          />
+                    let setStatus = "pending";
+                    if (isSetCompleted) setStatus = "completed";
+                    else if (isSetOverdue) setStatus = "overdue";
+                    else if (group.some(j => j.status === "in_progress" || j.status === "scheduled")) setStatus = "in_progress";
+
+                    return (
+                      <Fragment key={`set-${setCode}`}>
+                        {/* SET HEADER ROW */}
+                        <tr className="bg-[#151724] border-t-2 border-gray-800">
+                          <td className="py-4 px-6">
+                            <span className="font-mono text-sm font-bold text-primary-400">SET-{setCode}</span>
+                          </td>
+                          <td className="py-4 px-6">
+                            <div className="font-bold text-white text-sm">{group[0].product?.name || "Multi-Part Set"}</div>
+                            <div className="text-xs text-gray-500 mt-0.5">{group[0].customer || "Unknown Customer"}</div>
+                          </td>
+                          <td className="py-4 px-6">
+                            <div className="font-bold text-gray-300 text-sm">{group[0].sets_qty?.toLocaleString()} Sets</div>
+                          </td>
+                          <td className="py-4 px-6">
+                            <span className={`px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wider border ${
+                              setStatus === 'completed' ? 'bg-green-500/10 text-green-400 border-green-500/20' : 
+                              setStatus === 'overdue' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                              setStatus === 'in_progress' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 
+                              'bg-yellow-500/10 text-yellow-400 border-yellow-500/20'
+                            }`}>
+                              {setStatus === 'overdue' ? 'OVERDUE' : setStatus === 'in_progress' ? 'IN PROGRESS' : setStatus}
+                            </span>
+                          </td>
+                          <td className="py-4 px-6">
+                            <div className="text-xs font-bold text-gray-300">{completedCount} / {group.length} Parts Complete</div>
+                            <div className="text-[10px] text-gray-500 mt-0.5 font-medium">Due: {new Date(group[0].deadline).toLocaleDateString()}</div>
+                          </td>
+                          <td className="py-4 px-6 text-right">
+                            {/* Actions omitted on the header row; performed on individual cards */}
+                          </td>
+                        </tr>
+
+                        {/* CHILD JOB CARDS */}
+                        {group.map(job => (
+                          <tr key={job.id} className="hover:bg-gray-800/30 transition-colors bg-gray-900/40">
+                            <td className="py-3 px-6 pl-10 border-l-2 border-gray-800">
+                              <div className="flex items-center gap-2">
+                                <span className="text-gray-600">↳</span>
+                                <span className="font-mono text-xs font-bold text-gray-400">{job.display_id || `JOB-${job.id.slice(0,6).toUpperCase()}`}</span>
+                              </div>
+                            </td>
+                            <td className="py-3 px-6">
+                              <div className="font-bold text-gray-300 text-xs">Part {job.part_index}: {job.part_name || "Component"}</div>
+                            </td>
+                            <td className="py-3 px-6 text-gray-400 text-xs font-medium">
+                              {job.quantity_target?.toLocaleString()} pcs
+                            </td>
+                            <td className="py-3 px-6">
+                              <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border ${
+                                job.status === 'completed' ? 'bg-green-500/10 text-green-400 border-green-500/20' : 
+                                job.status === 'in_progress' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 
+                                'bg-yellow-500/10 text-yellow-400 border-yellow-500/20'
+                              }`}>
+                                {job.status}
+                              </span>
+                            </td>
+                            <td className="py-3 px-6">
+                              <div className="flex gap-1.5 items-center">
+                                {job.process_sequence?.map((step, i) => (
+                                  <div key={i} title={step.process_name} className={`w-2 h-2 rounded-full ${step.status === 'completed' ? 'bg-green-500' : step.status === 'in_progress' ? 'bg-blue-500' : 'bg-gray-700'}`} />
+                                ))}
+                              </div>
+                            </td>
+                            <td className="py-3 px-6 text-right">
+                              <div className="flex justify-end gap-2">
+                                <button onClick={() => setViewingJob(job)} className="text-gray-300 hover:text-white bg-gray-800 hover:bg-gray-700 border border-gray-700 px-3 py-1 rounded text-[10px] font-bold transition-colors">View Card</button>
+                                <button onClick={() => handleDelete(job.id)} className="text-gray-500 hover:text-red-400 border border-transparent hover:border-red-900/50 hover:bg-red-500/10 px-2 py-1 rounded text-[10px] font-bold transition-colors">Delete</button>
+                              </div>
+                            </td>
+                          </tr>
                         ))}
-                      </div>
-                    </td>
-                    
-                    {/* ACTIONS */}
-                    <td className="py-4 px-6 text-right">
-                      <div className="flex justify-end gap-2">
-                        <button 
-                          onClick={() => setViewingJob(job)}
-                          className="text-gray-300 hover:text-white bg-gray-800 hover:bg-gray-700 border border-gray-700 px-4 py-1.5 rounded text-xs font-medium transition-colors"
-                        >
-                          View
-                        </button>
-                        <button 
-                          onClick={() => handleDelete(job.id)}
-                          className="text-gray-500 hover:text-red-400 border border-transparent hover:border-red-900/50 hover:bg-red-500/10 px-3 py-1.5 rounded text-xs font-medium transition-colors"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
+                      </Fragment>
+                    );
+                  }
+
+                  // -----------------------------------------------------
+                  // RENDER 2: SINGLE PART PRODUCT / LEGACY JOB
+                  // -----------------------------------------------------
+                  const job = group[0];
+                  return (
+                    <tr key={job.id} className="hover:bg-gray-800/30 transition-colors">
+                      <td className="py-4 px-6">
+                        <span className="font-mono text-sm font-bold text-gray-200">{job.display_id || `JOB-${job.id.slice(0,6).toUpperCase()}`}</span>
+                      </td>
+                      <td className="py-4 px-6">
+                        <div className="font-bold text-white text-sm">{job.title || job.product?.name}</div>
+                        <div className="text-xs text-gray-500 mt-0.5">{job.product?.sku || "N/A"}</div>
+                      </td>
+                      <td className="py-4 px-6 text-gray-300 text-sm">
+                        {job.quantity_target?.toLocaleString() || 0} pcs
+                      </td>
+                      <td className="py-4 px-6">
+                         <span className={`px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wider border ${
+                            job.status === 'completed' ? 'bg-green-500/10 text-green-400 border-green-500/20' : 
+                            job.status === 'in_progress' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 
+                            'bg-yellow-500/10 text-yellow-400 border-yellow-500/20'
+                          }`}>
+                            {job.status}
+                          </span>
+                      </td>
+                      <td className="py-4 px-6">
+                        <div className="flex gap-1.5 items-center">
+                          {job.process_sequence?.map((step, i) => (
+                            <div key={i} title={step.process_name} className={`w-2.5 h-2.5 rounded-full ${step.status === 'completed' ? 'bg-green-500' : step.status === 'in_progress' ? 'bg-blue-500' : 'bg-gray-700'}`} />
+                          ))}
+                        </div>
+                      </td>
+                      <td className="py-4 px-6 text-right">
+                        <div className="flex justify-end gap-2">
+                          <button onClick={() => setViewingJob(job)} className="text-gray-300 hover:text-white bg-gray-800 hover:bg-gray-700 border border-gray-700 px-4 py-1.5 rounded text-xs font-medium transition-colors">View</button>
+                          <button onClick={() => handleDelete(job.id)} className="text-gray-500 hover:text-red-400 border border-transparent hover:border-red-900/50 hover:bg-red-500/10 px-3 py-1.5 rounded text-xs font-medium transition-colors">Delete</button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
