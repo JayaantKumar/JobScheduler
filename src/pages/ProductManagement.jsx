@@ -5,7 +5,7 @@ import { useProducts } from "../hooks/useProducts";
 import { useCustomers } from "../hooks/useCustomers";
 import { useProcesses } from "../hooks/useProcesses"; 
 import { useMachines } from "../hooks/useMachines"; 
-import { useDies } from "../hooks/useDies"; // ⭐️ ADDED: To fetch reference data for dynamic attributes
+import { useDies } from "../hooks/useDies"; 
 import { addJob } from "../services/job.service"; 
 
 export default function ProductManagement() {
@@ -13,14 +13,13 @@ export default function ProductManagement() {
   const { customers, loading: custLoading } = useCustomers();
   const { processes: dbProcesses, loading: procLoading } = useProcesses(); 
   const { machines, loading: machLoading } = useMachines(); 
-  const { dies } = useDies(); // ⭐️ Fetch the master dies list
+  const { dies } = useDies(); 
 
   const [isModalOpen, setModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [saving, setSaving] = useState(false);
 
-  // --- ⭐️ Fetch Dynamic Categories ---
   const [categories, setCategories] = useState([]);
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "productCategories"), (snapshot) => {
@@ -31,20 +30,17 @@ export default function ProductManagement() {
     return () => unsub();
   }, []);
 
-  // --- QUICK PRODUCE MODAL STATES ---
   const [isProduceModalOpen, setProduceModalOpen] = useState(false);
   const [activeProduceProduct, setActiveProduceProduct] = useState(null);
   const [produceQty, setProduceQty] = useState("");
   const [produceDate, setProduceDate] = useState("");
   const [producing, setProducing] = useState(false);
 
-  // --- FORM STATES FOR PRODUCT TEMPLATE ---
   const [name, setName] = useState("");
   const [sku, setSku] = useState("");
   const [category, setCategory] = useState("");
   const [customerName, setCustomerName] = useState("");
   
-  // Material Specs
   const [size, setSize] = useState("");
   const [paperType, setPaperType] = useState("");
   const [paperGsm, setPaperGsm] = useState("");
@@ -53,7 +49,6 @@ export default function ProductManagement() {
   
   const [sequence, setSequence] = useState([{ id: Date.now(), process_name: "", assigned_machine: "", process_details: {}, remarks: "" }]);
 
-  // --- SMART MACHINE FILTERING LOGIC ---
   const getFilteredMachines = (processName) => {
     if (!processName) return machines; 
     
@@ -70,7 +65,6 @@ export default function ProductManagement() {
     return filtered.length > 0 ? filtered : machines;
   };
 
-  // --- MODAL CONTROLS ---
   const openModal = (prod = null) => {
     if (prod) {
       setEditingProduct(prod);
@@ -113,7 +107,6 @@ export default function ProductManagement() {
     setProduceModalOpen(true);
   };
 
-  // --- SEQUENCE & DYNAMIC FIELD HANDLERS ---
   const handleSequenceAdd = () => setSequence([...sequence, { id: Date.now(), process_name: "", assigned_machine: "", process_details: {}, remarks: "" }]);
   const handleSequenceRemove = (id) => sequence.length > 1 && setSequence(sequence.filter(s => s.id !== id));
   
@@ -128,7 +121,6 @@ export default function ProductManagement() {
     setSequence(sequence.map(s => s.id === id ? { ...s, process_details: { ...s.process_details, [detailField]: val } } : s));
   };
 
-  // --- SAVE PRODUCT ---
   const handleSave = async (e) => {
     e.preventDefault();
     setSaving(true);
@@ -174,7 +166,7 @@ export default function ProductManagement() {
     }
   };
 
-  // --- QUICK PRODUCE GENERATOR ---
+  // --- ⭐️ UPDATED: QUICK PRODUCE GENERATOR (SNAPSHOT & FILTER ENGINE) ---
   const handleQuickProduce = async (e) => {
     e.preventDefault();
     if (!produceQty || !produceDate) return alert("Please enter quantity and due date.");
@@ -187,13 +179,22 @@ export default function ProductManagement() {
 
     const final_process_sequence = activeProduceProduct.default_sequence.map((step, index) => {
       const assignedMach = machines.find(m => m.id === step.assigned_machine);
-      let instructions = "";
       
-      if (step.process_details && Object.keys(step.process_details).length > 0) {
-        instructions = Object.entries(step.process_details)
-          .map(([key, val]) => `${key.replace(/([A-Z])/g, ' $1').toUpperCase()}: ${val}`)
-          .join(" | ");
+      // 1. Fetch the master process config to check the "Prints" flag
+      const processData = dbProcesses.find(p => p.processName === step.process_name);
+      
+      let instructionsArray = [];
+
+      // 2. Only add attributes to the printed instructions IF the prints flag is true
+      if (step.process_details && processData && processData.attributes) {
+        processData.attributes.forEach(attr => {
+          if (attr.prints && step.process_details[attr.name]) {
+            instructionsArray.push(`${attr.name.toUpperCase()}: ${step.process_details[attr.name]}`);
+          }
+        });
       }
+
+      let instructions = instructionsArray.join(" | ");
       
       if (step.remarks && step.remarks.trim() !== "") {
         instructions = instructions ? `${instructions} | REMARKS: ${step.remarks}` : `REMARKS: ${step.remarks}`;
@@ -206,7 +207,8 @@ export default function ProductManagement() {
         status: "pending",
         input_qty: targetQtyNum,
         output_qty: targetQtyNum,
-        remarks: instructions, 
+        remarks: instructions, // Only contains printable attributes
+        process_details: step.process_details || {}, // ⭐️ Snapshot raw data for the permanent record
         assigned_machine_id: step.assigned_machine || null,
         assigned_machine_name: assignedMach ? assignedMach.name : "Unassigned Machine"
       };
@@ -222,7 +224,7 @@ export default function ProductManagement() {
         size: activeProduceProduct.size || "", material: activeProduceProduct.paperType || "", gsm: activeProduceProduct.paperGsm || "",
         sheet_size: activeProduceProduct.sheet_size || "", category: activeProduceProduct.category || "", customMaterial: activeProduceProduct.customMaterial || ""
       },
-      specifications: { colors: "NA", size_before_cut: "", size_after_cut: "", paper_company: "" },
+      specifications: { size_before_cut: "", size_after_cut: "", paper_company: "" }, // ⭐️ Removed legacy colors
       quantity_target: targetQtyNum, quantity_completed: 0, deadline: new Date(produceDate).toISOString(),
       status: "pending", process_sequence: final_process_sequence, notes: "Auto-generated from Product Management."
     };
@@ -241,13 +243,11 @@ export default function ProductManagement() {
   const filteredProducts = products.filter(p => p.name?.toLowerCase().includes(searchQuery.toLowerCase()) || p.customerName?.toLowerCase().includes(searchQuery.toLowerCase()));
 
   // ==========================================
-  // ⭐️ NEW: THE DYNAMIC ATTRIBUTE ENGINE
+  // DYNAMIC ATTRIBUTE ENGINE
   // ==========================================
   const renderDynamicProcessFields = (step) => {
-    // 1. Find the process configuration built in Process Management
     const processData = dbProcesses.find(p => p.processName === step.process_name);
     
-    // 2. If it doesn't have custom attributes defined, render nothing
     if (!processData || !processData.attributes || processData.attributes.length === 0) return null;
 
     const miniInputClass = "w-full bg-gray-900 border border-gray-700 rounded-md px-3 py-1.5 text-xs text-white focus:border-primary-500";

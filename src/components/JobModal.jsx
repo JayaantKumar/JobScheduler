@@ -4,7 +4,7 @@ import { useCustomers } from "../hooks/useCustomers";
 import { useProducts } from "../hooks/useProducts";
 import { useMachines } from "../hooks/useMachines";
 import { useProcesses } from "../hooks/useProcesses"; 
-import { useDies } from "../hooks/useDies"; // ⭐️ NEW: Pull dies for the reference field
+import { useDies } from "../hooks/useDies"; 
 
 const calculate14WorkingDays = () => {
   let count = 0;
@@ -23,7 +23,7 @@ export default function JobModal({ onClose }) {
   const { products, loading: prodLoading } = useProducts();
   const { machines, loading: machLoading } = useMachines();
   const { processes: dbProcesses, loading: procLoading } = useProcesses(); 
-  const { dies } = useDies(); // ⭐️ NEW: Fetch dies
+  const { dies } = useDies(); 
 
   // Job Info
   const [jobDate, setJobDate] = useState(new Date().toISOString().split('T')[0]);
@@ -48,7 +48,6 @@ export default function JobModal({ onClose }) {
   const [jobNotes, setJobNotes] = useState("");
 
   // MANUAL PROCESS ROUTING STATE
-  // ⭐️ UPDATE: Added process_details to state
   const [processes, setProcesses] = useState([
     { id: Date.now(), process_name: "", assigned_machine: "", inputQty: "", outputQty: "", process_details: {}, remarks: "" }
   ]);
@@ -74,7 +73,6 @@ export default function JobModal({ onClose }) {
     setSheetGsm(prod.paperGsm || prod.gsm || "");
     setSheetSize(prod.sheet_size || "");
 
-    // ⭐️ UPDATE: Load process_details from template
     if (prod.default_sequence && prod.default_sequence.length > 0) {
       const manualProcesses = prod.default_sequence.map((step, index) => ({
         id: Date.now() + index,
@@ -100,7 +98,6 @@ export default function JobModal({ onClose }) {
   const handleAddProcess = () => setProcesses([...processes, { id: Date.now(), process_name: "", assigned_machine: "", inputQty: quantity, outputQty: quantity, process_details: {}, remarks: "" }]);
   const handleRemoveProcess = (id) => processes.length > 1 && setProcesses(processes.filter(p => p.id !== id));
   
-  // ⭐️ UPDATE: Clear details if process changes
   const updateProcess = (id, field, value) => {
     setProcesses(processes.map(p => {
       if (p.id === id) {
@@ -111,11 +108,11 @@ export default function JobModal({ onClose }) {
     }));
   };
 
-  // ⭐️ NEW: Handle custom attribute inputs
   const updateProcessDetail = (id, detailField, value) => {
     setProcesses(processes.map(p => p.id === id ? { ...p, process_details: { ...p.process_details, [detailField]: value } } : p));
   };
 
+  // --- ⭐️ UPDATED: SUBMIT HANDLER (SNAPSHOT & FILTER ENGINE) ---
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!selectedProductId) return alert("Please select a Product Template.");
@@ -123,14 +120,23 @@ export default function JobModal({ onClose }) {
 
     const final_process_sequence = processes.map((proc, index) => {
       const assignedMach = machines.find(m => m.id === proc.assigned_machine);
+      
+      // 1. Fetch the master process config to check the "Prints" flag
+      const processData = dbProcesses.find(p => p.processName === proc.process_name);
+      
+      let instructionsArray = [];
 
-      // ⭐️ UPDATE: Serialize process_details for the Job Card
-      let instructions = "";
-      if (proc.process_details && Object.keys(proc.process_details).length > 0) {
-        instructions = Object.entries(proc.process_details)
-          .map(([key, val]) => `${key}: ${val}`)
-          .join(" | ");
+      // 2. Only add attributes to the printed instructions IF the prints flag is true
+      if (proc.process_details && processData && processData.attributes) {
+        processData.attributes.forEach(attr => {
+          if (attr.prints && proc.process_details[attr.name]) {
+            instructionsArray.push(`${attr.name.toUpperCase()}: ${proc.process_details[attr.name]}`);
+          }
+        });
       }
+
+      let instructions = instructionsArray.join(" | ");
+      
       if (proc.remarks && proc.remarks.trim() !== "") {
         instructions = instructions ? `${instructions} | REMARKS: ${proc.remarks}` : `REMARKS: ${proc.remarks}`;
       }
@@ -142,8 +148,8 @@ export default function JobModal({ onClose }) {
         status: "pending",
         input_qty: Number(proc.inputQty) || 0,
         output_qty: Number(proc.outputQty) || 0,
-        remarks: instructions,
-        process_details: proc.process_details || {}, // Save structured data for job view
+        remarks: instructions, // Only contains printable attributes
+        process_details: proc.process_details || {}, // ⭐️ Snapshot raw data for the permanent record
         assigned_machine_id: proc.assigned_machine || null,          
         assigned_machine_name: assignedMach ? assignedMach.name : "Unassigned Machine", 
       };
@@ -165,10 +171,9 @@ export default function JobModal({ onClose }) {
         category: template 
       },
       specifications: {
-        colors: "NA", 
         size_before_cut: sizeBeforeCut,
         size_after_cut: sizeAfterCut,
-        paper_company: paperCompany, 
+        paper_company: paperCompany, // ⭐️ Removed legacy colors field
       },
       quantity_target: Number(quantity) || 0,
       quantity_completed: 0,
@@ -195,7 +200,6 @@ export default function JobModal({ onClose }) {
   const safeCustomer = customer?.trim()?.toLowerCase() || "";
   const customerProducts = products ? products.filter(p => p.customerName?.trim()?.toLowerCase() === safeCustomer) : [];
 
-  // ⭐️ NEW: DYNAMIC ATTRIBUTE RENDERER FOR JOB MODAL
   const renderDynamicProcessFields = (proc) => {
     const processData = dbProcesses.find(p => p.processName === proc.process_name);
     if (!processData || !processData.attributes || processData.attributes.length === 0) return null;
@@ -205,7 +209,6 @@ export default function JobModal({ onClose }) {
         {processData.attributes.map((attr, index) => {
           const val = proc.process_details[attr.name] || "";
           
-          // Reference Type (e.g. Dies)
           if (attr.type === "reference" && attr.options === "dies") {
             return (
               <div key={index} className="flex-1">
@@ -221,7 +224,6 @@ export default function JobModal({ onClose }) {
             );
           }
 
-          // Dropdown / Multi-Select
           if (attr.type === "dropdown" || attr.type === "multi-select") {
             return (
               <div key={index} className="flex-1">
@@ -234,7 +236,6 @@ export default function JobModal({ onClose }) {
             );
           }
 
-          // Text / Number
           return (
             <div key={index} className="flex-1">
               <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">{attr.name}</label>
@@ -317,7 +318,6 @@ export default function JobModal({ onClose }) {
 
                     <div className="flex-1 space-y-4">
                       
-                      {/* Process & Machine Selection */}
                       <div className="flex flex-col md:flex-row items-start gap-4">
                         <div className="flex-1 w-full">
                           <label className={labelClass}>Process Name</label>
@@ -340,16 +340,13 @@ export default function JobModal({ onClose }) {
                         </button>
                       </div>
 
-                      {/* Quantities */}
                       <div className="grid grid-cols-2 gap-4">
                         <div><label className={labelClass}>Input Qty</label><input type="number" value={proc.inputQty} onChange={(e) => updateProcess(proc.id, "inputQty", e.target.value)} className={inputClass} /></div>
                         <div><label className={labelClass}>Output Qty</label><input type="number" value={proc.outputQty} onChange={(e) => updateProcess(proc.id, "outputQty", e.target.value)} className={inputClass} /></div>
                       </div>
 
-                      {/* ⭐️ NEW: Dynamic Fields */}
                       {renderDynamicProcessFields(proc)}
 
-                      {/* Custom Operator Remarks */}
                       <div className="pt-2">
                         <input type="text" placeholder="Additional remarks for operator (Optional)" value={proc.remarks || ""} onChange={(e) => updateProcess(proc.id, "remarks", e.target.value)} className={`${inputClass} border-dashed focus:border-solid`} />
                       </div>

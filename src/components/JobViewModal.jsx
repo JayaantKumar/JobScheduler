@@ -13,44 +13,11 @@ export default function JobViewModal({ job, onClose }) {
   const dueDate = job.deadline ? new Date(job.deadline).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "N/A";
   const jobDate = job.job_date ? new Date(job.job_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "N/A";
 
-  // ==========================================
-  // SMART EXTRACTION LOGIC (BUG FIX)
-  // ==========================================
-  let derivedColors = "NA";
-  let derivedDie = null;
-
-  if (job.process_sequence && Array.isArray(job.process_sequence)) {
-    job.process_sequence.forEach(step => {
-      // Method 1: Check structured process_details (if available)
-      if (step.process_details) {
-        if (step.process_name?.toLowerCase().includes("print") && step.process_details.colors) {
-          derivedColors = step.process_details.colors;
-        }
-        if (step.process_name?.toLowerCase().includes("die") && step.process_details.dieUsed) {
-          derivedDie = step.process_details.dieUsed;
-        }
-      }
-      
-      // Method 2: Check flattened remarks string (from the Quick Produce generator)
-      if (step.remarks && typeof step.remarks === 'string') {
-        const parts = step.remarks.split('|').map(s => s.trim());
-        parts.forEach(part => {
-          if (part.toUpperCase().startsWith("COLORS:")) {
-            derivedColors = part.replace(/COLORS:/i, '').trim();
-          }
-          if (part.toUpperCase().startsWith("DIE USED:")) {
-            derivedDie = part.replace(/DIE USED:/i, '').trim();
-          }
-        });
-      }
-    });
-  }
-
-  // Fallback to old specifications if deriving failed (keeps older jobs from breaking)
-  const displayColors = derivedColors !== "NA" ? derivedColors : (job.specifications?.colors || "NA");
-  const displayDie = derivedDie ? derivedDie : job.specifications?.die;
-
-  const hasDieCutting = job.process_sequence?.some(p => p.process_name?.toLowerCase().includes("die")) || !!displayDie;
+  // Fixes the "300 GSM GSM" bug
+  const formatGsm = (gsm) => {
+    if (!gsm) return "";
+    return String(gsm).toUpperCase().includes("GSM") ? `(${gsm})` : `(${gsm} GSM)`;
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm print:bg-white print:backdrop-blur-none print:absolute print:inset-0 print:p-0">
@@ -79,12 +46,7 @@ export default function JobViewModal({ job, onClose }) {
             </div>
             
             <div className="flex gap-3">
-              {/* PRINT BUTTON */}
-              <button 
-                onClick={handlePrint} 
-                className="text-gray-400 hover:text-white p-2 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors" 
-                title="Print / Download PDF"
-              >
+              <button onClick={handlePrint} className="text-gray-400 hover:text-white p-2 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors" title="Print / Download PDF">
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" /></svg>
               </button>
               <button onClick={onClose} className="text-gray-400 hover:text-white p-2 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors">
@@ -107,10 +69,10 @@ export default function JobViewModal({ job, onClose }) {
         {/* Scrollable Body */}
         <div className="p-6 overflow-y-auto custom-scrollbar flex-1 bg-[#0a0f1a] space-y-6">
           
-          {/* CLIENT SPECS GRID */}
+          {/* CLIENT SPECS GRID (Legacy colors & dies removed) */}
           <div>
             <h3 className="text-sm font-bold text-gray-400 mb-3 uppercase tracking-wider">Production Specifications</h3>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               <div className="bg-gray-900 border border-gray-800 p-4 rounded-lg">
                 <div className="text-xs text-gray-500 mb-1">Target Quantity</div>
                 <div className="text-lg font-bold text-white">{job.quantity_target?.toLocaleString() || 0}</div>
@@ -129,23 +91,8 @@ export default function JobViewModal({ job, onClose }) {
               </div>
               <div className="bg-gray-900 border border-gray-800 p-4 rounded-lg">
                 <div className="text-xs text-gray-500 mb-1">Material / Paper</div>
-                <div className="text-sm font-bold text-white">{job.product?.material || 'N/A'} {job.product?.gsm ? `(${job.product.gsm} GSM)` : ''}</div>
+                <div className="text-sm font-bold text-white">{job.product?.material || 'N/A'} {formatGsm(job.product?.gsm)}</div>
               </div>
-              <div className="bg-gray-900 border border-gray-800 p-4 rounded-lg">
-                <div className="text-xs text-gray-500 mb-1">Print Colors</div>
-                <div className="text-sm font-bold text-white">{displayColors}</div>
-              </div>
-              
-              {/* Highlight Die Name if Die Cutting is involved */}
-              {hasDieCutting && (
-                <div className="bg-primary-900/20 border border-primary-500/30 p-4 rounded-lg md:col-span-2">
-                  <div className="text-xs text-primary-400 mb-1 font-bold flex items-center gap-2">
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243-4.243 3 3 0 004.243 4.243z" /></svg>
-                    Assigned Die (For Die Cutting)
-                  </div>
-                  <div className="text-lg font-bold text-white">{displayDie || '⚠️ No Die Selected'}</div>
-                </div>
-              )}
             </div>
           </div>
 
@@ -181,6 +128,13 @@ export default function JobViewModal({ job, onClose }) {
                       <div className="text-xs text-gray-500 mt-1">
                         {step.assigned_machine_name || 'Unassigned Machine'}
                       </div>
+                      
+                      {/* Dynamic Attributes render here on the Digital Screen */}
+                      {step.remarks && (
+                        <div className="text-[11px] text-primary-300 font-mono mt-2 bg-gray-950 p-2.5 rounded border border-gray-800 whitespace-pre-wrap leading-relaxed">
+                          {step.remarks}
+                        </div>
+                      )}
                     </div>
                     
                     <div className="text-right">
@@ -239,7 +193,7 @@ export default function JobViewModal({ job, onClose }) {
 
         {/* Production Specifications */}
         <h2 className="text-lg font-bold uppercase border-b-2 border-black mb-4 pb-1">Production Specifications</h2>
-        <div className="grid grid-cols-3 gap-4 mb-6 text-sm">
+        <div className="grid grid-cols-3 gap-4 mb-8 text-sm">
           <div className="flex flex-col border border-black p-3 bg-gray-100">
             <span className="text-xs text-gray-600 font-bold uppercase">Target Quantity</span>
             <span className="text-2xl font-black">{job.quantity_target?.toLocaleString() || 0}</span>
@@ -250,7 +204,7 @@ export default function JobViewModal({ job, onClose }) {
           </div>
           <div className="flex flex-col border border-black p-3">
             <span className="text-xs text-gray-600 font-bold uppercase">Paper / Material</span>
-            <span className="text-lg font-bold">{job.product?.material || "N/A"} {job.product?.gsm ? `(${job.product.gsm} GSM)` : ""}</span>
+            <span className="text-lg font-bold">{job.product?.material || "N/A"} {formatGsm(job.product?.gsm)}</span>
           </div>
           <div className="flex flex-col border border-black p-3">
             <span className="text-xs text-gray-600 font-bold uppercase">Raw Sheet Size</span>
@@ -260,24 +214,7 @@ export default function JobViewModal({ job, onClose }) {
             <span className="text-xs text-gray-600 font-bold uppercase">Cut Size (Guillotine)</span>
             <span className="text-lg font-bold">{job.specifications?.size_after_cut || "N/A"}</span>
           </div>
-          <div className="flex flex-col border border-black p-3">
-            <span className="text-xs text-gray-600 font-bold uppercase">Colors</span>
-            <span className="text-lg font-bold">{displayColors}</span>
-          </div>
         </div>
-
-        {/* Highlighted Die Box (Only shows if required) */}
-        {hasDieCutting && (
-          <div className="border-4 border-black p-4 mb-8 flex justify-between items-center bg-gray-100">
-            <div>
-              <h3 className="text-sm font-bold uppercase">Required Die for Cutting</h3>
-              <p className="text-2xl font-black">{displayDie || "⚠️ NO DIE SPECIFIED"}</p>
-            </div>
-            <div className="w-16 h-16 border-2 border-black flex items-center justify-center text-xs font-bold text-gray-400">
-              Verify
-            </div>
-          </div>
-        )}
 
         {/* Routing Table for Operator Sign-off */}
         <h2 className="text-lg font-bold uppercase border-b-2 border-black mb-4 pb-1">Process Routing & Operator Sign-off</h2>
@@ -286,7 +223,7 @@ export default function JobViewModal({ job, onClose }) {
             <tr className="bg-gray-100">
               <th className="border border-black p-3 w-12 text-center">#</th>
               <th className="border border-black p-3">Process</th>
-              <th className="border border-black p-3">Target Machine</th>
+              <th className="border border-black p-3 w-40">Target Machine</th>
               <th className="border border-black p-3 w-24 text-center">Qty In</th>
               <th className="border border-black p-3 w-24 text-center">Qty Out</th>
               <th className="border border-black p-3 w-40 text-center">Operator Sign</th>
@@ -295,18 +232,21 @@ export default function JobViewModal({ job, onClose }) {
           <tbody>
             {job.process_sequence?.map((step, idx) => (
               <tr key={idx}>
-                <td className="border border-black p-4 text-center font-bold">{idx + 1}</td>
-                <td className="border border-black p-4 font-bold">
-                  {step.process_name}
-                  {/* Append custom remarks below the process name on print */}
+                <td className="border border-black p-4 text-center font-bold align-top">{idx + 1}</td>
+                <td className="border border-black p-4 align-top">
+                  <span className="font-bold text-base">{step.process_name}</span>
+                  
+                  {/* Dynamic Attributes render here on the Printed Card */}
                   {step.remarks && (
-                    <div className="text-[10px] font-normal text-gray-600 mt-1">{step.remarks}</div>
+                    <div className="text-[11px] font-medium text-gray-800 mt-2 whitespace-pre-wrap leading-relaxed border-t border-gray-300 pt-2">
+                      {step.remarks}
+                    </div>
                   )}
                 </td>
-                <td className="border border-black p-4">{step.assigned_machine_name || "Any Available"}</td>
-                <td className="border border-black p-4 text-center">{step.input_qty || ""}</td>
-                <td className="border border-black p-4 text-center"></td>
-                <td className="border border-black p-4"></td>
+                <td className="border border-black p-4 align-top text-gray-700">{step.assigned_machine_name || "Any Available"}</td>
+                <td className="border border-black p-4 text-center align-top">{step.input_qty || ""}</td>
+                <td className="border border-black p-4 text-center align-top"></td>
+                <td className="border border-black p-4 align-top"></td>
               </tr>
             ))}
           </tbody>
@@ -314,7 +254,7 @@ export default function JobViewModal({ job, onClose }) {
 
         {/* Notes Section */}
         {job.notes && (
-          <div className="border border-black p-4">
+          <div className="border border-black p-4 mt-6">
             <h3 className="text-xs font-bold text-gray-600 uppercase mb-2">Special Instructions / Notes</h3>
             <p className="text-sm whitespace-pre-wrap font-medium">{job.notes}</p>
           </div>
