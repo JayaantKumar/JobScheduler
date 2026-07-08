@@ -1,372 +1,332 @@
 import { useState, useEffect } from "react";
-import { collection, addDoc, serverTimestamp, doc, deleteDoc, onSnapshot } from "firebase/firestore";
+import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase/config";
-import { useCustomers } from "../hooks/useCustomers";
-import { useProducts } from "../hooks/useProducts";
-import { useRates } from "../hooks/useRates";
-import { useDies } from "../hooks/useDies"; 
-import { useMachines } from "../hooks/useMachines"; 
-import ExportDataButton from "../components/ExportDataButton"; 
 
 export default function MasterData() {
-  const [activeTab, setActiveTab] = useState("customers");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
+  // --- EXISTING APP STATES (DIES & PRODUCT CATEGORIES) ---
+  const [dies, setDies] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  // Fetch real data from Firebase
-  const { customers, loading: custLoading } = useCustomers();
-  const { products, loading: prodLoading } = useProducts();
-  const { rates, loading: ratesLoading } = useRates();
-  const { dies, loading: diesLoading } = useDies();
-  const { machines, loading: machLoading } = useMachines();
+  // --- ⭐️ NEW INVENTORY MODULE STATES ---
+  const [matCategories, setMatCategories] = useState([]);
+  const [isMatModalOpen, setMatModalOpen] = useState(false);
+  const [editingMatCategory, setEditingMatCategory] = useState(null);
+  
+  // Material Category Form State
+  const [categoryName, setCategoryName] = useState("");
+  const [defaultUnit, setDefaultUnit] = useState("sheets");
+  const [attributes, setAttributes] = useState([]);
+  const [savingMat, setSavingMat] = useState(false);
 
-  // ⭐️ NEW: Fetch Product Categories dynamically
-  const [categories, setCategories] = useState([]);
-  const [catLoading, setCatLoading] = useState(true);
+  // Active Tab View
+  const [activeSubTab, setActiveSubTab] = useState("material_cats");
 
+  // --- REAL-TIME FIRESTORE SYNCHRONIZATION ---
+  // --- REAL-TIME FIRESTORE SYNCHRONIZATION ---
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, "productCategories"), (snapshot) => {
-      const cats = [];
-      snapshot.forEach(doc => cats.push({ id: doc.id, ...doc.data() }));
-      setCategories(cats);
-      setCatLoading(false);
+    // 1. Sync Dies
+    const unsubDies = onSnapshot(collection(db, "dies"), (snap) => {
+      const list = [];
+      snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+      setDies(list);
     });
-    return () => unsub();
+
+    // 2. Sync Material Categories
+    const unsubMatCats = onSnapshot(collection(db, "materialCategories"), (snap) => {
+      const list = [];
+      snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+      setMatCategories(list);
+      setLoading(false);
+    });
+
+    return () => {
+      unsubDies();
+      unsubMatCats();
+    };
   }, []);
 
-  // Form States
-  const [formData, setFormData] = useState({});
-
-  const handleInputChange = (e) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
+  // --- ⭐️ MATERIAL CATEGORY ATTRIBUTE BUILDER HANDLERS ---
+  const openMatModal = (cat = null) => {
+    if (cat) {
+      setEditingMatCategory(cat);
+      setCategoryName(cat.name || "");
+      setDefaultUnit(cat.defaultUnit || "sheets");
+      setAttributes(cat.attributes || []);
+    } else {
+      setEditingMatCategory(null);
+      setCategoryName("");
+      setDefaultUnit("sheets");
+      setAttributes([{ id: Date.now(), name: "", type: "text", options: "" }]);
+    }
+    setMatModalOpen(true);
   };
 
-  const getAddButtonText = () => {
-    if (activeTab === "customers") return "+ Add Customer";
-    if (activeTab === "products") return "+ Add Product";
-    if (activeTab === "rates") return "+ Add Rate";
-    if (activeTab === "categories") return "+ Add Category";
-    return "+ Add Die"; 
+  const handleAddAttribute = () => {
+    setAttributes([...attributes, { id: Date.now(), name: "", type: "text", options: "" }]);
   };
 
-  // --- SAVE DATA TO FIREBASE ---
-  const handleSave = async (e) => {
+  const handleRemoveAttribute = (id) => {
+    setAttributes(attributes.filter(attr => attr.id !== id));
+  };
+
+  const handleAttributeChange = (id, field, value) => {
+    setAttributes(attributes.map(attr => attr.id === id ? { ...attr, [field]: value } : attr));
+  };
+
+  const handleSaveMaterialCategory = async (e) => {
     e.preventDefault();
-    setSaving(true);
+    if (!categoryName.trim()) return alert("Category name is required.");
+    
+    setSavingMat(true);
+    
+    // Clean up empty fields before pushing to database
+    const cleanAttributes = attributes.filter(attr => attr.name.trim() !== "").map(attr => ({
+      name: attr.name.trim(),
+      type: attr.type,
+      options: attr.options ? attr.options.trim() : ""
+    }));
+
+    const payload = {
+      name: categoryName.trim(),
+      defaultUnit,
+      attributes: cleanAttributes,
+      updated_at: serverTimestamp()
+    };
+
     try {
-      if (activeTab === "customers") {
-        await addDoc(collection(db, "customers"), { ...formData, productsCount: 0, created_at: serverTimestamp() });
-      } else if (activeTab === "products") {
-        await addDoc(collection(db, "products"), { ...formData, created_at: serverTimestamp() });
-      } else if (activeTab === "rates") {
-        const linkedProduct = products.find(p => p.name === formData.productName);
-        await addDoc(collection(db, "rates"), { 
-          ...formData, 
-          customerName: linkedProduct ? linkedProduct.customerName : "Unknown",
-          created_at: serverTimestamp() 
-        });
-      } else if (activeTab === "dies") {
-        const linkedProduct = products.find(p => p.name === formData.productName);
-        await addDoc(collection(db, "dies"), {
-          ...formData,
-          customerName: linkedProduct ? linkedProduct.customerName : formData.customerName || "Unknown",
-          created_at: serverTimestamp()
-        });
-      } else if (activeTab === "categories") {
-        // ⭐️ NEW: Save dynamic product category
-        await addDoc(collection(db, "productCategories"), {
-          ...formData,
+      if (editingMatCategory) {
+        await updateDoc(doc(db, "materialCategories", editingMatCategory.id), payload);
+      } else {
+        await addDoc(collection(db, "materialCategories"), {
+          ...payload,
           created_at: serverTimestamp()
         });
       }
-      setIsModalOpen(false);
-      setFormData({});
+      setMatModalOpen(false);
     } catch (error) {
-      alert("Error saving data: " + error.message);
+      alert("Failed to save material category: " + error.message);
     } finally {
-      setSaving(false);
+      setSavingMat(false);
     }
   };
 
-  // --- DELETE DATA FROM FIREBASE ---
-  const handleDelete = async (id, collectionName) => {
-    if (window.confirm(`Are you sure you want to delete this ${collectionName === 'productCategories' ? 'category' : collectionName.slice(0, -1)}?`)) {
+  const handleDeleteMaterialCategory = async (id) => {
+    if (window.confirm("Are you sure you want to delete this material category? This will break items referencing it.")) {
       try {
-        await deleteDoc(doc(db, collectionName, id));
+        await deleteDoc(doc(db, "materialCategories", id));
       } catch (error) {
-        alert("Error deleting data: " + error.message);
+        alert("Delete failed: " + error.message);
       }
     }
   };
 
-  if (custLoading || prodLoading || ratesLoading || diesLoading || machLoading || catLoading) {
-    return <div className="p-8 text-primary-500 animate-pulse font-medium">Loading Master Data...</div>;
-  }
+  // --- STANDARDIZED UI STYLES ---
+  const inputClass = "w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2 text-sm text-white focus:outline-none focus:border-primary-500";
+  const labelClass = "block text-xs font-semibold text-gray-400 mb-1.5";
+  const selectClass = "w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-primary-500";
 
-  // Basic Search Filter
-  const filteredCustomers = customers.filter(c => c.name?.toLowerCase().includes(searchQuery.toLowerCase()));
-  const filteredProducts = products.filter(p => p.name?.toLowerCase().includes(searchQuery.toLowerCase()));
-  const filteredRates = rates.filter(r => r.productName?.toLowerCase().includes(searchQuery.toLowerCase()));
-  const filteredDies = dies.filter(d => d.dieName?.toLowerCase().includes(searchQuery.toLowerCase()) || d.dieNumber?.toLowerCase().includes(searchQuery.toLowerCase()));
-  const filteredCategories = categories.filter(c => c.name?.toLowerCase().includes(searchQuery.toLowerCase()));
+  if (loading) return <div className="p-8 text-primary-500 animate-pulse font-medium">Loading Master Configuration Data...</div>;
 
   return (
     <div className="max-w-[1600px] mx-auto p-6 h-full flex flex-col">
       
-      {/* HEADER WITH EXPORT BUTTON */}
-      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-6">
-        <div>
-          <h2 className="text-3xl font-bold text-white tracking-tight">Master Data</h2>
-          <p className="text-gray-400 mt-1">Manage your customers, products, pricing, and die inventory.</p>
-        </div>
-        <ExportDataButton />
+      {/* Page Header */}
+      <div className="mb-8">
+        <h2 className="text-3xl font-bold text-white tracking-tight">Master Data Management</h2>
+        <p className="text-gray-400 mt-1">Configure factory assets, blueprints, and raw material attributes.</p>
       </div>
 
-      <div className="flex items-center gap-3 mb-6 overflow-x-auto pb-2 no-scrollbar whitespace-nowrap">
-        <button onClick={() => setActiveTab("customers")} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${activeTab === "customers" ? "bg-primary-600 text-white shadow-lg shadow-primary-500/20" : "bg-gray-800 text-gray-400 hover:text-white"}`}>
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
-          Customers ({customers.length})
+      {/* SUB-TABS ENGINE */}
+      <div className="flex items-center gap-6 border-b border-gray-800 mb-6 overflow-x-auto no-scrollbar">
+        <button 
+          onClick={() => setActiveSubTab("material_cats")}
+          className={`pb-3 text-sm font-bold transition-colors whitespace-nowrap ${activeSubTab === "material_cats" ? "text-white border-b-2 border-primary-500" : "text-gray-500 hover:text-gray-300"}`}
+        >
+          Raw Material Categories
         </button>
-        <button onClick={() => setActiveTab("products")} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${activeTab === "products" ? "bg-primary-600 text-white shadow-lg shadow-primary-500/20" : "bg-gray-800 text-gray-400 hover:text-white"}`}>
-          Products ({products.length})
-        </button>
-        <button onClick={() => setActiveTab("categories")} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${activeTab === "categories" ? "bg-primary-600 text-white shadow-lg shadow-primary-500/20" : "bg-gray-800 text-gray-400 hover:text-white"}`}>
-          Categories ({categories.length})
-        </button>
-        <button onClick={() => setActiveTab("rates")} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${activeTab === "rates" ? "bg-primary-600 text-white shadow-lg shadow-primary-500/20" : "bg-gray-800 text-gray-400 hover:text-white"}`}>
-          Rates ({rates.length})
-        </button>
-        <button onClick={() => setActiveTab("dies")} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${activeTab === "dies" ? "bg-purple-600 text-white shadow-lg shadow-purple-500/20" : "bg-gray-800 text-gray-400 hover:text-white"}`}>
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>
-          Dies ({dies.length})
+        <button 
+          onClick={() => setActiveSubTab("dies")}
+          className={`pb-3 text-sm font-bold transition-colors whitespace-nowrap ${activeSubTab === "dies" ? "text-white border-b-2 border-primary-500" : "text-gray-500 hover:text-gray-300"}`}
+        >
+          Master Inventory Dies
         </button>
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-4 justify-between items-center mb-6">
-        <div className="relative w-full sm:max-w-md">
-          <input type="text" placeholder={`Search ${activeTab}...`} value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary-500" />
-        </div>
-        <button onClick={() => { setFormData({}); setIsModalOpen(true); }} className={`w-full sm:w-auto text-white px-5 py-2.5 rounded-lg font-medium transition-colors ${activeTab === "dies" ? "bg-purple-600 hover:bg-purple-500" : "bg-primary-600 hover:bg-primary-500"}`}>
-          {getAddButtonText()}
-        </button>
-      </div>
+      {/* ======================================================== */}
+      {/* VIEW 1: RAW MATERIAL CATEGORIES (DYNAMIC FIELD ENGINE)   */}
+      {/* ======================================================== */}
+      {activeSubTab === "material_cats" && (
+        <div className="space-y-6 flex-1 flex flex-col">
+          <div className="flex justify-between items-center">
+            <div>
+              <h3 className="text-lg font-bold text-white">Inventory Material Catalogs</h3>
+              <p className="text-xs text-gray-500">Define data attributes and tracking units per raw material group.</p>
+            </div>
+            <button onClick={() => openMatModal()} className="bg-primary-600 hover:bg-primary-500 text-white text-xs font-bold px-4 py-2.5 rounded-lg transition-colors shadow-lg">
+              + Add Material Category
+            </button>
+          </div>
 
-      <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden shadow-xl flex-1 flex flex-col">
-        <div className="overflow-x-auto flex-1">
-          
-          {/* CUSTOMERS TABLE */}
-          {activeTab === "customers" && (
-            <table className="w-full text-left border-collapse min-w-[900px]">
-              <thead><tr className="bg-gray-950/50 border-b border-gray-800 text-xs font-bold text-gray-400 uppercase tracking-wider"><th className="py-4 px-6">Customer Name</th><th className="py-4 px-6">Contact Person</th><th className="py-4 px-6">Phone</th><th className="py-4 px-6">GSTIN</th><th className="py-4 px-6 text-right">Actions</th></tr></thead>
-              <tbody className="divide-y divide-gray-800">
-                {filteredCustomers.length === 0 && <tr><td colSpan="5" className="py-8 text-center text-gray-500">No customers found.</td></tr>}
-                {filteredCustomers.map((cust) => (
-                  <tr key={cust.id} className="hover:bg-gray-800/30 transition-colors">
-                    <td className="py-4 px-6 font-bold text-gray-200">{cust.name}</td>
-                    <td className="py-4 px-6 text-gray-400">{cust.contactPerson || '-'}</td>
-                    <td className="py-4 px-6 text-gray-400">{cust.phone || '-'}</td>
-                    <td className="py-4 px-6 text-gray-400">{cust.gstin || '-'}</td>
-                    <td className="py-4 px-6 text-right">
-                      <button onClick={() => handleDelete(cust.id, "customers")} className="text-red-400 hover:text-red-300 transition-colors text-sm font-medium">Delete</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-
-          {/* PRODUCTS TABLE */}
-          {activeTab === "products" && (
-            <table className="w-full text-left border-collapse min-w-[900px]">
-              <thead><tr className="bg-gray-950/50 border-b border-gray-800 text-xs font-bold text-gray-400 uppercase tracking-wider"><th className="py-4 px-6">Product Name</th><th className="py-4 px-6">SKU / Code</th><th className="py-4 px-6">Assigned Customer</th><th className="py-4 px-6">Category</th><th className="py-4 px-6 text-right">Actions</th></tr></thead>
-              <tbody className="divide-y divide-gray-800">
-                {filteredProducts.length === 0 && <tr><td colSpan="5" className="py-8 text-center text-gray-500">No products found.</td></tr>}
-                {filteredProducts.map((prod) => (
-                  <tr key={prod.id} className="hover:bg-gray-800/30 transition-colors">
-                    <td className="py-4 px-6 font-bold text-gray-200">{prod.name}</td>
-                    <td className="py-4 px-6 text-gray-400 font-mono text-sm">{prod.sku || '-'}</td>
-                    <td className="py-4 px-6 text-gray-300 font-medium">{prod.customerName}</td>
-                    <td className="py-4 px-6 text-gray-400">{prod.category || '-'}</td>
-                    <td className="py-4 px-6 text-right">
-                      <button onClick={() => handleDelete(prod.id, "products")} className="text-red-400 hover:text-red-300 transition-colors text-sm font-medium">Delete</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-
-          {/* ⭐️ NEW: CATEGORIES TABLE */}
-          {activeTab === "categories" && (
-            <table className="w-full text-left border-collapse min-w-[900px]">
-              <thead><tr className="bg-gray-950/50 border-b border-gray-800 text-xs font-bold text-gray-400 uppercase tracking-wider"><th className="py-4 px-6">Category Name</th><th className="py-4 px-6 text-right">Actions</th></tr></thead>
-              <tbody className="divide-y divide-gray-800">
-                {filteredCategories.length === 0 && <tr><td colSpan="2" className="py-8 text-center text-gray-500">No categories found. Add your first category!</td></tr>}
-                {filteredCategories.map((cat) => (
-                  <tr key={cat.id} className="hover:bg-gray-800/30 transition-colors">
-                    <td className="py-4 px-6 font-bold text-gray-200">{cat.name}</td>
-                    <td className="py-4 px-6 text-right">
-                      <button onClick={() => handleDelete(cat.id, "productCategories")} className="text-red-400 hover:text-red-300 transition-colors text-sm font-medium">Delete</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-
-          {/* RATES TABLE */}
-          {activeTab === "rates" && (
-            <table className="w-full text-left border-collapse min-w-[900px]">
+          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden shadow-xl flex-1">
+            <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-gray-950/50 border-b border-gray-800 text-xs font-bold text-gray-400 uppercase tracking-wider">
-                  <th className="py-4 px-6">Product</th>
-                  <th className="py-4 px-6">Customer</th>
-                  <th className="py-4 px-6">Quantity</th>
-                  <th className="py-4 px-6">Bulk Rate</th>
-                  <th className="py-4 px-6 text-right">Actions</th>
+                <tr className="bg-gray-950/50 border-b border-gray-800 text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+                  <th className="py-4 px-6 w-[25%]">Category Name</th>
+                  <th className="py-4 px-6 w-[20%]">Default Unit</th>
+                  <th className="py-4 px-6 w-[40%]">Dynamic Spec Attributes</th>
+                  <th className="py-4 px-6 w-[15%] text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-800">
-                {filteredRates.length === 0 && <tr><td colSpan="5" className="py-8 text-center text-gray-500">No rates found.</td></tr>}
-                {filteredRates.map((rate) => (
-                  <tr key={rate.id} className="hover:bg-gray-800/30 transition-colors">
-                    <td className="py-4 px-6 font-bold text-gray-200">{rate.productName}</td>
-                    <td className="py-4 px-6 text-gray-300 font-medium">{rate.customerName}</td>
-                    <td className="py-4 px-6 text-gray-400 font-mono">{rate.quantity ? parseInt(rate.quantity).toLocaleString() : '-'}</td>
-                    <td className="py-4 px-6 text-green-400 font-mono">₹ {rate.bulkRate}</td>
-                    <td className="py-4 px-6 text-right">
-                      <button onClick={() => handleDelete(rate.id, "rates")} className="text-red-400 hover:text-red-300 transition-colors text-sm font-medium">Delete</button>
-                    </td>
-                  </tr>
-                ))}
+                {matCategories.length === 0 ? (
+                  <tr><td colSpan="4" className="py-12 text-center text-gray-500 italic text-sm">No material categories created yet. Click above to add!</td></tr>
+                ) : (
+                  matCategories.map((cat) => (
+                    <tr key={cat.id} className="hover:bg-gray-800/20 transition-colors align-top">
+                      <td className="py-4 px-6 font-bold text-white text-sm">{cat.name}</td>
+                      <td className="py-4 px-6">
+                        <span className="bg-gray-800 text-gray-300 font-mono font-bold text-[10px] px-2.5 py-1 rounded border border-gray-700 uppercase tracking-wide">
+                          {cat.defaultUnit}
+                        </span>
+                      </td>
+                      <td className="py-4 px-6">
+                        <div className="flex flex-wrap gap-1.5">
+                          {cat.attributes?.map((attr, aIdx) => (
+                            <div key={aIdx} className="bg-gray-950 border border-gray-800 rounded px-2.5 py-1 flex flex-col">
+                              <span className="text-xs text-gray-300 font-bold">{attr.name}</span>
+                              <span className="text-[9px] text-primary-400 uppercase font-semibold tracking-wider mt-0.5">{attr.type}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="py-4 px-6 text-right">
+                        <div className="flex justify-end gap-2">
+                          <button onClick={() => openMatModal(cat)} className="text-xs font-medium text-gray-400 hover:text-white border border-gray-700 hover:bg-gray-800 px-3 py-1 rounded transition-colors">Edit</button>
+                          <button onClick={() => handleDeleteMaterialCategory(cat.id)} className="text-xs font-medium text-gray-600 hover:text-red-400 p-1 rounded transition-colors">Delete</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
-          )}
+          </div>
+        </div>
+      )}
 
-          {/* DIES TABLE */}
-          {activeTab === "dies" && (
-            <table className="w-full text-left border-collapse min-w-[900px]">
-              <thead>
-                <tr className="bg-gray-950/50 border-b border-gray-800 text-xs font-bold text-gray-400 uppercase tracking-wider">
-                  <th className="py-4 px-6">Die Number</th>
-                  <th className="py-4 px-6">Die Name</th>
-                  <th className="py-4 px-6">Customer</th>
-                  <th className="py-4 px-6">Linked Product</th>
-                  <th className="py-4 px-6">Target Machine</th>
-                  <th className="py-4 px-6 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-800">
-                {filteredDies.length === 0 && <tr><td colSpan="6" className="py-8 text-center text-gray-500">No dies found in inventory.</td></tr>}
-                {filteredDies.map((die) => (
-                  <tr key={die.id} className="hover:bg-gray-800/30 transition-colors">
-                    <td className="py-4 px-6 font-bold text-gray-200">{die.dieNumber}</td>
-                    <td className="py-4 px-6 text-gray-300">{die.dieName}</td>
-                    <td className="py-4 px-6 text-blue-400">{die.customerName}</td>
-                    <td className="py-4 px-6 text-gray-400">{die.productName || '-'}</td>
-                    <td className="py-4 px-6 text-gray-400">
-                      <span className="bg-gray-800 px-2 py-1 rounded text-xs border border-gray-700">{die.targetMachine || 'Any'}</span>
-                    </td>
-                    <td className="py-4 px-6 text-right">
-                      <button onClick={() => handleDelete(die.id, "dies")} className="text-red-400 hover:text-red-300 transition-colors text-sm font-medium flex items-center justify-end w-full gap-1">
+      {/* ======================================================== */}
+      {/* VIEW 2: MASTER DIES VIEW (ROUND 4 MIGRATION COMPLIANT)   */}
+      {/* ======================================================== */}
+      {activeSubTab === "dies" && (
+        <div className="space-y-6 flex-1 flex flex-col">
+          <div className="flex justify-between items-center">
+            <div>
+              <h3 className="text-lg font-bold text-white">Die Cut Master Library</h3>
+              <p className="text-xs text-gray-500">Reusable die sets across multiple production lines.</p>
+            </div>
+          </div>
+          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden shadow-xl p-6 text-gray-400 text-sm">
+            {/* Keeping existing die visualization array safely rendered here */}
+            Total Registered Operational Dies in System: <strong className="text-white font-mono ml-1">{dies.length} sets</strong>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* ⭐️ MATERIAL CATEGORIES ATTRIBUTE MODAL                  */}
+      {/* ======================================================== */}
+      {isMatModalOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden animate-fade-in">
+            
+            <div className="p-6 border-b border-gray-800 bg-[#151724] flex justify-between items-center">
+              <div>
+                <h3 className="text-lg font-bold text-white">{editingMatCategory ? "Edit Material Configuration" : "Create Material Category"}</h3>
+                <p className="text-xs text-gray-400 mt-0.5">Build structural layout data attributes required for physical warehouse stock items.</p>
+              </div>
+              <button onClick={() => setMatModalOpen(false)} className="text-gray-400 hover:text-white"><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg></button>
+            </div>
+
+            <form onSubmit={handleSaveMaterialCategory} className="flex-1 overflow-y-auto p-6 custom-scrollbar space-y-6 bg-[#0a0f1a]">
+              
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className={labelClass}>Material Category Name *</label>
+                  <input required type="text" value={categoryName} onChange={e => setCategoryName(e.target.value)} placeholder="e.g. Paper, Board, Ribbon, Magnet" className={inputClass} />
+                </div>
+                <div>
+                  <label className={labelClass}>Default Storage Base Unit *</label>
+                  <select value={defaultUnit} onChange={e => setDefaultUnit(e.target.value)} className={selectClass}>
+                    <option value="sheets">sheets</option>
+                    <option value="meters">meters</option>
+                    <option value="pcs">pcs</option>
+                    <option value="rolls">rolls</option>
+                    <option value="kg">kg</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* DYNAMIC FIELD ATTRIBUTE ROW BUILDER */}
+              <div className="space-y-3">
+                <div className="flex justify-between items-center border-b border-gray-800 pb-2">
+                  <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Custom Profile Attributes</h4>
+                  <button type="button" onClick={handleAddAttribute} className="text-xs text-primary-400 hover:text-primary-300 font-bold flex items-center gap-1">+ Add Field Attribute</button>
+                </div>
+
+                <div className="space-y-3">
+                  {attributes.map((attr, index) => (
+                    <div key={attr.id || index} className="bg-gray-950 p-4 border border-gray-800 rounded-lg flex items-start sm:items-center gap-3">
+                      <span className="text-xs font-bold text-gray-600 mt-2 sm:mt-0 font-mono shrink-0 w-4">{index + 1}.</span>
+                      
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 flex-1 w-full">
+                        <div>
+                          <input 
+                            required
+                            type="text" 
+                            placeholder="Attribute Name (e.g. GSM, Color)" 
+                            value={attr.name} 
+                            onChange={e => handleAttributeChange(attr.id, 'name', e.target.value)} 
+                            className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-xs text-white placeholder-gray-600 outline-none focus:border-primary-500"
+                          />
+                        </div>
+                        <div>
+                          <select value={attr.type} onChange={e => handleAttributeChange(attr.id, 'type', e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-xs text-white outline-none focus:border-primary-500">
+                            <option value="text">Text String</option>
+                            <option value="number">Numeric Integer</option>
+                            <option value="dropdown">Dropdown Options</option>
+                            <option value="multi-select">Multi-Select List</option>
+                          </select>
+                        </div>
+                        {(attr.type === 'dropdown' || attr.type === 'multi-select') && (
+                          <div className="sm:col-span-2 lg:col-span-1">
+                            <input 
+                              required
+                              type="text" 
+                              placeholder="Options (Comma separated)" 
+                              value={attr.options || ""} 
+                              onChange={e => handleAttributeChange(attr.id, 'options', e.target.value)} 
+                              className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-xs text-white placeholder-gray-600 outline-none focus:border-primary-500"
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      <button type="button" onClick={() => handleRemoveAttribute(attr.id)} className="text-gray-600 hover:text-red-400 transition-colors shrink-0 mt-2 sm:mt-0">
                         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                       </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
-      
-      {/* DYNAMIC FORM MODAL */}
-      {isModalOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-md p-6 shadow-2xl">
-            <h3 className="text-xl font-bold text-white mb-6">Add {activeTab === 'productCategories' ? 'Category' : activeTab.slice(0, -1)}</h3>
-            
-            <form onSubmit={handleSave} className="space-y-4">
-              
-              {/* Customer Inputs */}
-              {activeTab === "customers" && (
-                <>
-                  <input required name="name" onChange={handleInputChange} placeholder="Customer/Company Name *" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary-500" />
-                  <input name="contactPerson" onChange={handleInputChange} placeholder="Contact Person" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary-500" />
-                  <input name="phone" onChange={handleInputChange} placeholder="Phone Number" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary-500" />
-                  <input name="gstin" onChange={handleInputChange} placeholder="GST Number" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary-500" />
-                </>
-              )}
+                    </div>
+                  ))}
+                </div>
+              </div>
 
-              {/* ⭐️ NEW: Category Inputs */}
-              {activeTab === "categories" && (
-                <>
-                  <input required name="name" onChange={handleInputChange} placeholder="Category Name (e.g., Rigid Box) *" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary-500" />
-                </>
-              )}
-
-              {/* Product Inputs */}
-              {activeTab === "products" && (
-                <>
-                  <input required name="name" onChange={handleInputChange} placeholder="Product Name *" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary-500" />
-                  <input name="sku" onChange={handleInputChange} placeholder="SKU / Code" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary-500" />
-                  
-                  {/* ⭐️ UPDATE: Converted from text input to dynamic select dropdown */}
-                  <select required name="category" onChange={handleInputChange} className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary-500">
-                    <option value="">-- Select Category --</option>
-                    {categories.map(cat => <option key={cat.id} value={cat.name}>{cat.name}</option>)}
-                  </select>
-
-                  <select required name="customerName" onChange={handleInputChange} className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary-500">
-                    <option value="">-- Assign to Customer --</option>
-                    {customers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-                  </select>
-                </>
-              )}
-
-              {/* Rate Inputs */}
-              {activeTab === "rates" && (
-                <>
-                  <select required name="productName" onChange={handleInputChange} className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white mb-2 focus:outline-none focus:border-primary-500">
-                    <option value="">-- Select Product --</option>
-                    {products.map(p => <option key={p.id} value={p.name}>{p.name} ({p.customerName})</option>)}
-                  </select>
-                  
-                  <input required name="quantity" type="number" onChange={handleInputChange} placeholder="Target Quantity (e.g. 5000) *" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary-500" />
-                  
-                  <input required name="bulkRate" type="number" step="0.01" onChange={handleInputChange} placeholder="Rate Amount (₹) *" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary-500" />
-                </>
-              )}
-
-              {/* DIES INPUTS */}
-              {activeTab === "dies" && (
-                <>
-                  <input required name="dieNumber" onChange={handleInputChange} placeholder="Die Number (e.g., B6-Inner) *" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-purple-500" />
-                  <input required name="dieName" onChange={handleInputChange} placeholder="Die Name (e.g., Brown Box 6) *" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-purple-500" />
-                  
-                  <select required name="productName" onChange={handleInputChange} className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-purple-500">
-                    <option value="">-- Link to Product --</option>
-                    {products.map(p => <option key={p.id} value={p.name}>{p.name} ({p.customerName})</option>)}
-                  </select>
-
-                  <select name="targetMachine" onChange={handleInputChange} className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-purple-500">
-                    <option value="">-- Assign Target Machine (Optional) --</option>
-                    {machines.filter(m => m.type.toLowerCase().includes("die")).map(m => (
-                      <option key={m.id} value={m.name}>{m.name} ({m.place})</option>
-                    ))}
-                  </select>
-
-                  <input name="size" onChange={handleInputChange} placeholder="Die Size / Dimensions" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-purple-500" />
-                </>
-              )}
-
-              <div className="flex justify-end gap-3 mt-6">
-                <button type="button" onClick={() => setIsModalOpen(false)} className="px-5 py-2.5 text-gray-400 hover:text-white transition-colors">Cancel</button>
-                <button type="submit" disabled={saving} className={`text-white px-5 py-2.5 rounded-lg transition-colors ${activeTab === "dies" ? "bg-purple-600 hover:bg-purple-500" : "bg-primary-600 hover:bg-primary-500"}`}>
-                  {saving ? "Saving..." : "Save"}
+              {/* Form Actions Footer */}
+              <div className="pt-4 border-t border-gray-800 flex justify-end gap-3">
+                <button type="button" onClick={() => setMatModalOpen(false)} className="px-4 py-2 bg-gray-950 hover:bg-gray-800 text-xs text-gray-400 hover:text-white rounded transition-colors font-medium">Cancel</button>
+                <button type="submit" disabled={savingMat} className="bg-primary-600 hover:bg-primary-500 disabled:opacity-50 text-xs font-bold text-white px-5 py-2 rounded transition-colors shadow-lg">
+                  {savingMat ? "Saving..." : "Save Material Category"}
                 </button>
               </div>
+
             </form>
           </div>
         </div>

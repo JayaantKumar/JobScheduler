@@ -1,6 +1,9 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useJobs } from "../hooks/useJobs";
 import ExportDataButton from "../components/ExportDataButton"; 
+import { collection, onSnapshot } from "firebase/firestore";
+import { db } from "../firebase/config";
+import { useNavigate } from "react-router-dom";
 
 const parseDate = (val) => {
   if (!val) return new Date();
@@ -40,8 +43,27 @@ const getNextWeekDays = () => {
 
 export default function DashboardHome() {
   const { jobs, loading } = useJobs();
+  const navigate = useNavigate();
   const nextWeekDays = useMemo(() => getNextWeekDays(), []);
   const [selectedNextDay, setSelectedNextDay] = useState(nextWeekDays[0].toISOString().split('T')[0]); 
+
+  // ⭐️ ROUND 4: LOW STOCK TRACKER
+  const [lowStockCount, setLowStockCount] = useState(0);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "inventoryItems"), (snap) => {
+      let count = 0;
+      snap.forEach(doc => {
+        const item = doc.data();
+        // Check if item has a minimum threshold and has fallen below it
+        if (item.minStock > 0 && (item.balance || 0) <= item.minStock) {
+          count++;
+        }
+      });
+      setLowStockCount(count);
+    });
+    return () => unsub();
+  }, []);
 
   if (loading) return <div className="p-8 text-primary-500 animate-pulse font-medium">Loading Dashboard Data...</div>;
 
@@ -67,15 +89,14 @@ export default function DashboardHome() {
           <p className="text-sm sm:text-base text-gray-400 mt-1">High-level overview of current production targets.</p>
         </div>
         <div className="w-full sm:w-auto flex">
-          {/* We wrap the export button to ensure it can stretch on mobile if needed */}
           <div className="w-full sm:w-auto [&>button]:w-full [&>button]:justify-center">
             <ExportDataButton />
           </div>
         </div>
       </div>
 
-      {/* KPI GRID (Adjusted for mobile sizes) */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
+      {/* ⭐️ KPI GRID (Updated to 6 columns for the Inventory Tracker) */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 sm:p-5 shadow-lg flex flex-col">
           <span className="text-gray-500 text-[10px] sm:text-xs font-bold uppercase tracking-wider mb-1 truncate">Active Jobs</span>
           <span className="text-2xl sm:text-3xl font-black text-white">{activeJobs.length}</span>
@@ -92,9 +113,18 @@ export default function DashboardHome() {
           <span className="text-gray-500 text-[10px] sm:text-xs font-bold uppercase tracking-wider mb-1 truncate">Due This Wk</span>
           <span className="text-2xl sm:text-3xl font-black text-primary-400">{completingThisWeek.length}</span>
         </div>
-        <div className="bg-red-950/20 border border-red-900/50 rounded-xl p-4 sm:p-5 shadow-lg flex flex-col col-span-2 sm:col-span-1 lg:col-span-1">
+        <div className="bg-red-950/20 border border-red-900/50 rounded-xl p-4 sm:p-5 shadow-lg flex flex-col">
           <span className="text-red-400/80 text-[10px] sm:text-xs font-bold uppercase tracking-wider mb-1 truncate">Overdue</span>
           <span className="text-2xl sm:text-3xl font-black text-red-500">{overdueJobs.length}</span>
+        </div>
+        
+        {/* ⭐️ NEW INVENTORY LOW STOCK ALERT CARD */}
+        <div 
+          onClick={() => navigate("/dashboard/inventory-management")}
+          className="bg-yellow-950/20 border border-yellow-900/50 rounded-xl p-4 sm:p-5 shadow-lg flex flex-col cursor-pointer hover:bg-yellow-950/40 transition-colors group"
+        >
+          <span className="text-yellow-500/80 text-[10px] sm:text-xs font-bold uppercase tracking-wider mb-1 truncate group-hover:text-yellow-400 transition-colors">Low Stock Alerts</span>
+          <span className="text-2xl sm:text-3xl font-black text-yellow-500">{lowStockCount}</span>
         </div>
       </div>
 

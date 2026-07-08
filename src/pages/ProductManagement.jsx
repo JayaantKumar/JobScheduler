@@ -32,9 +32,12 @@ export default function ProductManagement() {
 
   const [isProduceModalOpen, setProduceModalOpen] = useState(false);
   const [activeProduceProduct, setActiveProduceProduct] = useState(null);
-  const [produceQty, setProduceQty] = useState(""); // This is now SETS qty
+  const [produceQty, setProduceQty] = useState(""); 
   const [produceDate, setProduceDate] = useState("");
   const [producing, setProducing] = useState(false);
+  
+  // ⭐️ ROUND 5: Editable Produce Engine State
+  const [produceParts, setProduceParts] = useState([]);
 
   // --- FORM STATES FOR MULTI-PART TEMPLATE ---
   const [name, setName] = useState("");
@@ -42,13 +45,12 @@ export default function ProductManagement() {
   const [category, setCategory] = useState("");
   const [customerName, setCustomerName] = useState("");
   
-  // ⭐️ NEW: Master Parts Array replaces flat material/routing fields
   const defaultSequence = () => ({ id: Date.now(), process_name: "", assigned_machine: "", process_details: {}, remarks: "" });
   const defaultPart = (partName = "Main Product") => ({
     id: Date.now() + Math.random(),
     part_name: partName,
     qty_per_set: 1,
-    size: "", paperType: "", paperGsm: "", sheet_size: "", customMaterial: "",
+    size: "", paperType: "", paperGsm: "", sheet_size: "", cut_size: "", customMaterial: "", // ⭐️ ROUND 5: Added cut_size
     sequence: [defaultSequence()]
   });
 
@@ -75,7 +77,6 @@ export default function ProductManagement() {
       setCategory(prod.category || prod.type || "");
       setCustomerName(prod.customerName || "");
       
-      // ⭐️ MIGRATION: Load existing parts, or auto-convert old v1 products to multi-part format
       if (prod.parts && prod.parts.length > 0) {
         setParts(prod.parts.map(p => ({
           ...p,
@@ -91,6 +92,7 @@ export default function ProductManagement() {
           paperType: prod.paperType || prod.material || "",
           paperGsm: prod.paperGsm || prod.gsm || "",
           sheet_size: prod.sheet_size || "",
+          cut_size: prod.cut_size || "",
           customMaterial: prod.customMaterial || "",
           sequence: prod.default_sequence?.length > 0 ? prod.default_sequence : [defaultSequence()]
         }]);
@@ -103,39 +105,112 @@ export default function ProductManagement() {
     setModalOpen(true);
   };
 
+  // --- ⭐️ ROUND 5: Editable Produce Engine Builders ---
+  const generateProduceParts = (qtyStr, baseParts) => {
+    const sets = Number(qtyStr) || 0;
+    return baseParts.map(p => {
+       const mult = Number(p.qty_per_set) || 1;
+       const computedPcs = sets * mult;
+       return {
+          id: p.id,
+          part_name: p.part_name,
+          original_multiplier: mult,
+          active_multiplier: mult,
+          is_custom_override: false,
+          final_pcs: computedPcs,
+          expanded: false,
+          sequence: (p.sequence || []).map(s => ({ ...s, input_qty: computedPcs, output_qty: computedPcs }))
+       };
+    });
+  };
+
   const openProduceModal = (prod) => {
-    // Ensure product has parts formatted correctly for the preview
     const formattedProd = { ...prod };
     if (!formattedProd.parts) {
-      formattedProd.parts = [{
-        part_name: prod.name,
-        qty_per_set: 1,
-        sequence: prod.default_sequence || []
-      }];
+      formattedProd.parts = [{ part_name: prod.name, qty_per_set: 1, sequence: prod.default_sequence || [] }];
     }
-    
     setActiveProduceProduct(formattedProd);
     setProduceQty("");
+    setProduceParts([]); // Cleared until user types sets
     const defaultDate = new Date();
     defaultDate.setDate(defaultDate.getDate() + 14);
     setProduceDate(defaultDate.toISOString().split('T')[0]);
     setProduceModalOpen(true);
   };
 
+  const handleProduceQtyChange = (e) => {
+    const val = e.target.value;
+    setProduceQty(val);
+    if (activeProduceProduct) {
+      // Whenever master sets changes, recalculate all parts safely
+      setProduceParts(generateProduceParts(val, activeProduceProduct.parts));
+    }
+  };
+
+  const updatePartMultiplier = (pIdx, newMult) => {
+    setProduceParts(prev => {
+       const copy = [...prev];
+       const sets = Number(produceQty) || 0;
+       copy[pIdx].active_multiplier = Number(newMult);
+       copy[pIdx].is_custom_override = false;
+       copy[pIdx].final_pcs = sets * Number(newMult);
+       // Reset sequence cascading
+       copy[pIdx].sequence = copy[pIdx].sequence.map(s => ({...s, input_qty: copy[pIdx].final_pcs, output_qty: copy[pIdx].final_pcs}));
+       return copy;
+    });
+  };
+
+  const toggleCustomOverride = (pIdx, checked) => {
+    setProduceParts(prev => {
+       const copy = [...prev];
+       copy[pIdx].is_custom_override = checked;
+       if (!checked) {
+         // Revert to active multiplier math
+         copy[pIdx].final_pcs = (Number(produceQty) || 0) * copy[pIdx].active_multiplier;
+         copy[pIdx].sequence = copy[pIdx].sequence.map(s => ({...s, input_qty: copy[pIdx].final_pcs, output_qty: copy[pIdx].final_pcs}));
+       }
+       return copy;
+    });
+  };
+
+  const updatePartCustomPcs = (pIdx, newPcs) => {
+    setProduceParts(prev => {
+       const copy = [...prev];
+       copy[pIdx].final_pcs = Number(newPcs);
+       copy[pIdx].sequence = copy[pIdx].sequence.map(s => ({...s, input_qty: copy[pIdx].final_pcs, output_qty: copy[pIdx].final_pcs}));
+       return copy;
+    });
+  };
+
+  const handleStepQtyChange = (pIdx, sIdx, field, val) => {
+    setProduceParts(prev => {
+        const copy = [...prev];
+        const pCopy = {...copy[pIdx]};
+        const seqCopy = [...pCopy.sequence];
+        const num = Number(val);
+        
+        seqCopy[sIdx] = {...seqCopy[sIdx], [field]: num};
+        
+        // ⭐️ ROUND 5: Cascade Chaining Logic
+        if (field === 'output_qty') {
+            let cascadedOut = num;
+            for (let i = sIdx + 1; i < seqCopy.length; i++) {
+                seqCopy[i] = {...seqCopy[i], input_qty: cascadedOut, output_qty: cascadedOut};
+            }
+        }
+        
+        pCopy.sequence = seqCopy;
+        copy[pIdx] = pCopy;
+        return copy;
+    });
+  };
+
   // --- MULTI-PART STATE HANDLERS ---
   const handleAddPart = () => setParts([...parts, defaultPart(`Part ${parts.length + 1}`)]);
   const handleRemovePart = (id) => parts.length > 1 && setParts(parts.filter(p => p.id !== id));
-  
-  const updatePartField = (partId, field, val) => {
-    setParts(parts.map(p => p.id === partId ? { ...p, [field]: val } : p));
-  };
-
-  const handleSequenceAdd = (partId) => {
-    setParts(parts.map(p => p.id === partId ? { ...p, sequence: [...p.sequence, defaultSequence()] } : p));
-  };
-  const handleSequenceRemove = (partId, stepId) => {
-    setParts(parts.map(p => p.id === partId ? { ...p, sequence: p.sequence.filter(s => s.id !== stepId) } : p));
-  };
+  const updatePartField = (partId, field, val) => setParts(parts.map(p => p.id === partId ? { ...p, [field]: val } : p));
+  const handleSequenceAdd = (partId) => setParts(parts.map(p => p.id === partId ? { ...p, sequence: [...p.sequence, defaultSequence()] } : p));
+  const handleSequenceRemove = (partId, stepId) => setParts(parts.map(p => p.id === partId ? { ...p, sequence: p.sequence.filter(s => s.id !== stepId) } : p));
   const handleSequenceChange = (partId, stepId, field, val) => {
     setParts(parts.map(p => {
       if (p.id === partId) {
@@ -161,14 +236,9 @@ export default function ProductManagement() {
   const handleSave = async (e) => {
     e.preventDefault();
     setSaving(true);
-    
-    // Clean up empty sequences before saving
     const cleanParts = parts.map(part => ({
       ...part,
-      sequence: part.sequence.filter(s => s.process_name.trim() !== "").map((s, idx) => ({
-        ...s,
-        step_order: idx + 1
-      }))
+      sequence: part.sequence.filter(s => s.process_name.trim() !== "").map((s, idx) => ({ ...s, step_order: idx + 1 }))
     }));
 
     const payload = {
@@ -179,7 +249,6 @@ export default function ProductManagement() {
 
     try {
       let savedProdData = { ...payload };
-
       if (editingProduct) {
         await updateDoc(doc(db, "products", editingProduct.id), payload);
         savedProdData.id = editingProduct.id;
@@ -187,10 +256,8 @@ export default function ProductManagement() {
         const docRef = await addDoc(collection(db, "products"), { ...payload, created_at: serverTimestamp() });
         savedProdData.id = docRef.id; 
       }
-      
       setModalOpen(false); 
       openProduceModal(savedProdData); 
-
     } catch (error) { alert("Error saving product: " + error.message); } 
     finally { setSaving(false); }
   };
@@ -202,31 +269,26 @@ export default function ProductManagement() {
     }
   };
 
-  // --- ⭐️ THE MULTI-PART JOB ENGINE ---
   const handleQuickProduce = async (e) => {
     e.preventDefault();
     if (!produceQty || !produceDate) return alert("Please enter sets quantity and due date.");
-
     setProducing(true);
-    const targetSetsQty = Number(produceQty);
     
-    // 1. Generate the linking Set Code (e.g. 8F3K2)
     const set_code = Math.random().toString(36).substring(2, 8).toUpperCase();
     const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
     try {
-      // 2. Loop through every part in the product and generate an independent Job Card
-      for (let i = 0; i < activeProduceProduct.parts.length; i++) {
-        const part = activeProduceProduct.parts[i];
+      // ⭐️ ROUND 5: Loop the dynamically overridden produceParts
+      for (let i = 0; i < produceParts.length; i++) {
+        const pState = produceParts[i];
+        const masterPart = activeProduceProduct.parts.find(p => p.id === pState.id) || activeProduceProduct.parts[i];
         
-        // Safety check
-        if (!part.sequence || part.sequence.length === 0) continue;
+        if (!pState.sequence || pState.sequence.length === 0) continue;
 
-        const cardQty = targetSetsQty * (Number(part.qty_per_set) || 1);
         const partLetter = letters[i] || `P${i+1}`;
         const display_id = `JOB-${set_code}-${partLetter}`;
 
-        const final_process_sequence = part.sequence.map((step, index) => {
+        const final_process_sequence = pState.sequence.map((step, index) => {
           const assignedMach = machines.find(m => m.id === step.assigned_machine);
           const processData = dbProcesses.find(p => p.processName === step.process_name);
           let instructionsArray = [];
@@ -238,7 +300,6 @@ export default function ProductManagement() {
               }
             });
           }
-
           let instructions = instructionsArray.join(" | ");
           if (step.remarks && step.remarks.trim() !== "") {
             instructions = instructions ? `${instructions} | REMARKS: ${step.remarks}` : `REMARKS: ${step.remarks}`;
@@ -249,8 +310,8 @@ export default function ProductManagement() {
             process_id: `sys_proc_${index}`,
             process_name: step.process_name || "Unassigned Process",
             status: "pending",
-            input_qty: cardQty,
-            output_qty: cardQty,
+            input_qty: step.input_qty || pState.final_pcs, // ⭐️ Captured chained overrides
+            output_qty: step.output_qty || pState.final_pcs, // ⭐️ Captured chained overrides
             remarks: instructions, 
             process_details: step.process_details || {}, 
             assigned_machine_id: step.assigned_machine || null,
@@ -259,34 +320,40 @@ export default function ProductManagement() {
         });
 
         const newJobPayload = {
-          title: `${activeProduceProduct.name} - ${part.part_name || "Part"}`,
+          title: `${activeProduceProduct.name} - ${masterPart.part_name || "Part"}`,
           customer: activeProduceProduct.customerName || "Unknown",
           priority: "normal",
           job_date: new Date().toISOString(),
           
-          // ⭐️ NEW LINKING DATA
           set_code: set_code,
           display_id: display_id,
-          part_name: part.part_name || "Main Part",
+          part_name: masterPart.part_name || "Main Part",
           part_index: i + 1,
           parts_total: activeProduceProduct.parts.length,
-          sets_qty: targetSetsQty,
-          qty_per_set: Number(part.qty_per_set) || 1,
+          sets_qty: Number(produceQty),
+          
+          // ⭐️ ROUND 5: Passing custom math variables
+          qty_per_set: pState.original_multiplier,
+          active_multiplier: pState.active_multiplier,
+          is_custom_override: pState.is_custom_override,
+          quantity_target: pState.final_pcs,
           
           product: {
             id: activeProduceProduct.id, 
             name: activeProduceProduct.name, 
             sku: activeProduceProduct.sku || "",
             category: activeProduceProduct.category || "", 
-            // Save part-specific material specs to the card
-            size: part.size || "", 
-            material: part.paperType || part.material || "", 
-            gsm: part.paperGsm || part.gsm || "",
-            sheet_size: part.sheet_size || "", 
-            customMaterial: part.customMaterial || ""
+            size: masterPart.size || "", 
+            material: masterPart.paperType || masterPart.material || "", 
+            gsm: masterPart.paperGsm || masterPart.gsm || "",
+            sheet_size: masterPart.sheet_size || "", 
+            customMaterial: masterPart.customMaterial || ""
           },
-          specifications: { size_before_cut: "", size_after_cut: "", paper_company: "" },
-          quantity_target: cardQty, 
+          specifications: { 
+             size_before_cut: masterPart.sheet_size || "", 
+             size_after_cut: masterPart.cut_size || "", // ⭐️ Mapped Cut Size
+             paper_company: "" 
+          },
           quantity_completed: 0, 
           deadline: new Date(produceDate).toISOString(),
           status: "pending", 
@@ -298,7 +365,7 @@ export default function ProductManagement() {
       }
 
       setProduceModalOpen(false);
-      alert("Success! Multi-part job cards have been generated and pushed to the floor.");
+      alert("Success! Multi-part job cards have been generated with accurate transforming quantities.");
     } catch (error) { 
       alert("Failed to generate multi-part jobs: " + error.message); 
     } finally { 
@@ -394,15 +461,7 @@ export default function ProductManagement() {
                 <tr><td colSpan="4" className="py-12 text-center text-gray-500">No products found.</td></tr>
               ) : (
                 filteredProducts.map((prod) => {
-                  // Fallback for visual render of older products without the 'parts' array
-                  const displayParts = prod.parts?.length > 0 ? prod.parts : [{
-                    part_name: prod.name,
-                    qty_per_set: 1,
-                    paperType: prod.paperType || prod.material,
-                    paperGsm: prod.paperGsm || prod.gsm,
-                    sequence: prod.default_sequence || []
-                  }];
-
+                  const displayParts = prod.parts?.length > 0 ? prod.parts : [{ part_name: prod.name, qty_per_set: 1, paperType: prod.paperType || prod.material, paperGsm: prod.paperGsm || prod.gsm, sequence: prod.default_sequence || [] }];
                   return (
                     <tr key={prod.id} className="hover:bg-gray-800/30 transition-colors align-top">
                       <td className="py-4 px-6">
@@ -463,58 +522,105 @@ export default function ProductManagement() {
         </div>
       </div>
 
-      {/* --- 🚀 THE QUICK PRODUCE MODAL (MULTI-PART ENABLED) --- */}
+      {/* --- 🚀 THE QUICK PRODUCE MODAL (ROUND 5 ADVANCED MATH) --- */}
       {isProduceModalOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-900 border border-primary-500/30 rounded-xl w-full max-w-md p-6 shadow-2xl shadow-primary-500/10">
-            <div className="flex items-center gap-3 mb-2">
-              <span className="text-2xl">🚀</span>
-              <h3 className="text-xl font-bold text-white">Generate Multi-Part Job</h3>
-            </div>
-            <p className="text-sm text-gray-400 mb-6">Instantly push <strong className="text-white">{activeProduceProduct?.name}</strong> to the factory floor.</p>
+          <div className="bg-gray-900 border border-primary-500/30 rounded-xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl shadow-primary-500/10">
             
-            <form onSubmit={handleQuickProduce} className="space-y-4">
-              <div>
-                <label className="block text-sm font-bold text-primary-400 mb-1">Target SETS to Manufacture *</label>
-                <input required type="number" value={produceQty} onChange={e => setProduceQty(e.target.value)} placeholder="e.g. 5000 sets" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-3 text-lg font-bold text-white focus:outline-none focus:border-primary-500" />
+            <div className="p-6 border-b border-gray-800 bg-[#151724] shrink-0">
+              <div className="flex items-center gap-3 mb-2">
+                <span className="text-2xl">🚀</span>
+                <h3 className="text-xl font-bold text-white">Generate Job Set</h3>
+              </div>
+              <p className="text-sm text-gray-400">Push <strong className="text-white">{activeProduceProduct?.name}</strong> to the floor. Edit quantities below if transforming materials.</p>
+            </div>
+            
+            <form onSubmit={handleQuickProduce} className="p-6 overflow-y-auto custom-scrollbar flex-1 space-y-6">
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-bold text-primary-400 mb-1">Target SETS to Manufacture *</label>
+                  <input required type="number" value={produceQty} onChange={handleProduceQtyChange} placeholder="e.g. 5000 sets" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-3 text-lg font-bold text-white focus:outline-none focus:border-primary-500" />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-gray-400 mb-1">Expected Deadline (Entire Set) *</label>
+                  <input required type="date" value={produceDate} onChange={e => setProduceDate(e.target.value)} className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-3 text-lg text-white focus:outline-none focus:border-primary-500 [color-scheme:dark]" />
+                </div>
               </div>
               
-              {/* ⭐️ PREVIEW MATH GENERATOR */}
-              {produceQty > 0 && activeProduceProduct?.parts && (
-                <div className="bg-black/50 border border-gray-800 p-4 rounded-lg">
-                  <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 border-b border-gray-800 pb-1">Job Cards to be generated:</h4>
-                  <ul className="space-y-2">
-                    {activeProduceProduct.parts.map((p, i) => {
-                      const computedQty = (Number(produceQty) || 0) * (Number(p.qty_per_set) || 1);
-                      return (
-                        <li key={i} className="text-sm text-gray-300 flex justify-between items-center bg-gray-900 p-2 rounded">
-                          <div>
-                            <span className="font-mono text-primary-500 font-bold mr-2">Part {String.fromCharCode(65 + i)}</span> 
-                            {p.part_name || "Main"}
+              {/* ⭐️ ROUND 5: EDITABLE PARTS LOOP */}
+              {produceQty > 0 && produceParts.length > 0 && (
+                <div className="space-y-4">
+                  <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider border-b border-gray-800 pb-2">Custom Quantities & Routing</h4>
+                  {produceParts.map((p, pIdx) => (
+                    <div key={p.id} className="bg-gray-950 border border-gray-800 p-4 rounded-lg">
+                      
+                      <div className="flex justify-between items-center mb-3">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-primary-500 font-bold bg-primary-500/10 px-2 py-0.5 rounded text-xs">Part {String.fromCharCode(65 + pIdx)}</span>
+                          <span className="text-white font-bold">{p.part_name}</span>
+                        </div>
+                        <button type="button" onClick={() => setProduceParts(prev => { const copy = [...prev]; copy[pIdx].expanded = !copy[pIdx].expanded; return copy; })} className="text-xs text-gray-400 hover:text-white bg-gray-900 px-3 py-1 rounded border border-gray-700">
+                          {p.expanded ? 'Close Steps' : 'Edit Transforming Qtys'}
+                        </button>
+                      </div>
+
+                      <div className="flex flex-wrap gap-4 items-end bg-gray-900 p-3 rounded border border-gray-800">
+                        <div>
+                          <label className="block text-[10px] uppercase text-gray-500 font-bold mb-1">Multiplier (per set)</label>
+                          <input type="number" step="any" value={p.active_multiplier} onChange={e => updatePartMultiplier(pIdx, e.target.value)} className="w-24 bg-gray-950 border border-gray-700 rounded px-3 py-1.5 text-xs text-white" disabled={p.is_custom_override} />
+                        </div>
+                        <div className="text-gray-500 font-bold mb-1.5 text-xs">OR</div>
+                        <div>
+                          <label className="block text-[10px] uppercase text-primary-400 font-bold mb-1">Override Direct Pcs</label>
+                          <div className="flex items-center gap-2">
+                            <input type="checkbox" checked={p.is_custom_override} onChange={e => toggleCustomOverride(pIdx, e.target.checked)} className="rounded bg-gray-900 border-gray-700" />
+                            <input type="number" step="any" value={p.is_custom_override ? p.final_pcs : ""} onChange={e => updatePartCustomPcs(pIdx, e.target.value)} disabled={!p.is_custom_override} className="w-28 bg-gray-950 border border-gray-700 rounded px-3 py-1.5 text-xs text-white disabled:opacity-50" placeholder="Custom Pcs" />
                           </div>
-                          <div className="text-right">
-                            <span className="font-bold text-white">{computedQty.toLocaleString()} pcs</span>
-                            <div className="text-[10px] text-gray-500">({p.qty_per_set} x {produceQty} sets)</div>
+                        </div>
+                        <div className="ml-auto text-right">
+                          <div className="text-[10px] text-gray-500 uppercase font-bold">Generated Output</div>
+                          <div className="text-xl font-black text-white">{p.final_pcs.toLocaleString()} pcs</div>
+                        </div>
+                      </div>
+
+                      {p.expanded && (
+                        <div className="mt-4 border-t border-gray-800 pt-4 space-y-2">
+                          <div className="flex justify-between items-center mb-2">
+                            <h4 className="text-[10px] uppercase text-gray-500 font-bold">Process Level In/Out (Chained)</h4>
                           </div>
-                        </li>
-                      );
-                    })}
-                  </ul>
+                          {p.sequence.map((step, sIdx) => (
+                            <div key={sIdx} className="flex flex-wrap sm:flex-nowrap items-center gap-3 bg-gray-900 p-2.5 rounded border border-gray-800">
+                              <span className="text-xs text-gray-500 font-mono font-bold w-4">{sIdx+1}.</span>
+                              <span className="text-xs font-bold text-gray-300 w-full sm:w-48 truncate" title={step.process_name}>{step.process_name}</span>
+                              <div className="flex items-center gap-2 w-full sm:w-auto">
+                                <div className="flex items-center gap-1 bg-gray-950 px-2 py-1 rounded border border-gray-700">
+                                  <span className="text-[10px] text-gray-500 uppercase font-bold w-6">In:</span>
+                                  <input type="number" step="any" value={step.input_qty} onChange={e => handleStepQtyChange(pIdx, sIdx, 'input_qty', e.target.value)} className="w-20 sm:w-24 bg-transparent outline-none text-xs text-white font-mono" />
+                                </div>
+                                <span className="text-primary-500 font-bold">→</span>
+                                <div className="flex items-center gap-1 bg-gray-950 px-2 py-1 rounded border border-gray-700">
+                                  <span className="text-[10px] text-gray-500 uppercase font-bold w-8">Out:</span>
+                                  <input type="number" step="any" value={step.output_qty} onChange={e => handleStepQtyChange(pIdx, sIdx, 'output_qty', e.target.value)} className="w-20 sm:w-24 bg-transparent outline-none text-xs text-white font-mono" />
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
-
-              <div>
-                <label className={labelClass}>Expected Deadline (For Entire Set) *</label>
-                <input required type="date" value={produceDate} onChange={e => setProduceDate(e.target.value)} className={`${inputClass} [color-scheme:dark]`} />
-              </div>
-              
-              <div className="flex justify-end gap-3 mt-8 pt-4 border-t border-gray-800">
-                <button type="button" onClick={() => setProduceModalOpen(false)} className="px-5 py-2.5 text-gray-400 hover:text-white transition-colors font-medium">Wait, not yet</button>
-                <button type="submit" disabled={producing} className="bg-primary-600 hover:bg-primary-500 disabled:opacity-50 text-white px-6 py-2.5 rounded-lg font-bold transition-colors shadow-lg">
-                  {producing ? "Generating..." : `Push ${activeProduceProduct?.parts?.length || 1} Cards to Floor`}
-                </button>
-              </div>
             </form>
+
+            <div className="p-6 border-t border-gray-800 shrink-0 flex justify-end gap-3 bg-[#151724]">
+              <button type="button" onClick={() => setProduceModalOpen(false)} className="px-5 py-2.5 text-gray-400 hover:text-white transition-colors font-medium bg-gray-900 rounded-lg">Wait, not yet</button>
+              <button type="submit" onClick={handleQuickProduce} disabled={producing || produceParts.length === 0} className="bg-primary-600 hover:bg-primary-500 disabled:opacity-50 text-white px-6 py-2.5 rounded-lg font-bold transition-colors shadow-lg">
+                {producing ? "Generating..." : `Push ${produceParts.length || 1} Cards to Floor`}
+              </button>
+            </div>
+
           </div>
         </div>
       )}
@@ -566,31 +672,17 @@ export default function ProductManagement() {
                 {parts.map((part, pIndex) => (
                   <div key={part.id} className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden relative shadow-lg">
                     
-                    {/* Part Header (Only visible if multi-part) */}
+                    {/* Part Header */}
                     <div className="bg-[#151724] border-b border-gray-800 p-4 flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
                       <div className="flex items-center gap-3 w-full sm:w-auto">
                         <div className="bg-primary-500/20 text-primary-400 font-bold w-10 h-10 rounded-lg flex items-center justify-center shrink-0 border border-primary-500/30">
                           {String.fromCharCode(65 + pIndex)}
                         </div>
                         <div className="flex-1 w-full flex gap-3">
-                          <input 
-                            required 
-                            type="text" 
-                            value={part.part_name} 
-                            onChange={e => updatePartField(part.id, 'part_name', e.target.value)} 
-                            className="bg-gray-950 border border-gray-800 rounded px-3 py-1.5 text-sm font-bold text-white w-full sm:w-48 focus:border-primary-500 outline-none placeholder-gray-600" 
-                            placeholder="Part Name (e.g. Inner Tray)"
-                          />
+                          <input required type="text" value={part.part_name} onChange={e => updatePartField(part.id, 'part_name', e.target.value)} className="bg-gray-950 border border-gray-800 rounded px-3 py-1.5 text-sm font-bold text-white w-full sm:w-48 focus:border-primary-500 outline-none placeholder-gray-600" placeholder="Part Name (e.g. Inner Tray)" />
                           <div className="relative flex items-center">
                             <span className="text-xs text-gray-500 mr-2 uppercase font-bold tracking-wider hidden sm:inline-block">Qty per set:</span>
-                            <input 
-                              required 
-                              type="number" 
-                              min="1"
-                              value={part.qty_per_set} 
-                              onChange={e => updatePartField(part.id, 'qty_per_set', e.target.value)} 
-                              className="bg-gray-950 border border-gray-800 rounded px-3 py-1.5 text-sm font-bold text-white w-16 text-center focus:border-primary-500 outline-none" 
-                            />
+                            <input required type="number" min="1" value={part.qty_per_set} onChange={e => updatePartField(part.id, 'qty_per_set', e.target.value)} className="bg-gray-950 border border-gray-800 rounded px-3 py-1.5 text-sm font-bold text-white w-16 text-center focus:border-primary-500 outline-none" />
                           </div>
                         </div>
                       </div>
@@ -603,15 +695,16 @@ export default function ProductManagement() {
                     </div>
 
                     <div className="p-5 space-y-6">
-                      {/* Part Material Specs */}
+                      {/* ⭐️ ROUND 5: Part Material Specs (Now with Cut Size) */}
                       <div>
                         <h4 className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-3">Part Material Specifications</h4>
-                        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+                        <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
                           <div><label className="block text-[10px] text-gray-500 uppercase mb-1">Final Size</label><input type="text" value={part.size} onChange={e => updatePartField(part.id, 'size', e.target.value)} className="w-full bg-gray-950 border border-gray-800 rounded px-3 py-2 text-xs text-white" placeholder="L x W x H" /></div>
                           <div><label className="block text-[10px] text-gray-500 uppercase mb-1">Raw Sheet</label><input type="text" value={part.sheet_size} onChange={e => updatePartField(part.id, 'sheet_size', e.target.value)} className="w-full bg-gray-950 border border-gray-800 rounded px-3 py-2 text-xs text-white" placeholder="25 x 36 in" /></div>
+                          <div><label className="block text-[10px] text-primary-400 uppercase mb-1">Cut Size (Guillotine)</label><input type="text" value={part.cut_size || ""} onChange={e => updatePartField(part.id, 'cut_size', e.target.value)} className="w-full bg-primary-950/20 border border-primary-500/30 rounded px-3 py-2 text-xs text-white" placeholder="28x40 1/2" /></div>
                           <div><label className="block text-[10px] text-gray-500 uppercase mb-1">Material</label><input type="text" value={part.paperType} onChange={e => updatePartField(part.id, 'paperType', e.target.value)} className="w-full bg-gray-950 border border-gray-800 rounded px-3 py-2 text-xs text-white" placeholder="Duplex" /></div>
                           <div><label className="block text-[10px] text-gray-500 uppercase mb-1">GSM</label><input type="text" value={part.paperGsm} onChange={e => updatePartField(part.id, 'paperGsm', e.target.value)} className="w-full bg-gray-950 border border-gray-800 rounded px-3 py-2 text-xs text-white" placeholder="350 GSM" /></div>
-                          <div><label className="block text-[10px] text-primary-500 uppercase mb-1">Custom / Extras</label><input type="text" value={part.customMaterial} onChange={e => updatePartField(part.id, 'customMaterial', e.target.value)} className="w-full bg-primary-950/20 border border-primary-500/30 rounded px-3 py-2 text-xs text-white" placeholder="Extra specs" /></div>
+                          <div><label className="block text-[10px] text-gray-500 uppercase mb-1">Custom Extras</label><input type="text" value={part.customMaterial} onChange={e => updatePartField(part.id, 'customMaterial', e.target.value)} className="w-full bg-gray-950 border border-gray-800 rounded px-3 py-2 text-xs text-white" placeholder="Notes" /></div>
                         </div>
                       </div>
 
@@ -642,17 +735,10 @@ export default function ProductManagement() {
                                   </button>
                                 </div>
                                 
-                                {/* Dynamic Attributes rendered specific to THIS part and step */}
                                 {renderDynamicProcessFields(part.id, step)}
                                 
                                 <div>
-                                  <input 
-                                    type="text" 
-                                    placeholder="Remarks for operator (Optional) e.g., Run at half speed" 
-                                    value={step.remarks || ""} 
-                                    onChange={(e) => handleSequenceChange(part.id, step.id, 'remarks', e.target.value)} 
-                                    className="w-full bg-gray-900 border border-gray-700 border-dashed rounded-md px-3 py-1.5 text-xs text-white focus:border-solid focus:border-primary-500" 
-                                  />
+                                  <input type="text" placeholder="Remarks for operator (Optional) e.g., Run at half speed" value={step.remarks || ""} onChange={(e) => handleSequenceChange(part.id, step.id, 'remarks', e.target.value)} className="w-full bg-gray-900 border border-gray-700 border-dashed rounded-md px-3 py-1.5 text-xs text-white focus:border-solid focus:border-primary-500" />
                                 </div>
                               </div>
                             </div>
@@ -662,7 +748,6 @@ export default function ProductManagement() {
                           </button>
                         </div>
                       </div>
-
                     </div>
                   </div>
                 ))}

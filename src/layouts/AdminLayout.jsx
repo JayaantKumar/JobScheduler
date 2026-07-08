@@ -115,7 +115,16 @@ export default function AdminLayout() {
             Master Data
           </NavLink>
           
-          {/* ⭐️ NEW: Hidden dynamically based on toggle */}
+          {/* ⭐️ ADDED: Inventory Management Route Link */}
+          <NavLink
+            to="/dashboard/inventory-management"
+            onClick={handleNavClick}
+            className={navLinkClasses}
+          >
+            Inventory Management
+          </NavLink>
+          
+          {/* Hidden dynamically based on toggle */}
           {showProductMgmt && (
             <NavLink
               to="/dashboard/product-management"
@@ -127,7 +136,7 @@ export default function AdminLayout() {
           )}
         </nav>
 
-        {/* ⭐️ NEW: Product Management Toggle Switch */}
+        {/* Product Management Toggle Switch */}
         <div className="px-5 py-4 border-t border-gray-800 shrink-0 bg-gray-900">
           <label className="flex items-center justify-between cursor-pointer mb-4 group">
             <span className="text-xs font-bold text-gray-500 uppercase tracking-wider group-hover:text-gray-300 transition-colors">Product Mgmt UI</span>
