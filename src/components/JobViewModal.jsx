@@ -12,8 +12,9 @@ export default function JobViewModal({ job, onClose }) {
   const [qtyReject, setQtyReject] = useState("");
   const [updating, setUpdating] = useState(false);
 
+  // ⭐️ ROUND 6: Broadened condition to always fetch if a set_code exists (fixes missing footers on old jobs)
   useEffect(() => {
-    if (localJob?.set_code && localJob?.parts_total > 1) {
+    if (localJob?.set_code) {
       const fetchSiblings = async () => {
         try {
           const q = query(collection(db, "jobs"), where("set_code", "==", localJob.set_code));
@@ -73,37 +74,34 @@ export default function JobViewModal({ job, onClose }) {
 
   const dueDate = localJob.deadline ? new Date(localJob.deadline).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "N/A";
   const jobDate = localJob.job_date ? new Date(localJob.job_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "N/A";
-  const formatGsm = (gsm) => !gsm ? "" : String(gsm).toUpperCase().includes("GSM") ? `(${gsm})` : `(${gsm} GSM)`;
-  const isMultiPart = localJob.parts_total > 1;
+  
+  // ⭐️ ROUND 6: Strict GSM text cleaner to fix "300 GSM GSM" duplications on display
+  const formatGsm = (gsm) => {
+    if (!gsm) return "";
+    const cleaned = String(gsm).replace(/gsm/gi, "").trim();
+    return `(${cleaned} GSM)`;
+  };
+  
+  // Robust check for multi-part rendering
+  const isMultiPart = localJob.parts_total > 1 || siblings.length > 1;
 
-  // ⭐️ ROUND 5: Quantity Logic Builder
   const renderQtyMath = () => {
     if (localJob.is_custom_override) return `(${localJob.quantity_target?.toLocaleString()} custom for this job — standard ${localJob.qty_per_set}/set)`;
     return `(${localJob.active_multiplier || localJob.qty_per_set} per set × ${localJob.sets_qty?.toLocaleString()} sets)`;
   };
 
   return (
-    // ⭐️ ROUND 5: Replaced 'absolute inset-0' strictly on print media to prevent A4 clipping
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm print:static print:bg-transparent print:p-0 print:block">
       
-      {/* ⭐️ ROUND 5: PRINT STYLESHEET INJECTION */}
       <style type="text/css" media="print">
         {`
           @page { size: A4 portrait; margin: 12mm; }
           body { -webkit-print-color-adjust: exact; print-color-adjust: exact; margin: 0; padding: 0; background: white; color: black; }
           * { box-sizing: border-box; }
-          
-          /* Pagination Protections */
           tr { page-break-inside: avoid !important; }
           thead { display: table-header-group !important; }
-          
-          /* Give operators room to physically sign their names */
           td { min-height: 15mm; }
-          
-          /* Ensure headers stay with their following content */
           h1, h2, h3 { page-break-after: avoid !important; }
-          
-          /* Hide scrollbars & wrappers */
           .print\\:hidden { display: none !important; }
         `}
       </style>
@@ -121,7 +119,7 @@ export default function JobViewModal({ job, onClose }) {
                 <span className="bg-primary-500/20 text-primary-400 px-2 py-0.5 rounded text-xs font-mono font-bold uppercase tracking-wider">
                   {localJob.display_id || `JOB-${localJob.id.slice(0, 8).toUpperCase()}`}
                 </span>
-                {isMultiPart && <span className="bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wider">Part {localJob.part_index} of {localJob.parts_total}</span>}
+                {isMultiPart && <span className="bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wider">Part {localJob.part_index} of {localJob.parts_total || siblings.length}</span>}
               </div>
               <h2 className="text-2xl font-bold text-white">{localJob.title || localJob.product?.name || "Untitled Job"}</h2>
               <p className="text-gray-400 text-sm mt-1">{localJob.customer || "No Customer"} | {localJob.product?.sku || "No SKU"} {isMultiPart ? `| ${localJob.part_name}` : ""}</p>
@@ -284,6 +282,27 @@ export default function JobViewModal({ job, onClose }) {
               })}
             </div>
           </div>
+          
+          {/* ⭐️ ROUND 6: SIBLINGS FOOTER (ADDED TO DIGITAL VIEW) */}
+          {isMultiPart && siblings.length > 0 && (
+            <div className="mt-4 pt-6 border-t border-gray-800">
+              <h3 className="text-sm font-bold text-gray-400 mb-3 uppercase tracking-wider">Linked Cards in Set (SET-{localJob.set_code})</h3>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {siblings.map(sib => (
+                  <div key={sib.id} className={`p-4 rounded-lg border flex flex-col justify-between ${sib.id === localJob.id ? 'bg-primary-900/20 border-primary-500/50' : 'bg-gray-950 border-gray-800'}`}>
+                    <div>
+                      <div className={`text-xs font-bold mb-1 ${sib.id === localJob.id ? 'text-primary-400' : 'text-gray-300'}`}>Part {sib.part_index}: {sib.part_name}</div>
+                      <div className="text-[10px] uppercase font-mono text-gray-500">{sib.quantity_target?.toLocaleString()} pcs</div>
+                    </div>
+                    <div className={`mt-3 text-[10px] font-bold uppercase tracking-wider inline-block px-2 py-1 rounded w-max ${sib.id === localJob.id ? 'bg-primary-500/20 text-primary-400' : sib.status === 'completed' ? 'bg-green-500/10 text-green-400' : sib.status === 'in_progress' ? 'bg-blue-500/10 text-blue-400' : 'bg-yellow-500/10 text-yellow-400'}`}>
+                      {sib.id === localJob.id ? 'THIS CARD' : sib.status}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
         </div>
       </div>
 
@@ -298,7 +317,7 @@ export default function JobViewModal({ job, onClose }) {
               <>
                 <h1 className="text-6xl font-black uppercase tracking-tighter">SET-{localJob.set_code}</h1>
                 <h2 className="text-2xl font-bold mt-3 text-gray-800 uppercase bg-gray-200 inline-block px-3 py-1 border-2 border-black">
-                  Part {localJob.part_index} of {localJob.parts_total} — {localJob.part_name}
+                  Part {localJob.part_index} of {localJob.parts_total || siblings.length} — {localJob.part_name}
                 </h2>
                 <p className="text-sm font-bold mt-2 text-gray-600 font-mono">ID: {localJob.display_id}</p>
               </>
@@ -382,7 +401,6 @@ export default function JobViewModal({ job, onClose }) {
               <th className="border border-black p-3 w-12 text-center">#</th>
               <th className="border border-black p-3">Process</th>
               <th className="border border-black p-3 w-40">Target Machine</th>
-              {/* ⭐️ ROUND 5: Updated Table Headers for transforming quantities */}
               <th className="border border-black p-3 w-20 text-center">Qty In</th>
               <th className="border border-black p-3 w-20 text-center">Exp. Out</th>
               <th className="border border-black p-3 w-24 text-center">Actual Out</th>
@@ -403,11 +421,9 @@ export default function JobViewModal({ job, onClose }) {
                 </td>
                 <td className="border border-black p-4 align-top text-gray-700">{step.assigned_machine_name || "Any Available"}</td>
                 
-                {/* ⭐️ ROUND 5: Printing dynamic quantities per-step */}
                 <td className="border border-black p-4 text-center align-top font-bold">{step.input_qty?.toLocaleString() || localJob.quantity_target?.toLocaleString()}</td>
                 <td className="border border-black p-4 text-center align-top font-bold text-gray-600">{step.output_qty?.toLocaleString() || localJob.quantity_target?.toLocaleString()}</td>
                 
-                {/* ⭐️ ROUND 5: Blank columns for manual writing */}
                 <td className="border border-black p-4 text-center align-top"></td>
                 <td className="border border-black p-4 align-top"></td>
               </tr>
@@ -422,6 +438,7 @@ export default function JobViewModal({ job, onClose }) {
           </div>
         )}
 
+        {/* ⭐️ ROUND 6: SIBLINGS FOOTER (PRINT VIEW) */}
         {isMultiPart && siblings.length > 0 && (
           <div className="mt-8 border-2 border-black bg-gray-50 p-4">
             <h3 className="text-sm font-bold uppercase mb-3">Linked Cards in Set (SET-{localJob.set_code})</h3>

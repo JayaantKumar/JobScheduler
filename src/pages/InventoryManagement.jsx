@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { collection, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, query, orderBy, getDocs } from "firebase/firestore";
+import { collection, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, query, getDocs, where, writeBatch } from "firebase/firestore";
 import { db } from "../firebase/config";
 
 export default function InventoryManagement() {
@@ -12,11 +12,15 @@ export default function InventoryManagement() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCatFilter, setSelectedCatFilter] = useState("");
 
-  // Modals
+  // Modals & Inline UI States
   const [isItemModalOpen, setItemModalOpen] = useState(false);
   const [isTransModalOpen, setTransModalOpen] = useState(false);
   const [isHistoryModalOpen, setHistoryModalOpen] = useState(false);
   const [activeItem, setActiveItem] = useState(null);
+  
+  // ⭐️ ROUND 6: Custom Alerts & Confirms replacing native browser popups
+  const [errorMsg, setErrorMsg] = useState("");
+  const [confirmConfig, setConfirmConfig] = useState(null); 
 
   // --- ITEM FORM STATES ---
   const [itemCatId, setItemCatId] = useState("");
@@ -29,19 +33,20 @@ export default function InventoryManagement() {
   const [savingItem, setSavingItem] = useState(false);
 
   // --- TRANSACTION FORM STATES ---
-  const [transType, setTransType] = useState("in"); // in, out, adj
+  const [transType, setTransType] = useState("in"); 
   const [transDate, setTransDate] = useState(new Date().toISOString().split('T')[0]);
   const [transQty, setTransQty] = useState("");
   const [transNotes, setTransNotes] = useState("");
-  // IN
+  
   const [supplier, setSupplier] = useState("");
   const [rate, setRate] = useState("");
-  // OUT
   const [linkedJobId, setLinkedJobId] = useState("");
   const [freeTextPurpose, setFreeTextPurpose] = useState("");
   const [person, setPerson] = useState("");
-  // ADJ
+  
+  // ⭐️ ROUND 6: Adjustment direction toggle
   const [adjReason, setAdjReason] = useState("Physical Count");
+  const [adjDirection, setAdjDirection] = useState("deduct"); 
   const [processingTrans, setProcessingTrans] = useState(false);
 
   // --- HISTORY STATES ---
@@ -79,8 +84,6 @@ export default function InventoryManagement() {
     if (!isAutoLabel || !itemCatId) return;
     const cat = categories.find(c => c.id === itemCatId);
     if (!cat) return;
-    
-    // Auto-compose: "Category · Attr1 Attr2 · Attr3"
     const vals = Object.values(itemDetails).filter(v => v.trim() !== "");
     const generated = vals.length > 0 ? `${cat.name} · ${vals.join(" ")}` : cat.name;
     setItemName(generated);
@@ -88,6 +91,7 @@ export default function InventoryManagement() {
 
   // --- ITEM HANDLERS ---
   const openItemModal = (item = null) => {
+    setErrorMsg("");
     if (item) {
       setActiveItem(item);
       setItemCatId(item.categoryId);
@@ -123,6 +127,7 @@ export default function InventoryManagement() {
 
   const saveItem = async (e) => {
     e.preventDefault();
+    setErrorMsg("");
     setSavingItem(true);
     const payload = {
       categoryId: itemCatId,
@@ -142,46 +147,105 @@ export default function InventoryManagement() {
       } else {
         await addDoc(collection(db, "inventoryItems"), {
           ...payload,
-          balance: 0, // Initial balance is always 0
+          balance: 0, 
           created_at: serverTimestamp()
         });
       }
       setItemModalOpen(false);
-    } catch (err) { alert("Failed to save item: " + err.message); }
+    } catch (err) { setErrorMsg("Failed to save item: " + err.message); }
     finally { setSavingItem(false); }
+  };
+
+  // ⭐️ ROUND 6: Delete Item & Snapshot Logic
+  const handleDeleteItemClick = async (item) => {
+    try {
+      const q = query(collection(db, "inventoryTransactions"), where("itemId", "==", item.id));
+      const snap = await getDocs(q);
+      const txCount = snap.size;
+
+      setConfirmConfig({
+        isOpen: true,
+        title: "Delete Inventory Item",
+        message: `Delete ${item.name}? Balance ${item.balance || 0} ${item.unit} and ${txCount} ledger entries will be permanently removed.`,
+        confirmText: "Permanently Delete",
+        isDanger: true,
+        onConfirm: async () => {
+          setConfirmConfig(null);
+          setLoading(true);
+          try {
+            const batch = writeBatch(db);
+            // Delete the item itself
+            batch.delete(doc(db, "inventoryItems", item.id));
+            
+            // Handle ledger entries
+            snap.docs.forEach(d => {
+              const txData = d.data();
+              if (txData.job_ref_id) {
+                // Keep the text snapshot for the job card but disconnect from the deleted item ledger
+                batch.update(d.ref, { 
+                  itemId: "DELETED", 
+                  itemName: `${txData.itemName} (item deleted)` 
+                });
+              } else {
+                // Safely delete unlinked entries
+                batch.delete(d.ref);
+              }
+            });
+            await batch.commit();
+          } catch(e) { setErrorMsg("Failed to delete: " + e.message); }
+          finally { setLoading(false); }
+        },
+        onCancel: () => setConfirmConfig(null)
+      });
+    } catch (err) { setErrorMsg("Error preparing delete: " + err.message); }
   };
 
   // --- TRANSACTION HANDLERS ---
   const openTransModal = (item, type = "in") => {
+    setErrorMsg("");
     setActiveItem(item);
     setTransType(type);
     setTransDate(new Date().toISOString().split('T')[0]);
     setTransQty("");
     setTransNotes("");
+    setAdjDirection("deduct");
     setSupplier(""); setRate(""); setLinkedJobId(""); setFreeTextPurpose(""); setPerson(""); setAdjReason("Physical Count");
     setTransModalOpen(true);
   };
 
-  const executeTransaction = async (e) => {
-    e.preventDefault();
+  const processTransactionSubmit = async (isConfirmedNegative = false) => {
+    setErrorMsg("");
     const qtyNum = Number(transQty);
-    if (qtyNum <= 0) return alert("Quantity must be greater than 0");
+    
+    // ⭐️ ROUND 6: Strict > 0 check everywhere
+    if (qtyNum <= 0) {
+      setErrorMsg("Quantity must be greater than 0");
+      return;
+    }
 
-    let change = 0;
-    if (transType === "in") change = qtyNum;
-    if (transType === "out") change = -qtyNum;
-    if (transType === "adj") {
-      // If user typed negative, respect it. If positive, respect it.
-      change = qtyNum; // User inputs -5 or 5
+    let change = qtyNum;
+    if (transType === "out" || (transType === "adj" && adjDirection === "deduct")) {
+      change = -qtyNum;
     }
 
     const currentBalance = activeItem.balance || 0;
     const newBalance = currentBalance + change;
 
-    if (transType === "out" && newBalance < 0) {
-      if (!window.confirm(`WARNING: This will drop the balance to ${newBalance} ${activeItem.unit}. Proceed anyway?`)) {
-        return;
-      }
+    // ⭐️ ROUND 6: Inline Warn-Don't-Block for Negative Balances
+    if (transType === "out" && newBalance < 0 && !isConfirmedNegative) {
+      setConfirmConfig({
+        isOpen: true,
+        title: "Negative Balance Warning",
+        message: `This issue will drop the stock balance to ${newBalance} ${activeItem.unit}. Proceed anyway?`,
+        confirmText: "Proceed Issue",
+        isDanger: false,
+        onConfirm: () => {
+          setConfirmConfig(null);
+          processTransactionSubmit(true); // Re-run with override flag
+        },
+        onCancel: () => setConfirmConfig(null)
+      });
+      return;
     }
 
     setProcessingTrans(true);
@@ -202,30 +266,30 @@ export default function InventoryManagement() {
         new_balance: newBalance,
         notes: transNotes,
         created_at: serverTimestamp(),
-        // IN
         supplier: transType === "in" ? supplier : null,
         rate: transType === "in" ? rate : null,
-        // OUT
         job_ref_id: transType === "out" ? linkedJobId : null,
         job_display: transType === "out" ? linkedJobDisplay : null,
         purpose: transType === "out" ? freeTextPurpose : null,
         person: transType === "out" ? person : null,
-        // ADJ
         reason: transType === "adj" ? adjReason : null
       };
 
-      // 1. Add to Ledger
       await addDoc(collection(db, "inventoryTransactions"), transPayload);
       
-      // 2. Update Master Balance
       await updateDoc(doc(db, "inventoryItems", activeItem.id), {
         balance: newBalance,
         updated_at: serverTimestamp()
       });
 
       setTransModalOpen(false);
-    } catch (err) { alert("Transaction failed: " + err.message); }
+    } catch (err) { setErrorMsg("Transaction failed: " + err.message); }
     finally { setProcessingTrans(false); }
+  };
+
+  const executeTransaction = (e) => {
+    e.preventDefault();
+    processTransactionSubmit(false);
   };
 
   // --- HISTORY HANDLER ---
@@ -234,10 +298,11 @@ export default function InventoryManagement() {
     setHistoryModalOpen(true);
     setLoadingHistory(true);
     try {
-      const q = query(collection(db, "inventoryTransactions"), orderBy("created_at", "desc"));
+      const q = query(collection(db, "inventoryTransactions"), where("itemId", "==", item.id));
       const snap = await getDocs(q);
-      const allHist = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setItemHistory(allHist.filter(h => h.itemId === item.id));
+      // Firebase requires index for orderBy with where, so sort in memory
+      const allHist = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.created_at?.toMillis() - a.created_at?.toMillis());
+      setItemHistory(allHist);
     } catch (err) {
       console.error(err);
     } finally {
@@ -248,7 +313,6 @@ export default function InventoryManagement() {
   const inputClass = "w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2 text-sm text-white focus:outline-none focus:border-primary-500 placeholder-gray-600";
   const labelClass = "block text-xs font-semibold text-gray-400 mb-1.5";
 
-  // Filter Logic
   const filteredItems = items.filter(item => {
     if (selectedCatFilter && item.categoryId !== selectedCatFilter) return false;
     if (searchQuery && !item.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
@@ -258,8 +322,26 @@ export default function InventoryManagement() {
   if (loading) return <div className="p-8 text-primary-500 animate-pulse font-medium">Loading Inventory Engine...</div>;
 
   return (
-    <div className="max-w-[1600px] mx-auto p-6 h-full flex flex-col">
+    <div className="max-w-[1600px] mx-auto p-6 h-full flex flex-col relative">
       
+      {/* ⭐️ ROUND 6: INLINE CONFIRM MODAL */}
+      {confirmConfig && confirmConfig.isOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
+          <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-md shadow-2xl overflow-hidden animate-fade-in">
+            <div className="p-6">
+              <h3 className="text-xl font-bold text-white mb-2">{confirmConfig.title}</h3>
+              <p className="text-sm text-gray-300 leading-relaxed mb-8">{confirmConfig.message}</p>
+              <div className="flex justify-end gap-3">
+                <button onClick={confirmConfig.onCancel} className="px-5 py-2.5 text-gray-400 hover:text-white transition-colors font-medium bg-gray-800 rounded-lg">Cancel</button>
+                <button onClick={confirmConfig.onConfirm} className={`px-6 py-2.5 rounded-lg font-bold text-white transition-colors shadow-lg ${confirmConfig.isDanger ? 'bg-red-600 hover:bg-red-500' : 'bg-primary-600 hover:bg-primary-500'}`}>
+                  {confirmConfig.confirmText || "Confirm"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
         <div>
@@ -283,13 +365,13 @@ export default function InventoryManagement() {
       {/* Item List Table */}
       <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden shadow-xl flex-1 flex flex-col">
         <div className="overflow-x-auto flex-1">
-          <table className="w-full text-left border-collapse min-w-[1000px]">
+          <table className="w-full text-left border-collapse min-w-[1050px]">
             <thead>
               <tr className="bg-gray-950/50 border-b border-gray-800 text-[10px] font-bold text-gray-500 uppercase tracking-wider">
                 <th className="py-4 px-6">Item Details & Specs</th>
                 <th className="py-4 px-6">Location</th>
                 <th className="py-4 px-6 text-right">Current Stock</th>
-                <th className="py-4 px-6 text-right w-[350px]">Ledger Actions</th>
+                <th className="py-4 px-6 text-right w-[380px]">Ledger Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800">
@@ -320,6 +402,10 @@ export default function InventoryManagement() {
                           <button onClick={() => openTransModal(item, 'out')} className="text-blue-400 bg-blue-400/10 hover:bg-blue-400 hover:text-white px-3 py-1.5 rounded text-xs font-bold transition-colors">Issue Out</button>
                           <button onClick={() => openTransModal(item, 'adj')} className="text-yellow-400 hover:text-white px-3 py-1.5 rounded text-xs font-bold transition-colors border border-yellow-400/30 hover:bg-yellow-500/20">Adjust</button>
                           <button onClick={() => viewHistory(item)} className="text-gray-400 hover:text-white border border-gray-700 hover:bg-gray-800 px-3 py-1.5 rounded text-xs font-medium transition-colors ml-2">History</button>
+                          {/* ⭐️ ROUND 6: Delete action added */}
+                          <button onClick={() => handleDeleteItemClick(item)} className="text-gray-600 hover:text-red-400 hover:bg-red-500/10 p-1.5 rounded transition-colors ml-1" title="Delete Item">
+                             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -343,6 +429,9 @@ export default function InventoryManagement() {
             
             <form onSubmit={saveItem} className="p-6 overflow-y-auto custom-scrollbar flex-1 space-y-6 bg-[#0a0f1a]">
               
+              {/* ⭐️ ROUND 6: Inline Error UI */}
+              {errorMsg && <div className="bg-red-500/10 border border-red-500/50 text-red-400 p-3 rounded text-sm font-bold">{errorMsg}</div>}
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className={labelClass}>Material Category *</label>
@@ -426,14 +515,37 @@ export default function InventoryManagement() {
 
             <form onSubmit={executeTransaction} className="p-6 space-y-6 bg-[#0a0f1a] flex-1 overflow-y-auto custom-scrollbar">
               
+              {/* ⭐️ ROUND 6: Inline Error UI */}
+              {errorMsg && <div className="bg-red-500/10 border border-red-500/50 text-red-400 p-3 rounded text-sm font-bold">{errorMsg}</div>}
+
               <div className="grid grid-cols-2 gap-4 border-b border-gray-800 pb-6">
                 <div>
                   <label className={labelClass}>Transaction Date *</label>
                   <input required type="date" value={transDate} onChange={e => setTransDate(e.target.value)} className={`${inputClass} [color-scheme:dark]`} />
                 </div>
                 <div>
-                  <label className={labelClass}>{transType === 'adj' ? 'Adjustment Quantity (use - for loss) *' : 'Quantity *'}</label>
-                  <input required type="number" step="any" value={transQty} onChange={e => setTransQty(e.target.value)} className={`${inputClass} text-lg font-bold ${transType === 'in' ? 'text-green-400 focus:border-green-500' : transType === 'out' ? 'text-blue-400 focus:border-blue-500' : 'text-yellow-400 focus:border-yellow-500'}`} placeholder="e.g. 500" />
+                  {/* ⭐️ ROUND 6: Updated UI logic for Add/Deduct Toggle */}
+                  <label className={labelClass}>
+                    {transType === 'adj' ? 'Adjustment Quantity (Positive Number) *' : 'Quantity *'}
+                  </label>
+                  <div className="flex gap-2">
+                    {transType === 'adj' && (
+                      <div className="flex bg-gray-950 border border-gray-800 rounded-lg p-1">
+                        <button type="button" onClick={() => setAdjDirection('add')} className={`px-3 py-1 rounded text-xs font-bold uppercase transition-colors ${adjDirection === 'add' ? 'bg-green-600 text-white' : 'text-gray-500 hover:text-white'}`}>Add</button>
+                        <button type="button" onClick={() => setAdjDirection('deduct')} className={`px-3 py-1 rounded text-xs font-bold uppercase transition-colors ${adjDirection === 'deduct' ? 'bg-red-600 text-white' : 'text-gray-500 hover:text-white'}`}>Deduct</button>
+                      </div>
+                    )}
+                    <input 
+                      required 
+                      type="number" 
+                      step="any" 
+                      min="0.001" // Strictly positive entry
+                      value={transQty} 
+                      onChange={e => setTransQty(e.target.value)} 
+                      className={`${inputClass} text-lg font-bold flex-1 ${transType === 'in' || (transType === 'adj' && adjDirection === 'add') ? 'text-green-400 focus:border-green-500' : transType === 'out' || (transType === 'adj' && adjDirection === 'deduct') ? 'text-red-400 focus:border-red-500' : 'text-yellow-400 focus:border-yellow-500'}`} 
+                      placeholder="e.g. 500" 
+                    />
+                  </div>
                 </div>
               </div>
 
