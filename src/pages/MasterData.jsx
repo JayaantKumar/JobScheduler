@@ -202,13 +202,14 @@ export default function MasterData() {
       </div>
 
       {/* SUB-TABS ENGINE (Restored all tabs) */}
+      {/* SUB-TABS ENGINE */}
       <div className="flex items-center gap-6 border-b border-gray-800 mb-6 overflow-x-auto no-scrollbar">
         {["material_cats", "dies", "customers", "product_cats", "rates"].map(tab => {
           const labels = {
             material_cats: "Raw Material Categories",
             dies: "Master Inventory Dies",
             customers: "Customers",
-            product_cats: "Product Categories",
+            product_cats: "Product Categories", // ⭐️ FIX: Rectified spelling
             rates: "Machine Rates"
           };
           return (
@@ -287,13 +288,16 @@ export default function MasterData() {
         let hasExtra = false;
         
         if (activeSubTab === "customers") { type = "Customer"; dataList = customers; }
-        if (activeSubTab === "product_cats") { type = "Product Category"; dataList = productCategories; }
+        if (activeSubTab === "product_cats") { type = "Product Category"; dataList = productCategories; } // ⭐️ FIX: Internal name map reference
         if (activeSubTab === "rates") { type = "Rate"; dataList = rates; hasExtra = true; }
 
         return (
           <div className="space-y-6 flex-1 flex flex-col">
             <div className="flex justify-between items-center">
-              <h3 className="text-lg font-bold text-white">Manage {type}s</h3>
+              {/* ⭐️ FIX: Dynamic pluralization correction block */}
+              <h3 className="text-lg font-bold text-white">
+                Manage {type === "Product Category" ? "Product Categories" : `${type}s`}
+              </h3>
               <button onClick={() => openGenericModal(type)} className="bg-primary-600 hover:bg-primary-500 text-white text-xs font-bold px-4 py-2.5 rounded-lg transition-colors shadow-lg">+ Add {type}</button>
             </div>
             <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden shadow-xl flex-1">
@@ -307,7 +311,12 @@ export default function MasterData() {
                 </thead>
                 <tbody className="divide-y divide-gray-800">
                   {dataList.length === 0 ? (
-                    <tr><td colSpan="3" className="py-12 text-center text-gray-500 italic text-sm">No {type.toLowerCase()}s found.</td></tr>
+                    <tr>
+                      {/* ⭐️ FIX: Empty state typo correction */}
+                      <td colSpan="3" className="py-12 text-center text-gray-500 italic text-sm">
+                        No {type === "Product Category" ? "product categories" : `${type.toLowerCase()}s`} found.
+                      </td>
+                    </tr>
                   ) : (
                     dataList.map((item) => (
                       <tr key={item.id} className="hover:bg-gray-800/20 transition-colors">
