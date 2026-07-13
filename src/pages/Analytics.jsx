@@ -5,7 +5,7 @@ export default function Analytics() {
   const [timeRange, setTimeRange] = useState("30days");
   const { jobs, loading } = useJobs();
 
-  // --- SMART CALCULATIONS ---
+  // --- SMART CALCULATIONS (ROUND 6.3: SET-LEVEL MATH) ---
   const analyticsData = useMemo(() => {
     if (!jobs || jobs.length === 0) return null;
 
@@ -19,27 +19,51 @@ export default function Analytics() {
       return createdDate >= cutoffDate;
     });
 
-    const completedJobs = filteredJobs.filter(j => j.status === "completed");
-    
-    // 1. Completion Rate
-    const completionRate = filteredJobs.length > 0 
-      ? Math.round((completedJobs.length / filteredJobs.length) * 100) 
-      : 0;
+    // ⭐️ ROUND 6.3: Group individual part cards into cohesive Sets
+    const groupedSets = [];
+    const setMap = {};
 
-    // 2. On-Time Completion (Jobs completed before their deadline)
-    const onTimeJobs = completedJobs.filter(j => {
-      const deadline = j.deadline?.toDate ? j.deadline.toDate() : new Date(j.deadline);
-      const completedAt = j.updated_at?.toDate ? j.updated_at.toDate() : new Date(j.updated_at || now);
-      return completedAt <= deadline;
+    filteredJobs.forEach(job => {
+      if (job.set_code && job.parts_total > 1) {
+        if (!setMap[job.set_code]) setMap[job.set_code] = [];
+        setMap[job.set_code].push(job);
+      } else {
+        groupedSets.push([job]); // Single-part jobs
+      }
     });
-    const onTimeRate = completedJobs.length > 0 
-      ? Math.round((onTimeJobs.length / completedJobs.length) * 100) 
+
+    Object.values(setMap).forEach(group => groupedSets.push(group));
+
+    // A Set is only "completed" when ALL of its linked part cards are completed
+    const completedSets = groupedSets.filter(group => group.every(j => j.status === "completed"));
+    
+    // 1. Set Completion Rate
+    const completionRate = groupedSets.length > 0 
+      ? Math.round((completedSets.length / groupedSets.length) * 100) 
       : 0;
 
-    // 3. Total Production Volume
-    const totalVolume = filteredJobs.reduce((sum, j) => sum + (Number(j.quantity_target) || 0), 0);
+    // 2. On-Time Completion
+    const onTimeSets = completedSets.filter(group => {
+      return group.every(j => {
+        const deadline = j.deadline?.toDate ? j.deadline.toDate() : new Date(j.deadline);
+        const completedAt = j.updated_at?.toDate ? j.updated_at.toDate() : new Date(j.updated_at || now);
+        return completedAt <= deadline;
+      });
+    });
 
-    // 4. Process Bottlenecks (Which manual processes are pending the most?)
+    const onTimeRate = completedSets.length > 0 
+      ? Math.round((onTimeSets.length / completedSets.length) * 100) 
+      : 0;
+
+    // 3. Finished Units Target (Sums the base target sets exactly ONCE per grouping)
+    const totalVolume = groupedSets.reduce((sum, group) => {
+      const firstJob = group[0];
+      const isSet = group.length > 1 || (firstJob.parts_total > 1 && firstJob.set_code);
+      const groupVolume = isSet ? (Number(firstJob.sets_qty) || 0) : (Number(firstJob.quantity_target) || 0);
+      return sum + groupVolume;
+    }, 0);
+
+    // 4. Process Bottlenecks (Evaluated purely per card step, as intended)
     const processCounts = {};
     filteredJobs.forEach(job => {
       if (job.status !== "completed" && job.process_sequence) {
@@ -54,11 +78,11 @@ export default function Analytics() {
 
     const bottlenecks = Object.entries(processCounts)
       .sort((a, b) => b[1] - a[1])
-      .slice(0, 5); // Top 5 bottlenecks
+      .slice(0, 5); 
 
     return {
-      totalJobs: filteredJobs.length,
-      completedJobs: completedJobs.length,
+      totalSets: groupedSets.length,
+      completedSets: completedSets.length,
       completionRate,
       onTimeRate,
       totalVolume,
@@ -70,8 +94,6 @@ export default function Analytics() {
 
   return (
     <div className="max-w-[1600px] mx-auto p-6 h-full flex flex-col">
-      
-      {/* Header Section */}
       <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 mb-8">
         <div>
           <h2 className="text-3xl font-bold text-white flex items-center gap-3">
@@ -83,7 +105,6 @@ export default function Analytics() {
           <p className="text-gray-400 mt-1">Analyze live production data based on factory output.</p>
         </div>
         
-        {/* Time Range Toggle */}
         <div className="flex bg-gray-900 border border-gray-800 rounded-lg p-1 shrink-0">
           <button 
             onClick={() => setTimeRange("7days")}
@@ -102,22 +123,18 @@ export default function Analytics() {
 
       {analyticsData ? (
         <>
-          {/* KPI Cards Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-            
-            {/* Card 1: Job Completion Rate */}
             <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 flex items-start gap-4 shadow-lg">
               <div className="w-12 h-12 rounded-full bg-blue-500/10 text-blue-500 flex items-center justify-center shrink-0 border border-blue-500/20 mt-1">
                 <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
               </div>
               <div>
-                <div className="text-gray-400 text-sm font-medium mb-1">Job Completion Rate</div>
+                <div className="text-gray-400 text-sm font-medium mb-1">Set Completion Rate</div>
                 <div className="text-3xl font-bold text-white">{analyticsData.completionRate}%</div>
-                <div className="text-xs text-gray-500 mt-1">{analyticsData.completedJobs} of {analyticsData.totalJobs} jobs finished</div>
+                <div className="text-xs text-gray-500 mt-1">{analyticsData.completedSets} of {analyticsData.totalSets} sets finished</div>
               </div>
             </div>
 
-            {/* Card 2: On-Time Delivery */}
             <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 flex items-start gap-4 shadow-lg">
               <div className="w-12 h-12 rounded-full bg-green-500/10 text-green-500 flex items-center justify-center shrink-0 border border-green-500/20 mt-1">
                 <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
@@ -125,40 +142,35 @@ export default function Analytics() {
               <div>
                 <div className="text-gray-400 text-sm font-medium mb-1">On-Time Delivery</div>
                 <div className="text-3xl font-bold text-white">{analyticsData.onTimeRate}%</div>
-                <div className="text-xs text-gray-500 mt-1">Completed before deadline</div>
+                <div className="text-xs text-gray-500 mt-1">Sets completed before deadline</div>
               </div>
             </div>
 
-            {/* Card 3: Total Planned Volume */}
             <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 flex items-start gap-4 shadow-lg">
               <div className="w-12 h-12 rounded-full bg-purple-500/10 text-purple-400 flex items-center justify-center shrink-0 border border-purple-500/20 mt-1">
                 <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>
               </div>
               <div>
-                <div className="text-gray-400 text-sm font-medium mb-1">Total Target Volume</div>
+                <div className="text-gray-400 text-sm font-medium mb-1">Finished Units Target</div>
                 <div className="text-3xl font-bold text-white">{analyticsData.totalVolume.toLocaleString()}</div>
-                <div className="text-xs text-gray-500 mt-1">Units required across all jobs</div>
+                <div className="text-xs text-gray-500 mt-1">Expected boxes to dispatch</div>
               </div>
             </div>
 
-            {/* Card 4: Active Workload */}
             <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 flex items-start gap-4 shadow-lg">
               <div className="w-12 h-12 rounded-full bg-yellow-500/10 text-yellow-400 flex items-center justify-center shrink-0 border border-yellow-500/20 mt-1">
                 <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
               </div>
               <div>
                 <div className="text-gray-400 text-sm font-medium mb-1">Active Workload</div>
-                <div className="text-3xl font-bold text-white">{analyticsData.totalJobs - analyticsData.completedJobs}</div>
-                <div className="text-xs text-gray-500 mt-1">Jobs currently in progress</div>
+                <div className="text-3xl font-bold text-white">{analyticsData.totalSets - analyticsData.completedSets}</div>
+                <div className="text-xs text-gray-500 mt-1">Master sets currently in progress</div>
               </div>
             </div>
 
           </div>
 
-          {/* Bottom Panels Row */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6 flex-1">
-            
-            {/* Left Column (Bottleneck Analysis) */}
             <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 shadow-lg flex flex-col">
               <h3 className="text-lg font-bold text-white mb-4">Process Bottlenecks (Pending Steps)</h3>
               <p className="text-sm text-gray-400 mb-6">Identifies which manual processes currently have the most pending work across the factory floor.</p>
@@ -192,20 +204,18 @@ export default function Analytics() {
               )}
             </div>
 
-            {/* Right Column (Overview) */}
             <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 shadow-lg flex flex-col">
               <h3 className="text-lg font-bold text-white mb-4">Factory Pulse</h3>
               <div className="flex-1 flex flex-col items-center justify-center text-center p-8 border border-gray-800 rounded-xl bg-gray-950/50">
                 <svg className="w-16 h-16 text-gray-700 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                 </svg>
-                <h4 className="text-white font-bold text-lg mb-2">Analyzing {analyticsData.totalJobs} Records</h4>
+                <h4 className="text-white font-bold text-lg mb-2">Analyzing {analyticsData.totalSets} Sets</h4>
                 <p className="text-gray-400 text-sm">
                   Metrics are generated dynamically based on active job creation, process completion, and missed deadlines.
                 </p>
               </div>
             </div>
-
           </div>
         </>
       ) : (

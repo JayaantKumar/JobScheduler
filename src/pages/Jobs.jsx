@@ -7,7 +7,6 @@ import { db } from "../firebase/config";
 export default function Jobs() {
   const { jobs, loading } = useJobs();
   const [activeTab, setActiveTab] = useState("All");
-  
   const [viewingJob, setViewingJob] = useState(null);
 
   const handleDelete = async (id) => {
@@ -20,8 +19,6 @@ export default function Jobs() {
     }
   };
 
-  // ⭐️ GROUPING ALGORITHM
-  // Group jobs by set_code if they are multi-part. Single jobs are kept as individual arrays.
   const groupedJobs = [];
   const setMap = {};
 
@@ -30,14 +27,12 @@ export default function Jobs() {
       if (!setMap[job.set_code]) setMap[job.set_code] = [];
       setMap[job.set_code].push(job);
     } else {
-      groupedJobs.push([job]); // Single-part product or legacy job
+      groupedJobs.push([job]); 
     }
   });
 
-  // Add the grouped multi-part sets into the main array
   Object.values(setMap).forEach(group => groupedJobs.push(group));
 
-  // ⭐️ FILTER ALGORITHM (Evaluates the entire set)
   const filteredGroups = groupedJobs.filter(group => {
     if (activeTab === "All") return true;
 
@@ -60,8 +55,6 @@ export default function Jobs() {
 
   return (
     <div className="max-w-[1600px] mx-auto p-4 sm:p-6 h-full flex flex-col">
-      
-      {/* HEADER */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 sm:mb-8">
         <div>
           <h2 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">Job Management</h2>
@@ -69,7 +62,6 @@ export default function Jobs() {
         </div>
       </div>
 
-      {/* TABS */}
       <div className="flex items-center gap-6 border-b border-gray-800 mb-6 overflow-x-auto no-scrollbar">
         {tabs.map(tab => (
           <button
@@ -86,7 +78,6 @@ export default function Jobs() {
         ))}
       </div>
 
-      {/* DATA TABLE */}
       <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden shadow-xl flex-1 flex flex-col">
         <div className="overflow-x-auto flex-1">
           <table className="w-full text-left border-collapse min-w-[1000px]">
@@ -108,9 +99,6 @@ export default function Jobs() {
                 filteredGroups.map((group) => {
                   const isSet = group.length > 1 || (group[0].parts_total > 1 && group[0].set_code);
 
-                  // -----------------------------------------------------
-                  // RENDER 1: MULTI-PART SET GROUPING
-                  // -----------------------------------------------------
                   if (isSet) {
                     const setCode = group[0].set_code;
                     const completedCount = group.filter(j => j.status === 'completed').length;
@@ -124,17 +112,18 @@ export default function Jobs() {
 
                     return (
                       <Fragment key={`set-${setCode}`}>
-                        {/* SET HEADER ROW */}
                         <tr className="bg-[#151724] border-t-2 border-gray-800">
                           <td className="py-4 px-6">
-                            <span className="font-mono text-sm font-bold text-primary-400">SET-{setCode}</span>
+                            <span className="font-mono text-sm font-bold text-primary-400">
+                              {setCode.includes('-') ? `SET-${setCode}` : setCode}
+                            </span>
                           </td>
                           <td className="py-4 px-6">
                             <div className="font-bold text-white text-sm">{group[0].product?.name || "Multi-Part Set"}</div>
                             <div className="text-xs text-gray-500 mt-0.5">{group[0].customer || "Unknown Customer"}</div>
                           </td>
                           <td className="py-4 px-6">
-                            <div className="font-bold text-gray-300 text-sm">{group[0].sets_qty?.toLocaleString()} Sets</div>
+                            {/* ⭐️ ROUND 6.3: Sets Quantity successfully removed from Header Row */}
                           </td>
                           <td className="py-4 px-6">
                             <span className={`px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wider border ${
@@ -150,12 +139,9 @@ export default function Jobs() {
                             <div className="text-xs font-bold text-gray-300">{completedCount} / {group.length} Parts Complete</div>
                             <div className="text-[10px] text-gray-500 mt-0.5 font-medium">Due: {new Date(group[0].deadline).toLocaleDateString()}</div>
                           </td>
-                          <td className="py-4 px-6 text-right">
-                            {/* Actions omitted on the header row; performed on individual cards */}
-                          </td>
+                          <td className="py-4 px-6 text-right"></td>
                         </tr>
 
-                        {/* CHILD JOB CARDS */}
                         {group.map(job => (
                           <tr key={job.id} className="hover:bg-gray-800/30 transition-colors bg-gray-900/40">
                             <td className="py-3 px-6 pl-10 border-l-2 border-gray-800">
@@ -198,9 +184,6 @@ export default function Jobs() {
                     );
                   }
 
-                  // -----------------------------------------------------
-                  // RENDER 2: SINGLE PART PRODUCT / LEGACY JOB
-                  // -----------------------------------------------------
                   const job = group[0];
                   return (
                     <tr key={job.id} className="hover:bg-gray-800/30 transition-colors">
