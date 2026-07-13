@@ -5,38 +5,34 @@ import { collection, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { useNavigate } from "react-router-dom";
 
-const parseDate = (val) => {
-  if (!val) return new Date();
-  return val.toDate ? val.toDate() : new Date(val);
+// ⭐️ ROUND 6.2: Bulletproof Local Date Formatting (Ignores UTC shifts)
+const toLocalYYYYMMDD = (d) => {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 };
 
-const isToday = (dateObj) => {
-  const d = parseDate(dateObj);
+// Safely extracts the intended YYYY-MM-DD from any Firebase date format
+const getJobDateStr = (val) => {
+  if (!val) return "";
+  if (typeof val === 'string') {
+      if (val.includes('T')) return val.split('T')[0];
+      return val;
+  }
+  if (val.toDate) return toLocalYYYYMMDD(val.toDate());
+  return toLocalYYYYMMDD(new Date(val));
+};
+
+// ⭐️ ROUND 6.2: Strict "Current Week" Generator (Monday to Sunday)
+const getCurrentWeekDates = () => {
   const today = new Date();
-  return d.getDate() === today.getDate() && d.getMonth() === today.getMonth() && d.getFullYear() === today.getFullYear();
-};
-
-const isThisWeek = (dateObj) => {
-  const d = parseDate(dateObj);
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const dayOfWeek = today.getDay(); 
-  const daysUntilEndOfWeek = dayOfWeek === 0 ? 0 : 7 - dayOfWeek; 
-  const endOfWeek = new Date(today);
-  endOfWeek.setDate(today.getDate() + daysUntilEndOfWeek);
-  endOfWeek.setHours(23, 59, 59, 999);
-  return d >= today && d <= endOfWeek;
-};
-
-const getNextWeekDays = () => {
-  const now = new Date();
-  const dayOfWeek = now.getDay();
-  const daysUntilNextMonday = dayOfWeek === 0 ? 1 : 8 - dayOfWeek;
-  const nextMonday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + daysUntilNextMonday);
-
+  const dayOfWeek = today.getDay() || 7; // Treat Sunday as 7 instead of 0
+  const monday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - dayOfWeek + 1);
+  
   return Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(nextMonday);
-    d.setDate(nextMonday.getDate() + i);
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
     return d;
   });
 };
@@ -44,10 +40,17 @@ const getNextWeekDays = () => {
 export default function DashboardHome() {
   const { jobs, loading } = useJobs();
   const navigate = useNavigate();
-  const nextWeekDays = useMemo(() => getNextWeekDays(), []);
-  const [selectedNextDay, setSelectedNextDay] = useState(nextWeekDays[0].toISOString().split('T')[0]); 
+  
+  // ⭐️ ROUND 6.2: Synchronized timeframe state
+  const thisWeekDays = useMemo(() => getCurrentWeekDates(), []);
+  const todayStr = toLocalYYYYMMDD(new Date());
+  
+  // Default to today if today is in the current week strip, otherwise default to Monday
+  const [selectedDay, setSelectedDay] = useState(() => {
+    const todayInWeek = thisWeekDays.find(d => toLocalYYYYMMDD(d) === todayStr);
+    return todayInWeek ? todayStr : toLocalYYYYMMDD(thisWeekDays[0]);
+  }); 
 
-  // ⭐️ ROUND 4: LOW STOCK TRACKER
   const [lowStockCount, setLowStockCount] = useState(0);
 
   useEffect(() => {
@@ -55,7 +58,6 @@ export default function DashboardHome() {
       let count = 0;
       snap.forEach(doc => {
         const item = doc.data();
-        // Check if item has a minimum threshold and has fallen below it
         if (item.minStock > 0 && (item.balance || 0) <= item.minStock) {
           count++;
         }
@@ -67,17 +69,23 @@ export default function DashboardHome() {
 
   if (loading) return <div className="p-8 text-primary-500 animate-pulse font-medium">Loading Dashboard Data...</div>;
 
-  const now = new Date();
   const activeJobs = jobs.filter(j => j.status !== "completed");
-  const completedToday = jobs.filter(j => j.status === "completed" && isToday(j.updated_at || j.deadline));
-  const completingThisWeek = activeJobs.filter(j => isThisWeek(j.deadline));
+  
+  // ⭐️ ROUND 6.2: Synchronized KPI Logic
+  const completedToday = jobs.filter(j => j.status === "completed" && getJobDateStr(j.updated_at || j.deadline) === todayStr);
   const ongoingJobs = activeJobs.filter(j => j.process_sequence?.some(p => p.status === "completed"));
-  const overdueJobs = activeJobs.filter(j => parseDate(j.deadline) < now);
-
-  const jobsCompletingSelectedDay = activeJobs.filter(j => {
-    const deadlineDate = parseDate(j.deadline).toISOString().split('T')[0];
-    return deadlineDate === selectedNextDay;
+  const overdueJobs = activeJobs.filter(j => {
+      const jobDate = getJobDateStr(j.deadline);
+      return jobDate !== "" && jobDate < todayStr;
   });
+
+  const thisWeekStrings = thisWeekDays.map(toLocalYYYYMMDD);
+  const completingThisWeek = activeJobs.filter(j => thisWeekStrings.includes(getJobDateStr(j.deadline)));
+  const jobsCompletingSelectedDay = activeJobs.filter(j => getJobDateStr(j.deadline) === selectedDay);
+
+  // Parse YYYY-MM-DD safely for visual display in the Target Header
+  const [targetY, targetM, targetD] = selectedDay.split('-');
+  const displayDate = new Date(targetY, targetM - 1, targetD);
 
   return (
     <div className="max-w-[1600px] mx-auto p-4 sm:p-6 h-full flex flex-col space-y-6 sm:space-y-8">
@@ -95,7 +103,7 @@ export default function DashboardHome() {
         </div>
       </div>
 
-      {/* ⭐️ KPI GRID (Updated to 6 columns for the Inventory Tracker) */}
+      {/* KPI GRID */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 sm:p-5 shadow-lg flex flex-col">
           <span className="text-gray-500 text-[10px] sm:text-xs font-bold uppercase tracking-wider mb-1 truncate">Active Jobs</span>
@@ -118,7 +126,6 @@ export default function DashboardHome() {
           <span className="text-2xl sm:text-3xl font-black text-red-500">{overdueJobs.length}</span>
         </div>
         
-        {/* ⭐️ NEW INVENTORY LOW STOCK ALERT CARD */}
         <div 
           onClick={() => navigate("/dashboard/inventory-management")}
           className="bg-yellow-950/20 border border-yellow-900/50 rounded-xl p-4 sm:p-5 shadow-lg flex flex-col cursor-pointer hover:bg-yellow-950/40 transition-colors group"
@@ -128,21 +135,21 @@ export default function DashboardHome() {
         </div>
       </div>
 
-      {/* NEXT WEEK PLANNER */}
+      {/* WEEK PLANNER */}
       <div className="bg-gray-900 border border-gray-800 rounded-xl shadow-xl overflow-hidden flex flex-col">
         <div className="p-4 sm:p-5 border-b border-gray-800 bg-[#151724]">
-          <h3 className="text-lg font-bold text-white mb-4">Completing Next Week</h3>
+          <h3 className="text-lg font-bold text-white mb-4">Completing This Week</h3>
           <div className="flex gap-2 overflow-x-auto pb-2 snap-x">
-            {nextWeekDays.map((dateObj) => {
-              const dateString = dateObj.toISOString().split('T')[0];
+            {thisWeekDays.map((dateObj) => {
+              const dateString = toLocalYYYYMMDD(dateObj);
               const dayName = dateObj.toLocaleDateString("en-US", { weekday: 'short' });
               const dayNum = dateObj.getDate();
-              const isSelected = selectedNextDay === dateString;
+              const isSelected = selectedDay === dateString;
 
               return (
                 <button
                   key={dateString}
-                  onClick={() => setSelectedNextDay(dateString)}
+                  onClick={() => setSelectedDay(dateString)}
                   className={`snap-start flex flex-col items-center justify-center min-w-[70px] sm:min-w-[80px] p-2 sm:p-3 rounded-lg border transition-all ${
                     isSelected 
                       ? 'bg-primary-600 border-primary-500 text-white shadow-lg shadow-primary-500/20' 
@@ -160,7 +167,7 @@ export default function DashboardHome() {
         <div className="p-4 sm:p-5">
           <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
             <h4 className="text-xs sm:text-sm font-bold text-gray-400 uppercase tracking-wider">
-              Targets for {new Date(selectedNextDay).toLocaleDateString("en-US", { weekday: 'long', month: 'short', day: 'numeric'})}
+              Targets for {displayDate.toLocaleDateString("en-US", { weekday: 'long', month: 'short', day: 'numeric'})}
             </h4>
             <span className="bg-gray-800 text-white px-3 py-1 rounded-full text-xs font-bold whitespace-nowrap">
               {jobsCompletingSelectedDay.length} Jobs

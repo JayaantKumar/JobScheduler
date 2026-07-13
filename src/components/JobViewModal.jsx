@@ -83,7 +83,6 @@ export default function JobViewModal({ job, onClose }) {
   
   const isMultiPart = localJob.parts_total > 1 || siblings.length > 1;
 
-  // ⭐️ ROUND 6.1: Updated String format to match "8 × 400 sets"
   const renderQtyMath = () => {
     if (localJob.is_custom_override) return `(${localJob.quantity_target?.toLocaleString()} custom for this job — standard ${localJob.qty_per_set}/set)`;
     return `(${localJob.active_multiplier || localJob.qty_per_set} × ${(localJob.sets_qty || 0).toLocaleString()} sets)`;
@@ -249,10 +248,15 @@ export default function JobViewModal({ job, onClose }) {
   // ============================================================================
   return (
     <>
-      {/* ⭐️ ROUND 6.1: THE NUCLEAR PRINT STYLESHEET (Fix A) */}
+      {/* ⭐️ ROUND 6.2: Final CSS fix to eliminate the "#root" junk first page blank layout */}
       <style type="text/css" media="print">
         {`
           @page { size: A4 portrait; margin: 12mm; }
+          
+          /* Force the React DOM wrapper to fully collapse during printing */
+          #root { 
+            display: none !important; 
+          }
           
           /* Hide the ENTIRE digital application UI safely */
           body *:not(#print-card):not(#print-card *) { 
@@ -477,6 +481,7 @@ export default function JobViewModal({ job, onClose }) {
                 </div>
               </div>
             )}
+
           </div>
         </div>
       </div>

@@ -8,10 +8,11 @@ export default function MasterData() {
   // --- EXISTING APP STATES ---
   const [dies, setDies] = useState([]);
   
-  // ⭐️ ROUND 6: RESTORED MASTER DATA STATES
+  // RESTORED MASTER DATA STATES
   const [customers, setCustomers] = useState([]);
   const [productCategories, setProductCategories] = useState([]);
   const [rates, setRates] = useState([]);
+  const [machines, setMachines] = useState([]); // Needed for Die assignments
 
   // --- INVENTORY MODULE STATES ---
   const [matCategories, setMatCategories] = useState([]);
@@ -22,11 +23,18 @@ export default function MasterData() {
   const [attributes, setAttributes] = useState([]);
   const [savingMat, setSavingMat] = useState(false);
 
-  // --- ⭐️ ROUND 6: GENERIC MODAL FOR RESTORED TABS ---
+  // --- GENERIC MODAL FOR RESTORED TABS ---
   const [genericModal, setGenericModal] = useState({ isOpen: false, type: "", editId: null, name: "", extraValue: "" });
   const [savingGeneric, setSavingGeneric] = useState(false);
 
-  // --- ⭐️ ROUND 6: INLINE CONFIRM/ALERT UI ---
+  // --- ⭐️ ROUND 6.2: DIE REGISTER MODAL STATE ---
+  const [isDieModalOpen, setDieModalOpen] = useState(false);
+  const [editingDie, setEditingDie] = useState(null);
+  const [dieForm, setDieForm] = useState({
+    dieNumber: "", dieName: "", dieSize: "", dieUps: "", dieCustomer: "", dieMachine: "", dieNotes: "", dieActive: true
+  });
+
+  // --- INLINE CONFIRM/ALERT UI ---
   const [confirmConfig, setConfirmConfig] = useState(null);
 
   // Active Tab View
@@ -36,17 +44,17 @@ export default function MasterData() {
   useEffect(() => {
     const unsubDies = onSnapshot(collection(db, "dies"), snap => setDies(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubMatCats = onSnapshot(collection(db, "materialCategories"), snap => setMatCategories(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-    
-    // ⭐️ ROUND 6: Sync restored collections
     const unsubCust = onSnapshot(collection(db, "customers"), snap => setCustomers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubProdCats = onSnapshot(collection(db, "productCategories"), snap => setProductCategories(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsubMachines = onSnapshot(collection(db, "machines"), snap => setMachines(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    
     const unsubRates = onSnapshot(collection(db, "rates"), snap => {
       setRates(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       setLoading(false);
     });
 
     return () => {
-      unsubDies(); unsubMatCats(); unsubCust(); unsubProdCats(); unsubRates();
+      unsubDies(); unsubMatCats(); unsubCust(); unsubProdCats(); unsubMachines(); unsubRates();
     };
   }, []);
 
@@ -79,7 +87,6 @@ export default function MasterData() {
     finally { setSavingMat(false); }
   };
 
-  // ⭐️ ROUND 6: Safe Delete with Inline Confirm
   const handleDeleteMaterialCategory = async (cat) => {
     try {
       const q = query(collection(db, "inventoryItems"), where("categoryId", "==", cat.id));
@@ -113,14 +120,91 @@ export default function MasterData() {
     }
   };
 
-  // --- ⭐️ ROUND 6: GENERIC HANDLERS FOR RESTORED TABS ---
+  // --- ⭐️ ROUND 6.2: MASTER DIES HANDLERS ---
+  const openDieModal = (die = null) => {
+    if (die) {
+      setEditingDie(die);
+      setDieForm({
+        dieNumber: die.dieNumber || "", dieName: die.dieName || "", dieSize: die.dieSize || "", 
+        dieUps: die.dieUps || "", dieCustomer: die.dieCustomer || "", dieMachine: die.dieMachine || "", 
+        dieNotes: die.dieNotes || "", dieActive: die.dieActive ?? true
+      });
+    } else {
+      setEditingDie(null);
+      setDieForm({
+        dieNumber: "", dieName: "", dieSize: "", dieUps: "", dieCustomer: "", dieMachine: "", dieNotes: "", dieActive: true
+      });
+    }
+    setDieModalOpen(true);
+  };
+
+  const handleSaveDie = async (e) => {
+    e.preventDefault();
+    if (!dieForm.dieNumber.trim()) return;
+    setSavingGeneric(true);
+    try {
+      const payload = { ...dieForm, updated_at: serverTimestamp() };
+      if (editingDie) {
+        await updateDoc(doc(db, "dies", editingDie.id), payload);
+      } else {
+        await addDoc(collection(db, "dies"), { ...payload, created_at: serverTimestamp() });
+      }
+      setDieModalOpen(false);
+    } catch (err) { alert("Failed to save die: " + err.message); }
+    finally { setSavingGeneric(false); }
+  };
+
+  const handleDeleteDie = async (die) => {
+    try {
+      // 1. Deep scan the products collection to see if this die number is referenced in any routing
+      const prodSnap = await getDocs(collection(db, "products"));
+      let isUsed = false;
+      prodSnap.forEach(d => {
+        const p = d.data();
+        p.parts?.forEach(part => {
+          part.sequence?.forEach(seq => {
+            if (seq.process_details) {
+              Object.values(seq.process_details).forEach(val => {
+                if (val === die.dieNumber) isUsed = true;
+              });
+            }
+          });
+        });
+      });
+
+      if (isUsed) {
+        setConfirmConfig({
+          isOpen: true,
+          title: "Cannot Delete Die",
+          message: `The die "${die.dieNumber}" is currently referenced in one or more Product Templates. You must remove it from the product routing before it can be deleted.`,
+          isAlertOnly: true,
+          onConfirm: () => setConfirmConfig(null)
+        });
+        return;
+      }
+
+      // 2. If safe, confirm deletion
+      setConfirmConfig({
+        isOpen: true,
+        title: "Delete Master Die",
+        message: `Are you sure you want to permanently delete Die ${die.dieNumber}?`,
+        isDanger: true,
+        confirmText: "Delete Die",
+        onConfirm: async () => {
+          setConfirmConfig(null);
+          await deleteDoc(doc(db, "dies", die.id));
+        },
+        onCancel: () => setConfirmConfig(null)
+      });
+    } catch (error) {
+      console.error("Error checking die usage:", error);
+    }
+  };
+
+  // --- GENERIC HANDLERS FOR RESTORED TABS ---
   const openGenericModal = (type, item = null) => {
     setGenericModal({
-      isOpen: true,
-      type: type,
-      editId: item ? item.id : null,
-      name: item ? item.name : "",
-      extraValue: item && item.value ? item.value : ""
+      isOpen: true, type: type, editId: item ? item.id : null, name: item ? item.name : "", extraValue: item && item.value ? item.value : ""
     });
   };
 
@@ -152,15 +236,8 @@ export default function MasterData() {
     else if (type === "Rate") collectionName = "rates";
 
     setConfirmConfig({
-      isOpen: true,
-      title: `Delete ${type}`,
-      message: `Are you sure you want to delete ${itemName}?`,
-      isDanger: true,
-      confirmText: "Delete",
-      onConfirm: async () => {
-        setConfirmConfig(null);
-        await deleteDoc(doc(db, collectionName, id));
-      },
+      isOpen: true, title: `Delete ${type}`, message: `Are you sure you want to delete ${itemName}?`, isDanger: true, confirmText: "Delete",
+      onConfirm: async () => { setConfirmConfig(null); await deleteDoc(doc(db, collectionName, id)); },
       onCancel: () => setConfirmConfig(null)
     });
   };
@@ -175,7 +252,7 @@ export default function MasterData() {
   return (
     <div className="max-w-[1600px] mx-auto p-6 h-full flex flex-col relative">
       
-      {/* ⭐️ ROUND 6: INLINE CONFIRM/ALERT MODAL */}
+      {/* INLINE CONFIRM/ALERT MODAL */}
       {confirmConfig && confirmConfig.isOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
           <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-md shadow-2xl overflow-hidden animate-fade-in">
@@ -201,7 +278,6 @@ export default function MasterData() {
         <p className="text-gray-400 mt-1">Configure factory assets, blueprints, categories, and raw material attributes.</p>
       </div>
 
-      {/* SUB-TABS ENGINE (Restored all tabs) */}
       {/* SUB-TABS ENGINE */}
       <div className="flex items-center gap-6 border-b border-gray-800 mb-6 overflow-x-auto no-scrollbar">
         {["material_cats", "dies", "customers", "product_cats", "rates"].map(tab => {
@@ -209,7 +285,7 @@ export default function MasterData() {
             material_cats: "Raw Material Categories",
             dies: "Master Inventory Dies",
             customers: "Customers",
-            product_cats: "Product Categories", // ⭐️ FIX: Rectified spelling
+            product_cats: "Product Categories",
             rates: "Machine Rates"
           };
           return (
@@ -280,6 +356,73 @@ export default function MasterData() {
       )}
 
       {/* ======================================================== */}
+      {/* ⭐️ ROUND 6.2: RESTORED MASTER DIES VIEW */}
+      {/* ======================================================== */}
+      {activeSubTab === "dies" && (
+        <div className="space-y-6 flex-1 flex flex-col">
+          <div className="flex justify-between items-center">
+            <div>
+              <h3 className="text-lg font-bold text-white">Die Cut Master Library</h3>
+              <p className="text-xs text-gray-500">Reusable die sets across multiple production lines.</p>
+            </div>
+            <button onClick={() => openDieModal()} className="bg-primary-600 hover:bg-primary-500 text-white text-xs font-bold px-4 py-2.5 rounded-lg transition-colors shadow-lg">+ Add Master Die</button>
+          </div>
+          
+          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden shadow-xl flex-1">
+            <div className="bg-gray-950/40 p-4 border-b border-gray-800 text-sm text-gray-400">
+              Total Registered Operational Dies in System: <strong className="text-white font-mono ml-1">{dies.length} sets</strong>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse min-w-[900px]">
+                <thead>
+                  <tr className="bg-gray-950/50 border-b border-gray-800 text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+                    <th className="py-4 px-6 w-[20%]">Die Number & Name</th>
+                    <th className="py-4 px-6 w-[20%]">Specs (Size / Ups)</th>
+                    <th className="py-4 px-6 w-[25%]">Assignments (Cust / Mach)</th>
+                    <th className="py-4 px-6 w-[10%] text-center">Status</th>
+                    <th className="py-4 px-6 w-[25%] text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-800">
+                  {dies.length === 0 ? (
+                    <tr><td colSpan="5" className="py-12 text-center text-gray-500 italic text-sm">No dies registered in the system.</td></tr>
+                  ) : (
+                    dies.map((die) => (
+                      <tr key={die.id} className={`hover:bg-gray-800/20 transition-colors ${!die.dieActive ? 'opacity-50' : ''}`}>
+                        <td className="py-4 px-6">
+                          <div className="font-bold text-primary-400 text-sm font-mono">{die.dieNumber}</div>
+                          <div className="text-xs text-gray-300 mt-1">{die.dieName || "Unnamed Die"}</div>
+                        </td>
+                        <td className="py-4 px-6">
+                          <div className="text-xs text-gray-300 font-medium">{die.dieSize || "N/A"}</div>
+                          {die.dieUps && <div className="text-[10px] text-gray-500 uppercase font-bold mt-1">{die.dieUps} Ups</div>}
+                        </td>
+                        <td className="py-4 px-6">
+                          <div className="text-xs text-gray-400">{die.dieCustomer || "No Customer Linked"}</div>
+                          <div className="text-[10px] text-gray-500 mt-1">{machines.find(m => m.id === die.dieMachine)?.name || "Any Machine"}</div>
+                        </td>
+                        <td className="py-4 px-6 text-center">
+                          <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${die.dieActive ? 'bg-green-500/10 text-green-400' : 'bg-gray-800 text-gray-500'}`}>
+                            {die.dieActive ? 'Active' : 'Archived'}
+                          </span>
+                        </td>
+                        <td className="py-4 px-6 text-right">
+                          <div className="flex justify-end gap-2 items-center">
+                            <button onClick={() => openDieModal(die)} className="text-xs font-medium text-gray-400 hover:text-white border border-gray-700 hover:bg-gray-800 px-3 py-1 rounded transition-colors">Edit</button>
+                            <button onClick={() => handleDeleteDie(die)} className="text-xs font-medium text-gray-600 hover:text-red-400 p-1 rounded transition-colors">Delete</button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
       {/* RESTORED VIEWS: CUSTOMERS, PRODUCT CATS, RATES */}
       {/* ======================================================== */}
       {["customers", "product_cats", "rates"].includes(activeSubTab) && (() => {
@@ -288,13 +431,12 @@ export default function MasterData() {
         let hasExtra = false;
         
         if (activeSubTab === "customers") { type = "Customer"; dataList = customers; }
-        if (activeSubTab === "product_cats") { type = "Product Category"; dataList = productCategories; } // ⭐️ FIX: Internal name map reference
+        if (activeSubTab === "product_cats") { type = "Product Category"; dataList = productCategories; }
         if (activeSubTab === "rates") { type = "Rate"; dataList = rates; hasExtra = true; }
 
         return (
           <div className="space-y-6 flex-1 flex flex-col">
             <div className="flex justify-between items-center">
-              {/* ⭐️ FIX: Dynamic pluralization correction block */}
               <h3 className="text-lg font-bold text-white">
                 Manage {type === "Product Category" ? "Product Categories" : `${type}s`}
               </h3>
@@ -312,7 +454,6 @@ export default function MasterData() {
                 <tbody className="divide-y divide-gray-800">
                   {dataList.length === 0 ? (
                     <tr>
-                      {/* ⭐️ FIX: Empty state typo correction */}
                       <td colSpan="3" className="py-12 text-center text-gray-500 italic text-sm">
                         No {type === "Product Category" ? "product categories" : `${type.toLowerCase()}s`} found.
                       </td>
@@ -338,21 +479,68 @@ export default function MasterData() {
         );
       })()}
 
-      {/* DIES VIEW */}
-      {activeSubTab === "dies" && (
-        <div className="space-y-6 flex-1 flex flex-col">
-          <div className="flex justify-between items-center">
-            <h3 className="text-lg font-bold text-white">Die Cut Master Library</h3>
-          </div>
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 text-gray-400 text-sm">
-            Total Registered Operational Dies in System: <strong className="text-white font-mono ml-1">{dies.length} sets</strong>
+      {/* ======================================================== */}
+      {/* ⭐️ ROUND 6.2: DIE CRUD MODAL */}
+      {/* ======================================================== */}
+      {isDieModalOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-fade-in">
+            <div className="p-6 border-b border-gray-800 bg-[#151724]">
+              <h3 className="text-lg font-bold text-white">{editingDie ? "Edit Master Die" : "Register New Die"}</h3>
+            </div>
+            <form onSubmit={handleSaveDie} className="flex-1 overflow-y-auto p-6 custom-scrollbar space-y-5 bg-[#0a0f1a]">
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div><label className={labelClass}>Die Number / ID *</label><input required type="text" value={dieForm.dieNumber} onChange={e => setDieForm({...dieForm, dieNumber: e.target.value})} className={`${inputClass} font-mono`} placeholder="e.g. DIE-102A" /></div>
+                <div><label className={labelClass}>Die Name / Description</label><input type="text" value={dieForm.dieName} onChange={e => setDieForm({...dieForm, dieName: e.target.value})} className={inputClass} placeholder="e.g. Master Carton Outer" /></div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div><label className={labelClass}>Die Size Specs</label><input type="text" value={dieForm.dieSize} onChange={e => setDieForm({...dieForm, dieSize: e.target.value})} className={inputClass} placeholder="L x W x H" /></div>
+                <div><label className={labelClass}>Ups on Die (Optional)</label><input type="number" value={dieForm.dieUps} onChange={e => setDieForm({...dieForm, dieUps: e.target.value})} className={inputClass} placeholder="e.g. 4" /></div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t border-gray-800 pt-4">
+                <div>
+                  <label className={labelClass}>Customer Specific (Optional)</label>
+                  <select value={dieForm.dieCustomer} onChange={e => setDieForm({...dieForm, dieCustomer: e.target.value})} className={selectClass}>
+                    <option value="">-- No specific customer --</option>
+                    {customers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className={labelClass}>Default Target Machine (Optional)</label>
+                  <select value={dieForm.dieMachine} onChange={e => setDieForm({...dieForm, dieMachine: e.target.value})} className={selectClass}>
+                    <option value="">-- Any compatible machine --</option>
+                    {machines.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div className="border-t border-gray-800 pt-4">
+                <label className={labelClass}>Additional Notes</label>
+                <textarea rows="2" value={dieForm.dieNotes} onChange={e => setDieForm({...dieForm, dieNotes: e.target.value})} className={`${inputClass} resize-none`} placeholder="Tooling details, location, condition..."></textarea>
+              </div>
+
+              <div className="pt-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={dieForm.dieActive} onChange={e => setDieForm({...dieForm, dieActive: e.target.checked})} className="rounded bg-gray-900 border-gray-700 w-4 h-4 text-primary-600 focus:ring-primary-500" />
+                  <span className="text-sm font-medium text-gray-300">Die is Active and operational</span>
+                </label>
+              </div>
+
+              <div className="pt-4 flex justify-end gap-3 border-t border-gray-800">
+                <button type="button" onClick={() => setDieModalOpen(false)} className="px-4 py-2 bg-gray-950 hover:bg-gray-800 text-xs text-gray-400 hover:text-white rounded transition-colors font-medium">Cancel</button>
+                <button type="submit" disabled={savingGeneric} className="bg-primary-600 hover:bg-primary-500 disabled:opacity-50 text-xs font-bold text-white px-5 py-2 rounded transition-colors shadow-lg">
+                  {savingGeneric ? "Saving..." : "Save Master Die"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
 
-      {/* ======================================================== */}
-      {/* ⭐️ GENERIC ADD/EDIT MODAL (Customers, Product Cats, Rates) */}
-      {/* ======================================================== */}
+      {/* GENERIC ADD/EDIT MODAL (Customers, Product Cats, Rates) */}
       {genericModal.isOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-md flex flex-col shadow-2xl overflow-hidden animate-fade-in">
@@ -381,9 +569,7 @@ export default function MasterData() {
         </div>
       )}
 
-      {/* ======================================================== */}
-      {/* ⭐️ MATERIAL CATEGORIES ATTRIBUTE MODAL                  */}
-      {/* ======================================================== */}
+      {/* MATERIAL CATEGORIES ATTRIBUTE MODAL */}
       {isMatModalOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden animate-fade-in">

@@ -5,19 +5,6 @@ import { logoutUser } from "../services/auth.service";
 export default function AdminLayout() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  // --- NEW: Feature Toggle State with LocalStorage ---
-  const [showProductMgmt, setShowProductMgmt] = useState(() => {
-    return localStorage.getItem('showProductMgmt') !== 'false';
-  });
-
-  const toggleProductMgmt = () => {
-    setShowProductMgmt(prev => {
-      const newVal = !prev;
-      localStorage.setItem('showProductMgmt', newVal);
-      return newVal;
-    });
-  };
-
   const navLinkClasses = ({ isActive }) =>
     `block px-4 py-3 rounded-lg transition-all font-medium ${
       isActive
@@ -114,8 +101,6 @@ export default function AdminLayout() {
           >
             Master Data
           </NavLink>
-          
-          {/* ⭐️ ADDED: Inventory Management Route Link */}
           <NavLink
             to="/dashboard/inventory-management"
             onClick={handleNavClick}
@@ -124,29 +109,18 @@ export default function AdminLayout() {
             Inventory Management
           </NavLink>
           
-          {/* Hidden dynamically based on toggle */}
-          {showProductMgmt && (
-            <NavLink
-              to="/dashboard/product-management"
-              onClick={handleNavClick}
-              className={navLinkClasses}
-            >
-              Product Management
-            </NavLink>
-          )}
+          {/* Product Management permanently visible */}
+          <NavLink
+            to="/dashboard/product-management"
+            onClick={handleNavClick}
+            className={navLinkClasses}
+          >
+            Product Management
+          </NavLink>
         </nav>
 
-        {/* Product Management Toggle Switch */}
+        {/* Action Footer (Toggle removed completely) */}
         <div className="px-5 py-4 border-t border-gray-800 shrink-0 bg-gray-900">
-          <label className="flex items-center justify-between cursor-pointer mb-4 group">
-            <span className="text-xs font-bold text-gray-500 uppercase tracking-wider group-hover:text-gray-300 transition-colors">Product Mgmt UI</span>
-            <div className="relative">
-              <input type="checkbox" className="sr-only" checked={showProductMgmt} onChange={toggleProductMgmt} />
-              <div className={`block w-8 h-5 rounded-full transition-colors ${showProductMgmt ? 'bg-primary-600' : 'bg-gray-800 border border-gray-700'}`}></div>
-              <div className={`dot absolute left-1 top-1 bg-white w-3 h-3 rounded-full transition-transform ${showProductMgmt ? 'transform translate-x-3' : ''}`}></div>
-            </div>
-          </label>
-
           <button
             onClick={logoutUser}
             className="w-full px-4 py-2 text-left text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors font-medium flex items-center gap-2"

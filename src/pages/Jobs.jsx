@@ -1,6 +1,5 @@
 import { useState, Fragment } from "react";
 import { useJobs } from "../hooks/useJobs";
-import JobModal from "../components/JobModal";
 import JobViewModal from "../components/JobViewModal";
 import { doc, deleteDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
@@ -9,7 +8,6 @@ export default function Jobs() {
   const { jobs, loading } = useJobs();
   const [activeTab, setActiveTab] = useState("All");
   
-  const [isCreateModalOpen, setCreateModalOpen] = useState(false);
   const [viewingJob, setViewingJob] = useState(null);
 
   const handleDelete = async (id) => {
@@ -22,7 +20,7 @@ export default function Jobs() {
     }
   };
 
-  // ⭐️ ROUND 3: GROUPING ALGORITHM
+  // ⭐️ GROUPING ALGORITHM
   // Group jobs by set_code if they are multi-part. Single jobs are kept as individual arrays.
   const groupedJobs = [];
   const setMap = {};
@@ -67,14 +65,8 @@ export default function Jobs() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 sm:mb-8">
         <div>
           <h2 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">Job Management</h2>
-          <p className="text-sm sm:text-base text-gray-400 mt-1">Create, view, and manage all factory job cards and linked sets.</p>
+          <p className="text-sm sm:text-base text-gray-400 mt-1">View, print, and manage all active factory job cards and linked sets.</p>
         </div>
-        <button 
-          onClick={() => setCreateModalOpen(true)} 
-          className="w-full sm:w-auto justify-center bg-primary-600 hover:bg-primary-500 text-white px-5 py-2.5 rounded-lg font-medium transition-colors shadow-lg flex items-center gap-2 shrink-0"
-        >
-          <span>+</span> Create Job
-        </button>
       </div>
 
       {/* TABS */}
@@ -253,7 +245,6 @@ export default function Jobs() {
         </div>
       </div>
 
-      {isCreateModalOpen && <JobModal onClose={() => setCreateModalOpen(false)} />}
       {viewingJob && <JobViewModal job={viewingJob} onClose={() => setViewingJob(null)} />}
     </div>
   );
