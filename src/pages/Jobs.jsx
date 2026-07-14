@@ -114,17 +114,16 @@ export default function Jobs() {
                       <Fragment key={`set-${setCode}`}>
                         <tr className="bg-[#151724] border-t-2 border-gray-800">
                           <td className="py-4 px-6">
+                            {/* ⭐️ FIXED: Correctly prepends SET- to both old legacy codes and new sequential codes */}
                             <span className="font-mono text-sm font-bold text-primary-400">
-                              {setCode.includes('-') ? `SET-${setCode}` : setCode}
+                              SET-{setCode}
                             </span>
                           </td>
                           <td className="py-4 px-6">
                             <div className="font-bold text-white text-sm">{group[0].product?.name || "Multi-Part Set"}</div>
                             <div className="text-xs text-gray-500 mt-0.5">{group[0].customer || "Unknown Customer"}</div>
                           </td>
-                          <td className="py-4 px-6">
-                            {/* ⭐️ ROUND 6.3: Sets Quantity successfully removed from Header Row */}
-                          </td>
+                          <td className="py-4 px-6"></td>
                           <td className="py-4 px-6">
                             <span className={`px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wider border ${
                               setStatus === 'completed' ? 'bg-green-500/10 text-green-400 border-green-500/20' : 

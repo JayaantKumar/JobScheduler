@@ -16,7 +16,7 @@ export default function AdminLayout() {
   const handleNavClick = () => setIsMobileMenuOpen(false);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-950">
+    <div className="flex h-screen overflow-hidden bg-gray-950 print:hidden">
       {/* Mobile Overlay Background */}
       {isMobileMenuOpen && (
         <div

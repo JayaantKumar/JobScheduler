@@ -1,14 +1,13 @@
 import { useState, useEffect } from "react";
-import { collection, addDoc, updateDoc, doc, deleteDoc, serverTimestamp, onSnapshot } from "firebase/firestore";
+// ⭐️ ROUND 6.4: writeBatch added to handle massive concurrent array saves
+import { collection, addDoc, updateDoc, doc,deleteDoc, serverTimestamp, onSnapshot, query, where, getDocs, writeBatch } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { useProducts } from "../hooks/useProducts";
 import { useCustomers } from "../hooks/useCustomers";
 import { useProcesses } from "../hooks/useProcesses"; 
 import { useMachines } from "../hooks/useMachines"; 
 import { useDies } from "../hooks/useDies"; 
-import { addJob } from "../services/job.service"; 
 
-// ⭐️ ROUND 6: Global GSM text stripper
 const cleanGsm = (val) => val ? String(val).replace(/gsm/gi, "").trim() : "";
 
 export default function ProductManagement() {
@@ -41,7 +40,6 @@ export default function ProductManagement() {
   
   const [produceParts, setProduceParts] = useState([]);
 
-  // --- FORM STATES FOR MULTI-PART TEMPLATE ---
   const [name, setName] = useState("");
   const [sku, setSku] = useState("");
   const [category, setCategory] = useState("");
@@ -58,7 +56,6 @@ export default function ProductManagement() {
 
   const [parts, setParts] = useState([defaultPart()]);
 
-  // ⭐️ ROUND 6: Inline Modal State for Adding Customers/Categories on the fly
   const [inlineAddModal, setInlineAddModal] = useState({ isOpen: false, type: "", name: "" });
   const [savingInline, setSavingInline] = useState(false);
 
@@ -87,7 +84,7 @@ export default function ProductManagement() {
         setParts(prod.parts.map(p => ({
           ...p,
           id: p.id || Date.now() + Math.random(),
-          paperGsm: cleanGsm(p.paperGsm), // Clean on load
+          paperGsm: cleanGsm(p.paperGsm),
           sequence: p.sequence?.length > 0 ? p.sequence : [defaultSequence()]
         })));
       } else {
@@ -97,7 +94,7 @@ export default function ProductManagement() {
           qty_per_set: 1,
           size: prod.size || "",
           paperType: prod.paperType || prod.material || "",
-          paperGsm: cleanGsm(prod.paperGsm || prod.gsm || ""), // Clean on load
+          paperGsm: cleanGsm(prod.paperGsm || prod.gsm || ""),
           sheet_size: prod.sheet_size || "",
           cut_size: prod.cut_size || "",
           customMaterial: prod.customMaterial || "",
@@ -112,7 +109,6 @@ export default function ProductManagement() {
     setModalOpen(true);
   };
 
-  // --- Editable Produce Engine Builders ---
   const generateProduceParts = (qtyStr, baseParts) => {
     const sets = Number(qtyStr) || 0;
     return baseParts.map(p => {
@@ -268,7 +264,6 @@ export default function ProductManagement() {
         name: inlineAddModal.name.trim(),
         created_at: serverTimestamp()
       });
-      // Auto-select the newly created item
       if (inlineAddModal.type === "Customer") setCustomerName(inlineAddModal.name.trim());
       if (inlineAddModal.type === "Product Category") setCategory(inlineAddModal.name.trim());
       setInlineAddModal({ isOpen: false, type: "", name: "" });
@@ -312,20 +307,54 @@ export default function ProductManagement() {
 
   const handleDelete = async (id) => {
     if (window.confirm("Are you sure you want to delete this product template?")) {
-      try { await deleteDoc(doc(db, "products", id)); } 
-      catch (error) { alert("Failed to delete: " + error.message); }
+      try { 
+        await deleteDoc(doc(db, "products", id)); 
+      } catch (error) { 
+        alert("Failed to delete: " + error.message); 
+      }
     }
   };
 
+  // ⭐️ ROUND 6.4: The completely rewritten Job Engine using writeBatch
   const handleQuickProduce = async (e) => {
     e.preventDefault();
-    if (!produceQty || !produceDate) return alert("Please enter sets quantity and due date.");
-    setProducing(true);
     
-    const set_code = Math.random().toString(36).substring(2, 8).toUpperCase();
-    const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    // Strict guard against double-clicks
+    if (producing) return; 
+    if (!produceQty || !produceDate) return alert("Please enter sets quantity and due date.");
+    
+    setProducing(true);
 
     try {
+      const today = new Date();
+      const dd = String(today.getDate()).padStart(2, '0');
+      const mm = String(today.getMonth() + 1).padStart(2, '0');
+      const yy = String(today.getFullYear()).slice(-2);
+      const datePrefix = `${dd}${mm}${yy}`; 
+
+      const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString();
+      const q = query(collection(db, "jobs"), where("job_date", ">=", startOfDay));
+      const snap = await getDocs(q);
+
+      let maxNN = 0;
+      snap.forEach(d => {
+        const data = d.data();
+        if (data.set_code && data.set_code.startsWith(datePrefix)) {
+          const splitCode = data.set_code.split('-');
+          if (splitCode.length === 2) {
+            const nn = parseInt(splitCode[1], 10);
+            if (!isNaN(nn) && nn > maxNN) maxNN = nn;
+          }
+        }
+      });
+
+      const nextNN = String(maxNN + 1).padStart(2, '0');
+      const set_code = `${datePrefix}-${nextNN}`;
+      const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+      // Initialize the atomic batch processor
+      const batch = writeBatch(db);
+
       for (let i = 0; i < produceParts.length; i++) {
         const pState = produceParts[i];
         const masterPart = activeProduceProduct.parts.find(p => p.id === pState.id) || activeProduceProduct.parts[i];
@@ -407,8 +436,13 @@ export default function ProductManagement() {
           notes: "Auto-generated multi-part set."
         };
 
-        await addJob(newJobPayload);
+        // Inject this single job configuration directly into the batch packet
+        const newJobRef = doc(collection(db, "jobs"));
+        batch.set(newJobRef, newJobPayload);
       }
+
+      // Execute the entire payload in one instantaneous server transaction
+      await batch.commit();
 
       setProduceModalOpen(false);
       alert("Success! Multi-part job cards have been generated.");
@@ -424,7 +458,6 @@ export default function ProductManagement() {
 
   const filteredProducts = products.filter(p => p.name?.toLowerCase().includes(searchQuery.toLowerCase()) || p.customerName?.toLowerCase().includes(searchQuery.toLowerCase()));
 
-  // ⭐️ ESLINT FIX: renderDynamicProcessFields is now correctly utilized inside the sequence mapper again.
   const renderDynamicProcessFields = (partId, step) => {
     const processData = dbProcesses.find(p => p.processName === step.process_name);
     if (!processData || !processData.attributes || processData.attributes.length === 0) return null;
@@ -471,7 +504,6 @@ export default function ProductManagement() {
     );
   };
 
-  // ⭐️ ESLINT FIX: Used for conditional rendering in the UI
   const isMultiPart = parts.length > 1;
 
   if (prodLoading) return <div className="p-8 text-primary-500 animate-pulse font-medium">Loading Products...</div>;
@@ -479,7 +511,6 @@ export default function ProductManagement() {
   return (
     <div className="max-w-[1600px] mx-auto p-6 h-full flex flex-col relative">
       
-      {/* ⭐️ ROUND 6: INLINE ADD MODAL (Customers / Categories) */}
       {inlineAddModal.isOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
           <div className="bg-gray-900 border border-primary-500/30 rounded-xl w-full max-w-md shadow-2xl overflow-hidden animate-fade-in">
@@ -593,7 +624,6 @@ export default function ProductManagement() {
         </div>
       </div>
 
-      {/* --- 🚀 MULTI-PART INDEPENDENT SET QUANTITY PRODUCE MODAL --- */}
       {isProduceModalOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-primary-500/30 rounded-xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl">
@@ -671,15 +701,32 @@ export default function ProductManagement() {
 
             <div className="p-6 border-t border-gray-800 shrink-0 flex justify-end gap-3 bg-[#151724]">
               <button type="button" onClick={() => setProduceModalOpen(false)} className="px-5 py-2.5 text-gray-400 bg-gray-900 rounded-lg">Cancel</button>
-              <button type="submit" onClick={handleQuickProduce} disabled={producing || produceParts.length === 0} className="bg-primary-600 hover:bg-primary-500 disabled:opacity-50 text-white px-6 py-2.5 rounded-lg font-bold shadow-lg">
-                {producing ? "Deploying..." : "Generate and Send to Floor"}
+              
+              {/* ⭐️ ROUND 6.4: Safety Guard and Loading State Spinner */}
+              <button 
+                type="submit" 
+                onClick={handleQuickProduce} 
+                disabled={producing || produceParts.length === 0} 
+                className="bg-primary-600 hover:bg-primary-500 disabled:opacity-50 text-white px-6 py-2.5 rounded-lg font-bold shadow-lg flex items-center justify-center min-w-[220px]"
+              >
+                {producing ? (
+                  <span className="flex items-center gap-2">
+                    <svg className="animate-spin h-4 w-4 text-white" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Batch Processing...
+                  </span>
+                ) : (
+                  "Generate and Send to Floor"
+                )}
               </button>
+
             </div>
           </div>
         </div>
       )}
 
-      {/* Blueprint Master Profile Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl">
@@ -694,7 +741,6 @@ export default function ProductManagement() {
                 <div><label className={labelClass}>SKU / Item Code</label><input type="text" value={sku} onChange={e => setSku(e.target.value)} className={inputClass} /></div>
                 <div>
                   <label className={labelClass}>Assigned Customer *</label>
-                  {/* ⭐️ ESLINT FIX: custLoading dependency re-added */}
                   <select required value={customerName} onChange={handleCustomerSelect} className={inputClass} disabled={custLoading}>
                     <option value="">-- Select Customer --</option>
                     {customers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
@@ -726,7 +772,6 @@ export default function ProductManagement() {
                         <span className="text-xs text-gray-500 ml-2 font-bold uppercase">Mult per set:</span>
                         <input required type="number" min="1" value={part.qty_per_set} onChange={e => updatePartField(part.id, 'qty_per_set', e.target.value)} className="bg-gray-950 border border-gray-800 rounded px-2 py-1 text-sm text-center text-white w-12 outline-none" />
                       </div>
-                      {/* ⭐️ ESLINT FIX: isMultiPart dependency re-added */}
                       {isMultiPart && <button type="button" onClick={() => handleRemovePart(part.id)} className="text-red-500 hover:text-red-400 text-xs font-bold uppercase">Remove</button>}
                     </div>
 
@@ -745,12 +790,10 @@ export default function ProductManagement() {
                           <div key={step.id} className="flex flex-col gap-2 border-l-2 border-gray-800 pl-3 py-1">
                             <div className="flex gap-3 items-center">
                               <span className="text-xs font-bold text-gray-600 w-4 font-mono">{idx+1}.</span>
-                              {/* ⭐️ ESLINT FIX: procLoading dependency re-added */}
                               <select required value={step.process_name} onChange={(e) => handleSequenceChange(part.id, step.id, 'process_name', e.target.value)} disabled={procLoading} className="bg-gray-900 border border-gray-700 rounded p-1.5 text-xs text-white flex-1">
                                 <option value="">-- Select Process --</option>
                                 {dbProcesses.map(p => <option key={p.id} value={p.processName}>{p.processName}</option>)}
                               </select>
-                              {/* ⭐️ ESLINT FIX: machLoading dependency re-added */}
                               <select required value={step.assigned_machine} onChange={(e) => handleSequenceChange(part.id, step.id, 'assigned_machine', e.target.value)} disabled={machLoading} className="bg-gray-900 border border-gray-700 rounded p-1.5 text-xs text-white flex-1">
                                 <option value="">-- Lock Target Machine --</option>
                                 {getFilteredMachines(step.process_name).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
@@ -758,7 +801,6 @@ export default function ProductManagement() {
                               <button onClick={() => handleSequenceRemove(part.id, step.id)} type="button" className="text-gray-500 hover:text-red-400 font-mono font-bold text-xs px-2">✕</button>
                             </div>
                             
-                            {/* ⭐️ ESLINT FIX: renderDynamicProcessFields implementation restored! */}
                             {renderDynamicProcessFields(part.id, step)}
                             
                             <div className="pl-7 mt-1">
