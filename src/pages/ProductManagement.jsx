@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
-// ⭐️ ROUND 6.4: writeBatch added to handle massive concurrent array saves
-import { collection, addDoc, updateDoc, doc,deleteDoc, serverTimestamp, onSnapshot, query, where, getDocs, writeBatch } from "firebase/firestore";
+import { collection, addDoc, updateDoc, doc, deleteDoc, serverTimestamp, onSnapshot, query, where, getDocs, writeBatch } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { useProducts } from "../hooks/useProducts";
 import { useCustomers } from "../hooks/useCustomers";
@@ -21,6 +20,16 @@ export default function ProductManagement() {
   const [editingProduct, setEditingProduct] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [saving, setSaving] = useState(false);
+
+  // ⭐️ FINAL POLISH: Non-blocking UI Toast State
+  const [toastMessage, setToastMessage] = useState("");
+  const [showToast, setShowToast] = useState(false);
+
+  const triggerToast = (msg) => {
+    setToastMessage(msg);
+    setShowToast(true);
+    setTimeout(() => setShowToast(false), 3000);
+  };
 
   const [categories, setCategories] = useState([]);
   useEffect(() => {
@@ -315,11 +324,9 @@ export default function ProductManagement() {
     }
   };
 
-  // ⭐️ ROUND 6.4: The completely rewritten Job Engine using writeBatch
   const handleQuickProduce = async (e) => {
     e.preventDefault();
     
-    // Strict guard against double-clicks
     if (producing) return; 
     if (!produceQty || !produceDate) return alert("Please enter sets quantity and due date.");
     
@@ -352,7 +359,6 @@ export default function ProductManagement() {
       const set_code = `${datePrefix}-${nextNN}`;
       const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
-      // Initialize the atomic batch processor
       const batch = writeBatch(db);
 
       for (let i = 0; i < produceParts.length; i++) {
@@ -436,16 +442,15 @@ export default function ProductManagement() {
           notes: "Auto-generated multi-part set."
         };
 
-        // Inject this single job configuration directly into the batch packet
         const newJobRef = doc(collection(db, "jobs"));
         batch.set(newJobRef, newJobPayload);
       }
 
-      // Execute the entire payload in one instantaneous server transaction
       await batch.commit();
 
       setProduceModalOpen(false);
-      alert("Success! Multi-part job cards have been generated.");
+      // ⭐️ FINAL POLISH: Replaced blocking alert() with non-blocking UI Toast
+      triggerToast("Success! Multi-part job cards have been generated.");
     } catch (error) { 
       alert("Failed to generate multi-part jobs: " + error.message); 
     } finally { 
@@ -511,6 +516,16 @@ export default function ProductManagement() {
   return (
     <div className="max-w-[1600px] mx-auto p-6 h-full flex flex-col relative">
       
+      {/* ⭐️ FINAL POLISH: Success Toast Notification UI */}
+      {showToast && (
+        <div className="fixed top-6 right-6 bg-green-600/90 backdrop-blur-sm border border-green-500 text-white px-6 py-4 rounded-xl shadow-2xl z-[100] font-bold animate-fade-in flex items-center gap-3">
+          <svg className="w-6 h-6 text-green-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" />
+          </svg>
+          {toastMessage}
+        </div>
+      )}
+
       {inlineAddModal.isOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
           <div className="bg-gray-900 border border-primary-500/30 rounded-xl w-full max-w-md shadow-2xl overflow-hidden animate-fade-in">
@@ -697,32 +712,30 @@ export default function ProductManagement() {
                   ))}
                 </div>
               )}
+
+              {/* ⭐️ FINAL POLISH: Removed onClick from button to prevent double execution alongside the form's onSubmit */}
+              <div className="pt-6 border-t border-gray-800 shrink-0 flex justify-end gap-3 sticky bottom-0 bg-[#0a0f1a] pb-2">
+                <button type="button" onClick={() => setProduceModalOpen(false)} className="px-5 py-2.5 text-gray-400 bg-gray-900 rounded-lg">Cancel</button>
+                <button 
+                  type="submit" 
+                  disabled={producing || produceParts.length === 0} 
+                  className="bg-primary-600 hover:bg-primary-500 disabled:opacity-50 text-white px-6 py-2.5 rounded-lg font-bold shadow-lg flex items-center justify-center min-w-[220px]"
+                >
+                  {producing ? (
+                    <span className="flex items-center gap-2">
+                      <svg className="animate-spin h-4 w-4 text-white" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Generating...
+                    </span>
+                  ) : (
+                    "Generate and Send to Floor"
+                  )}
+                </button>
+              </div>
+
             </form>
-
-            <div className="p-6 border-t border-gray-800 shrink-0 flex justify-end gap-3 bg-[#151724]">
-              <button type="button" onClick={() => setProduceModalOpen(false)} className="px-5 py-2.5 text-gray-400 bg-gray-900 rounded-lg">Cancel</button>
-              
-              {/* ⭐️ ROUND 6.4: Safety Guard and Loading State Spinner */}
-              <button 
-                type="submit" 
-                onClick={handleQuickProduce} 
-                disabled={producing || produceParts.length === 0} 
-                className="bg-primary-600 hover:bg-primary-500 disabled:opacity-50 text-white px-6 py-2.5 rounded-lg font-bold shadow-lg flex items-center justify-center min-w-[220px]"
-              >
-                {producing ? (
-                  <span className="flex items-center gap-2">
-                    <svg className="animate-spin h-4 w-4 text-white" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    Batch Processing...
-                  </span>
-                ) : (
-                  "Generate and Send to Floor"
-                )}
-              </button>
-
-            </div>
           </div>
         </div>
       )}
