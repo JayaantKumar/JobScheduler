@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { collection, query, where, getDocs, doc, updateDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
@@ -88,6 +88,13 @@ export default function JobViewModal({ job, onClose }) {
     return `(${localJob.active_multiplier || localJob.qty_per_set} per set × ${(localJob.sets_qty || 0).toLocaleString()} sets)`;
   };
 
+  // ⭐️ ROUND 6.5: Calculate Route Chain for Header
+  const placeChain = localJob.process_sequence
+    ?.map(s => s.assigned_machine_place)
+    .filter(p => p && p.trim() !== "")
+    .filter((p, i, arr) => i === 0 || p !== arr[i-1]);
+  const routeText = placeChain?.length > 0 ? `Route: ${placeChain.join(" → ")}` : "Route: Unassigned";
+
   // ============================================================================
   // 🖨️ THE PRINT PORTAL VIEW (A4 Mockup Redesign)
   // ============================================================================
@@ -105,12 +112,20 @@ export default function JobViewModal({ job, onClose }) {
               <div className="border border-black px-2 py-0.5 inline-block text-xs font-bold uppercase tracking-wider mb-1">
                 PART {localJob.part_index} OF {localJob.parts_total || siblings.length} — {localJob.part_name}
               </div>
-              <div className="text-xs font-bold font-mono text-gray-700">{localJob.display_id}</div>
+              <div className="flex items-center gap-2">
+                <div className="text-xs font-bold font-mono text-gray-700">{localJob.display_id}</div>
+                {/* ⭐️ ROUND 6.5: Header Place Chain */}
+                <div className="text-[10px] font-bold text-gray-800 uppercase border border-gray-400 inline-block px-1.5 py-0.5">{routeText}</div>
+              </div>
             </>
           ) : (
             <>
               <h1 className="text-3xl font-black uppercase tracking-tight mb-1">FACTORY JOB CARD</h1>
-              <div className="text-xs font-bold font-mono text-gray-700">{localJob.display_id || `JOB-${localJob.id.slice(0, 8).toUpperCase()}`}</div>
+              <div className="flex items-center gap-2">
+                <div className="text-xs font-bold font-mono text-gray-700">{localJob.display_id || `JOB-${localJob.id.slice(0, 8).toUpperCase()}`}</div>
+                {/* ⭐️ ROUND 6.5: Header Place Chain */}
+                <div className="text-[10px] font-bold text-gray-800 uppercase border border-gray-400 inline-block px-1.5 py-0.5">{routeText}</div>
+              </div>
             </>
           )}
         </div>
@@ -169,7 +184,9 @@ export default function JobViewModal({ job, onClose }) {
           <tr className="bg-gray-100 border-b-2 border-black">
             <th className="border-r-2 border-black p-2 w-8 text-center">#</th>
             <th className="border-r-2 border-black p-2">Process & Specifications</th>
-            <th className="border-r-2 border-black p-2 w-32">Machine</th>
+            {/* ⭐️ ROUND 6.5: New Split Machine & Place Headers */}
+            <th className="border-r-2 border-black p-2 w-28">Machine</th>
+            <th className="border-r-2 border-black p-2 w-16">Place</th>
             <th className="border-r-2 border-black p-2 w-16 text-center">Qty In</th>
             <th className="border-r-2 border-black p-2 w-16 text-center">Exp. Out</th>
             <th className="border-r-2 border-black p-2 w-20 text-center">Actual Out</th>
@@ -177,24 +194,42 @@ export default function JobViewModal({ job, onClose }) {
           </tr>
         </thead>
         <tbody>
-          {localJob.process_sequence?.map((step, idx) => (
-            <tr key={idx} className="border-b border-black">
-              <td className="border-r-2 border-black p-2 text-center font-bold align-top">{idx + 1}</td>
-              <td className="border-r-2 border-black p-2 align-top">
-                <span className="font-bold text-sm">{step.process_name}</span>
-                {step.remarks && (
-                  <div className="text-[10px] font-medium text-gray-800 mt-1 whitespace-pre-wrap leading-tight">
-                    {step.remarks.replace(/ \| /g, '\n')}
-                  </div>
+          {localJob.process_sequence?.map((step, idx, arr) => {
+            const prevStep = idx > 0 ? arr[idx-1] : null;
+            const prevPlace = prevStep?.assigned_machine_place;
+            const currPlace = step.assigned_machine_place;
+            const isTransfer = prevPlace && currPlace && prevPlace !== currPlace;
+
+            return (
+              <Fragment key={idx}>
+                {/* ⭐️ ROUND 6.5: Print Transfer Marker */}
+                {isTransfer && (
+                  <tr className="bg-gray-200 border-b border-black">
+                    <td colSpan="8" className="p-1.5 text-center text-[10px] font-black uppercase tracking-widest text-black">
+                      → SEND OUT: {prevPlace} → {currPlace}
+                    </td>
+                  </tr>
                 )}
-              </td>
-              <td className="border-r-2 border-black p-2 align-top text-gray-800 text-[10px] font-bold">{step.assigned_machine_name || "Any Available"}</td>
-              <td className="border-r-2 border-black p-2 text-center align-top font-bold">{step.input_qty?.toLocaleString() || localJob.quantity_target?.toLocaleString()}</td>
-              <td className="border-r-2 border-black p-2 text-center align-top font-bold text-gray-600">{step.output_qty?.toLocaleString() || localJob.quantity_target?.toLocaleString()}</td>
-              <td className="border-r-2 border-black p-2 text-center align-top"></td>
-              <td className="p-2 align-top"></td>
-            </tr>
-          ))}
+                <tr className="border-b border-black">
+                  <td className="border-r-2 border-black p-2 text-center font-bold align-top">{idx + 1}</td>
+                  <td className="border-r-2 border-black p-2 align-top">
+                    <span className="font-bold text-sm">{step.process_name}</span>
+                    {step.remarks && (
+                      <div className="text-[10px] font-medium text-gray-800 mt-1 whitespace-pre-wrap leading-tight">
+                        {step.remarks.replace(/ \| /g, '\n')}
+                      </div>
+                    )}
+                  </td>
+                  <td className="border-r-2 border-black p-2 align-top text-gray-800 text-[10px] font-bold">{step.assigned_machine_name || "Any Available"}</td>
+                  <td className="border-r-2 border-black p-2 align-top text-gray-800 text-[10px] font-bold">{currPlace || "—"}</td>
+                  <td className="border-r-2 border-black p-2 text-center align-top font-bold">{step.input_qty?.toLocaleString() || localJob.quantity_target?.toLocaleString()}</td>
+                  <td className="border-r-2 border-black p-2 text-center align-top font-bold text-gray-600">{step.output_qty?.toLocaleString() || localJob.quantity_target?.toLocaleString()}</td>
+                  <td className="border-r-2 border-black p-2 text-center align-top"></td>
+                  <td className="p-2 align-top"></td>
+                </tr>
+              </Fragment>
+            );
+          })}
         </tbody>
       </table>
 
@@ -258,11 +293,15 @@ export default function JobViewModal({ job, onClose }) {
           <div className="bg-[#151724] p-6 border-b border-gray-800 shrink-0">
             <div className="flex justify-between items-start">
               <div>
-                <div className="flex gap-2 mb-2">
+                <div className="flex items-center gap-2 mb-2">
                   <span className="bg-primary-500/20 text-primary-400 px-2 py-0.5 rounded text-xs font-mono font-bold uppercase tracking-wider">
                     {localJob.display_id || `JOB-${localJob.id.slice(0, 8).toUpperCase()}`}
                   </span>
-                  {isMultiPart && <span className="bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wider">Part {localJob.part_index} of {localJob.parts_total || siblings.length}</span>}
+                  {/* ⭐️ ROUND 6.5: Screen Header Route Text */}
+                  <span className="bg-gray-800 text-gray-300 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border border-gray-700">
+                    {routeText}
+                  </span>
+                  {isMultiPart && <span className="bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wider ml-1">Part {localJob.part_index} of {localJob.parts_total || siblings.length}</span>}
                 </div>
                 <h2 className="text-2xl font-bold text-white">{localJob.title || localJob.product?.name || "Untitled Job"}</h2>
                 <p className="text-gray-400 text-sm mt-1">{localJob.customer || "No Customer"} | {localJob.product?.sku || "No SKU"} {isMultiPart ? `| ${localJob.part_name}` : ""}</p>
@@ -338,7 +377,7 @@ export default function JobViewModal({ job, onClose }) {
             <div>
               <h3 className="text-sm font-bold text-gray-400 mb-3 uppercase tracking-wider">Process Routing & Status</h3>
               <div className="space-y-3">
-                {localJob.process_sequence?.map((step, idx) => {
+                {localJob.process_sequence?.map((step, idx, arr) => {
                   const isCompleted = step.status === 'completed';
                   const isScheduled = step.status === 'scheduled';
                   let timeString = 'Unscheduled';
@@ -347,79 +386,98 @@ export default function JobViewModal({ job, onClose }) {
                     timeString = dateObj.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
                   }
 
-                  return (
-                    <div key={idx} className={`p-4 rounded-lg border flex flex-col gap-3 transition-colors ${
-                      isCompleted ? 'bg-green-950/20 border-green-900/30' : 
-                      isScheduled ? 'bg-yellow-950/20 border-yellow-900/40' : 
-                      'bg-gray-900 border-gray-800'
-                    }`}>
-                      <div className="flex items-center gap-4 w-full">
-                        <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${
-                          isCompleted ? 'bg-green-500/20 text-green-400' : 
-                          isScheduled ? 'bg-yellow-500/20 text-yellow-400' : 
-                          'bg-gray-800 text-gray-500'
-                        }`}>
-                          {idx + 1}
-                        </div>
-                        
-                        <div className="flex-1">
-                          <div className="text-white font-bold">{step.process_name}</div>
-                          <div className="text-xs text-gray-500 mt-1">{step.assigned_machine_name || 'Unassigned Machine'}</div>
-                          
-                          <div className="text-[11px] text-gray-400 font-mono mt-1">
-                            In: {step.input_qty?.toLocaleString() || localJob.quantity_target} → Out: {step.output_qty?.toLocaleString() || localJob.quantity_target}
-                          </div>
-                          
-                          {step.remarks && (
-                            <div className="text-[11px] text-primary-300 font-mono mt-2 bg-gray-950 p-2.5 rounded border border-gray-800 whitespace-pre-wrap leading-relaxed">
-                              {step.remarks}
-                            </div>
-                          )}
-                        </div>
-                        
-                        <div className="text-right flex flex-col items-end gap-2">
-                          {isScheduled && (
-                            <div className="text-[10px] text-gray-400 flex items-center gap-1 font-mono">
-                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                              {timeString}
-                            </div>
-                          )}
-                          <span className={`inline-block px-2.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                            isCompleted ? 'bg-green-500/20 text-green-400' : 
-                            isScheduled ? 'bg-yellow-500/20 text-yellow-400' : 'bg-gray-800 text-gray-400'
-                          }`}>
-                            {isCompleted ? 'Completed' : isScheduled ? 'In Queue' : 'Pending'}
-                          </span>
-                          
-                          {!isCompleted && completingStepIdx !== idx && (
-                            <button onClick={() => { setCompletingStepIdx(idx); setQtyOk(step.output_qty || localJob.quantity_target || ""); setQtyReject("0"); }} className="text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 bg-primary-600 hover:bg-primary-500 text-white rounded transition-colors shadow-lg">
-                              Mark Complete
-                            </button>
-                          )}
-                        </div>
-                      </div>
+                  const prevStep = idx > 0 ? arr[idx-1] : null;
+                  const prevPlace = prevStep?.assigned_machine_place;
+                  const currPlace = step.assigned_machine_place;
+                  const isTransfer = prevPlace && currPlace && prevPlace !== currPlace;
 
-                      {completingStepIdx === idx && (
-                        <div className="mt-2 bg-gray-950 p-4 rounded-lg border border-primary-500/30 ml-12 animate-fade-in">
-                          <h4 className="text-xs font-bold text-primary-400 mb-3 uppercase tracking-wider">Complete Process: {step.process_name}</h4>
-                          <div className="flex items-end gap-4">
-                            <div className="flex-1"><label className="block text-[10px] text-gray-500 uppercase font-bold mb-1">Qty OK (Usable)</label><input type="number" value={qtyOk} onChange={e => setQtyOk(e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-white focus:border-primary-500 outline-none" /></div>
-                            <div className="flex-1"><label className="block text-[10px] text-gray-500 uppercase font-bold mb-1">Qty Rejected (Wastage)</label><input type="number" value={qtyReject} onChange={e => setQtyReject(e.target.value)} className="w-full bg-gray-900 border border-red-900/50 rounded px-3 py-2 text-sm text-white focus:border-red-500 outline-none" /></div>
-                            <div className="flex gap-2">
-                              <button onClick={() => setCompletingStepIdx(null)} className="px-4 py-2 text-xs font-bold text-gray-400 hover:text-white bg-gray-800 rounded transition-colors">Cancel</button>
-                              <button onClick={() => handleCompleteStep(idx)} disabled={updating} className="px-4 py-2 text-xs font-bold text-white bg-green-600 hover:bg-green-500 rounded transition-colors disabled:opacity-50">{updating ? "Saving..." : "Confirm"}</button>
-                            </div>
+                  return (
+                    <Fragment key={idx}>
+                      {/* ⭐️ ROUND 6.5: Screen Transfer Marker */}
+                      {isTransfer && (
+                        <div className="flex items-center justify-center my-1.5">
+                          <div className="bg-gray-800 border border-gray-700 text-gray-300 text-[10px] font-bold uppercase tracking-widest px-4 py-1.5 rounded-full shadow-lg">
+                            → SEND OUT: {prevPlace} → {currPlace}
                           </div>
                         </div>
                       )}
-                      {isCompleted && (
-                        <div className="ml-12 mt-1 flex gap-4 text-xs font-mono">
-                          <span className="text-green-400 bg-green-400/10 px-2 py-0.5 rounded">OK: {step.qty_ok?.toLocaleString() || 0}</span>
-                          {step.qty_rejected > 0 && <span className="text-red-400 bg-red-400/10 px-2 py-0.5 rounded">REJECT: {step.qty_rejected?.toLocaleString()}</span>}
-                          {step.completed_at && <span className="text-gray-500">Done: {new Date(step.completed_at).toLocaleDateString()}</span>}
+                      <div className={`p-4 rounded-lg border flex flex-col gap-3 transition-colors ${
+                        isCompleted ? 'bg-green-950/20 border-green-900/30' : 
+                        isScheduled ? 'bg-yellow-950/20 border-yellow-900/40' : 
+                        'bg-gray-900 border-gray-800'
+                      }`}>
+                        <div className="flex items-center gap-4 w-full">
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${
+                            isCompleted ? 'bg-green-500/20 text-green-400' : 
+                            isScheduled ? 'bg-yellow-500/20 text-yellow-400' : 
+                            'bg-gray-800 text-gray-500'
+                          }`}>
+                            {idx + 1}
+                          </div>
+                          
+                          <div className="flex-1">
+                            <div className="text-white font-bold">{step.process_name}</div>
+                            <div className="text-xs text-gray-500 mt-1 flex items-center gap-2">
+                              {step.assigned_machine_name || 'Unassigned Machine'}
+                              {/* ⭐️ ROUND 6.5: Screen Place Badge */}
+                              {currPlace && <span className="px-1.5 py-0.5 bg-gray-800 rounded font-mono text-[9px] text-gray-400 border border-gray-700">Place: {currPlace}</span>}
+                            </div>
+                            
+                            <div className="text-[11px] text-gray-400 font-mono mt-1">
+                              In: {step.input_qty?.toLocaleString() || localJob.quantity_target} → Out: {step.output_qty?.toLocaleString() || localJob.quantity_target}
+                            </div>
+                            
+                            {step.remarks && (
+                              <div className="text-[11px] text-primary-300 font-mono mt-2 bg-gray-950 p-2.5 rounded border border-gray-800 whitespace-pre-wrap leading-relaxed">
+                                {step.remarks}
+                              </div>
+                            )}
+                          </div>
+                          
+                          <div className="text-right flex flex-col items-end gap-2">
+                            {isScheduled && (
+                              <div className="text-[10px] text-gray-400 flex items-center gap-1 font-mono">
+                                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                {timeString}
+                              </div>
+                            )}
+                            <span className={`inline-block px-2.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                              isCompleted ? 'bg-green-500/20 text-green-400' : 
+                              isScheduled ? 'bg-yellow-500/20 text-yellow-400' : 'bg-gray-800 text-gray-400'
+                            }`}>
+                              {isCompleted ? 'Completed' : isScheduled ? 'In Queue' : 'Pending'}
+                            </span>
+                            
+                            {!isCompleted && completingStepIdx !== idx && (
+                              <button onClick={() => { setCompletingStepIdx(idx); setQtyOk(step.output_qty || localJob.quantity_target || ""); setQtyReject("0"); }} className="text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 bg-primary-600 hover:bg-primary-500 text-white rounded transition-colors shadow-lg">
+                                Mark Complete
+                              </button>
+                            )}
+                          </div>
                         </div>
-                      )}
-                    </div>
+
+                        {completingStepIdx === idx && (
+                          <div className="mt-2 bg-gray-950 p-4 rounded-lg border border-primary-500/30 ml-12 animate-fade-in">
+                            <h4 className="text-xs font-bold text-primary-400 mb-3 uppercase tracking-wider">Complete Process: {step.process_name}</h4>
+                            <div className="flex items-end gap-4">
+                              <div className="flex-1"><label className="block text-[10px] text-gray-500 uppercase font-bold mb-1">Qty OK (Usable)</label><input type="number" value={qtyOk} onChange={e => setQtyOk(e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-white focus:border-primary-500 outline-none" /></div>
+                              <div className="flex-1"><label className="block text-[10px] text-gray-500 uppercase font-bold mb-1">Qty Rejected (Wastage)</label><input type="number" value={qtyReject} onChange={e => setQtyReject(e.target.value)} className="w-full bg-gray-900 border border-red-900/50 rounded px-3 py-2 text-sm text-white focus:border-red-500 outline-none" /></div>
+                              <div className="flex gap-2">
+                                <button onClick={() => setCompletingStepIdx(null)} className="px-4 py-2 text-xs font-bold text-gray-400 hover:text-white bg-gray-800 rounded transition-colors">Cancel</button>
+                                <button onClick={() => handleCompleteStep(idx)} disabled={updating} className="px-4 py-2 text-xs font-bold text-white bg-green-600 hover:bg-green-500 rounded transition-colors disabled:opacity-50">{updating ? "Saving..." : "Confirm"}</button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                        {isCompleted && (
+                          <div className="ml-12 mt-1 flex gap-4 text-xs font-mono">
+                            <span className="text-green-400 bg-green-400/10 px-2 py-0.5 rounded">OK: {step.qty_ok?.toLocaleString() || 0}</span>
+                            {step.qty_rejected > 0 && <span className="text-red-400 bg-red-400/10 px-2 py-0.5 rounded">REJECT: {step.qty_rejected?.toLocaleString()}</span>}
+                            {step.completed_at && <span className="text-gray-500">Done: {new Date(step.completed_at).toLocaleDateString()}</span>}
+                          </div>
+                        )}
+                      </div>
+                    </Fragment>
                   );
                 })}
               </div>

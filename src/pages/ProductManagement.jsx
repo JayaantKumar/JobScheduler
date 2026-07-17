@@ -21,7 +21,6 @@ export default function ProductManagement() {
   const [searchQuery, setSearchQuery] = useState("");
   const [saving, setSaving] = useState(false);
 
-  // ⭐️ FINAL POLISH: Non-blocking UI Toast State
   const [toastMessage, setToastMessage] = useState("");
   const [showToast, setShowToast] = useState(false);
 
@@ -118,11 +117,12 @@ export default function ProductManagement() {
     setModalOpen(true);
   };
 
+  // ⭐️ ROUND 6.5: Safely handle empty quantities to pre-render the dialog structure
   const generateProduceParts = (qtyStr, baseParts) => {
-    const sets = Number(qtyStr) || 0;
+    const sets = qtyStr === "" ? "" : Number(qtyStr);
     return baseParts.map(p => {
        const mult = Number(p.qty_per_set) || 1;
-       const computedPcs = sets * mult;
+       const computedPcs = sets === "" ? "" : sets * mult;
        return {
           id: p.id,
           part_name: p.part_name,
@@ -144,7 +144,9 @@ export default function ProductManagement() {
     }
     setActiveProduceProduct(formattedProd);
     setProduceQty("");
-    setProduceParts([]); 
+    // ⭐️ ROUND 6.5: Pre-fill the modal immediately without waiting for user input
+    setProduceParts(generateProduceParts("", formattedProd.parts)); 
+    
     const defaultDate = new Date();
     defaultDate.setDate(defaultDate.getDate() + 14);
     setProduceDate(defaultDate.toISOString().split('T')[0]);
@@ -162,10 +164,10 @@ export default function ProductManagement() {
   const updatePartSets = (pIdx, newSets) => {
     setProduceParts(prev => {
       const copy = [...prev];
-      const count = Number(newSets) || 0;
+      const count = newSets === "" ? "" : Number(newSets);
       copy[pIdx].part_sets = count;
       if (!copy[pIdx].is_custom_override) {
-        copy[pIdx].final_pcs = count * copy[pIdx].active_multiplier;
+        copy[pIdx].final_pcs = count === "" ? "" : count * copy[pIdx].active_multiplier;
         copy[pIdx].sequence = copy[pIdx].sequence.map(s => ({ ...s, input_qty: copy[pIdx].final_pcs, output_qty: copy[pIdx].final_pcs }));
       }
       return copy;
@@ -175,10 +177,10 @@ export default function ProductManagement() {
   const updatePartMultiplier = (pIdx, newMult) => {
     setProduceParts(prev => {
        const copy = [...prev];
-       const mult = Number(newMult) || 0;
+       const mult = newMult === "" ? "" : Number(newMult);
        copy[pIdx].active_multiplier = mult;
        if (!copy[pIdx].is_custom_override) {
-         copy[pIdx].final_pcs = copy[pIdx].part_sets * mult;
+         copy[pIdx].final_pcs = (copy[pIdx].part_sets === "" || mult === "") ? "" : copy[pIdx].part_sets * mult;
          copy[pIdx].sequence = copy[pIdx].sequence.map(s => ({...s, input_qty: copy[pIdx].final_pcs, output_qty: copy[pIdx].final_pcs}));
        }
        return copy;
@@ -190,7 +192,7 @@ export default function ProductManagement() {
        const copy = [...prev];
        copy[pIdx].is_custom_override = checked;
        if (!checked) {
-         copy[pIdx].final_pcs = copy[pIdx].part_sets * copy[pIdx].active_multiplier;
+         copy[pIdx].final_pcs = (copy[pIdx].part_sets === "" || copy[pIdx].active_multiplier === "") ? "" : copy[pIdx].part_sets * copy[pIdx].active_multiplier;
          copy[pIdx].sequence = copy[pIdx].sequence.map(s => ({...s, input_qty: copy[pIdx].final_pcs, output_qty: copy[pIdx].final_pcs}));
        }
        return copy;
@@ -200,7 +202,7 @@ export default function ProductManagement() {
   const updatePartCustomPcs = (pIdx, newPcs) => {
     setProduceParts(prev => {
        const copy = [...prev];
-       copy[pIdx].final_pcs = Number(newPcs) || 0;
+       copy[pIdx].final_pcs = newPcs === "" ? "" : Number(newPcs);
        copy[pIdx].sequence = copy[pIdx].sequence.map(s => ({...s, input_qty: copy[pIdx].final_pcs, output_qty: copy[pIdx].final_pcs}));
        return copy;
     });
@@ -211,7 +213,7 @@ export default function ProductManagement() {
         const copy = [...prev];
         const pCopy = {...copy[pIdx]};
         const seqCopy = [...pCopy.sequence];
-        const num = Number(val) || 0;
+        const num = val === "" ? "" : Number(val);
         seqCopy[sIdx] = {...seqCopy[sIdx], [field]: num};
         if (field === 'output_qty') {
             let cascadedOut = num;
@@ -331,6 +333,9 @@ export default function ProductManagement() {
     if (!produceQty || !produceDate) return alert("Please enter sets quantity and due date.");
     
     setProducing(true);
+    
+    // ⭐️ ROUND 6.5: Force React to paint the "Generating..." spinner before freezing the thread with Firebase
+    await new Promise(resolve => setTimeout(resolve, 50)); 
 
     try {
       const today = new Date();
@@ -397,7 +402,9 @@ export default function ProductManagement() {
             remarks: instructions, 
             process_details: step.process_details || {}, 
             assigned_machine_id: step.assigned_machine || null,
-            assigned_machine_name: assignedMach ? assignedMach.name : "Unassigned Machine"
+            assigned_machine_name: assignedMach ? assignedMach.name : "Unassigned Machine",
+            // ⭐️ ROUND 6.5: Snapshot Machine Place
+            assigned_machine_place: assignedMach ? (assignedMach.place || "") : "" 
           };
         });
 
@@ -449,7 +456,6 @@ export default function ProductManagement() {
       await batch.commit();
 
       setProduceModalOpen(false);
-      // ⭐️ FINAL POLISH: Replaced blocking alert() with non-blocking UI Toast
       triggerToast("Success! Multi-part job cards have been generated.");
     } catch (error) { 
       alert("Failed to generate multi-part jobs: " + error.message); 
@@ -516,7 +522,6 @@ export default function ProductManagement() {
   return (
     <div className="max-w-[1600px] mx-auto p-6 h-full flex flex-col relative">
       
-      {/* ⭐️ FINAL POLISH: Success Toast Notification UI */}
       {showToast && (
         <div className="fixed top-6 right-6 bg-green-600/90 backdrop-blur-sm border border-green-500 text-white px-6 py-4 rounded-xl shadow-2xl z-[100] font-bold animate-fade-in flex items-center gap-3">
           <svg className="w-6 h-6 text-green-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -651,7 +656,8 @@ export default function ProductManagement() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-bold text-primary-400 mb-1">Global Base Order Quantity (SETS) *</label>
-                  <input required type="number" value={produceQty} onChange={handleProduceQtyChange} placeholder="e.g. 340" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-3 text-lg font-bold text-white focus:outline-none" />
+                  {/* ⭐️ ROUND 6.5: autofocus added to immediately jump cursor into input */}
+                  <input autoFocus required type="number" value={produceQty} onChange={handleProduceQtyChange} placeholder="e.g. 340" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-3 text-lg font-bold text-white focus:outline-none" />
                 </div>
                 <div>
                   <label className="block text-sm font-bold text-gray-400 mb-1">Production Due Date *</label>
@@ -659,7 +665,7 @@ export default function ProductManagement() {
                 </div>
               </div>
               
-              {produceQty > 0 && produceParts.length > 0 && (
+              {produceParts.length > 0 && (
                 <div className="space-y-4">
                   {produceParts.map((p, pIdx) => (
                     <div key={p.id} className="bg-gray-900 border border-gray-800 p-4 rounded-lg">
@@ -689,7 +695,8 @@ export default function ProductManagement() {
                         </div>
                         <div className="ml-auto text-right">
                           <span className="text-[10px] text-gray-500 uppercase font-bold block">Calculated Blanks</span>
-                          <span className="text-xl font-black text-white">{p.final_pcs.toLocaleString()} pcs</span>
+                          {/* ⭐️ ROUND 6.5: Empty calculations show "—" */}
+                          <span className="text-xl font-black text-white">{p.final_pcs === "" ? "—" : `${p.final_pcs.toLocaleString()} pcs`}</span>
                         </div>
                       </div>
 
@@ -713,7 +720,6 @@ export default function ProductManagement() {
                 </div>
               )}
 
-              {/* ⭐️ FINAL POLISH: Removed onClick from button to prevent double execution alongside the form's onSubmit */}
               <div className="pt-6 border-t border-gray-800 shrink-0 flex justify-end gap-3 sticky bottom-0 bg-[#0a0f1a] pb-2">
                 <button type="button" onClick={() => setProduceModalOpen(false)} className="px-5 py-2.5 text-gray-400 bg-gray-900 rounded-lg">Cancel</button>
                 <button 
@@ -740,6 +746,7 @@ export default function ProductManagement() {
         </div>
       )}
 
+      {/* Product Management Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl">
