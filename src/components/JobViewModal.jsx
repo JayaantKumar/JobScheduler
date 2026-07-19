@@ -75,12 +75,6 @@ export default function JobViewModal({ job, onClose }) {
   const dueDate = localJob.deadline ? new Date(localJob.deadline).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "N/A";
   const jobDate = localJob.job_date ? new Date(localJob.job_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "N/A";
   
-  const formatGsm = (gsm) => {
-    if (!gsm) return "";
-    const cleaned = String(gsm).replace(/gsm/gi, "").trim();
-    return `(${cleaned} GSM)`;
-  };
-  
   const isMultiPart = localJob.parts_total > 1 || siblings.length > 1;
 
   const renderQtyMath = () => {
@@ -88,15 +82,28 @@ export default function JobViewModal({ job, onClose }) {
     return `(${localJob.active_multiplier || localJob.qty_per_set} per set × ${(localJob.sets_qty || 0).toLocaleString()} sets)`;
   };
 
-  // ⭐️ ROUND 6.5: Calculate Route Chain for Header
   const placeChain = localJob.process_sequence
     ?.map(s => s.assigned_machine_place)
     .filter(p => p && p.trim() !== "")
     .filter((p, i, arr) => i === 0 || p !== arr[i-1]);
   const routeText = placeChain?.length > 0 ? `Route: ${placeChain.join(" → ")}` : "Route: Unassigned";
 
+  // ⭐️ ROUND 7: Determine which materials array to use (New format vs Legacy fallback)
+  const cuttingList = localJob.product?.materialRows?.length > 0 
+    ? localJob.product.materialRows 
+    : [{
+        id: 'legacy-1',
+        material_name: localJob.product?.material || "N/A",
+        piece_purpose: localJob.part_name || "Main",
+        size: localJob.specifications?.size_after_cut || localJob.product?.size || "N/A",
+        qty_per_unit: 1,
+        unit: "pcs",
+        gsm: localJob.product?.gsm || "",
+        notes: `Raw: ${localJob.specifications?.size_before_cut || localJob.product?.sheet_size || "N/A"}`
+      }];
+
   // ============================================================================
-  // 🖨️ THE PRINT PORTAL VIEW (A4 Mockup Redesign)
+  // 🖨️ THE PRINT PORTAL VIEW 
   // ============================================================================
   const PrintView = (
     <div id="print-card" className="hidden print:block w-full bg-white text-black font-sans relative text-sm">
@@ -114,7 +121,6 @@ export default function JobViewModal({ job, onClose }) {
               </div>
               <div className="flex items-center gap-2">
                 <div className="text-xs font-bold font-mono text-gray-700">{localJob.display_id}</div>
-                {/* ⭐️ ROUND 6.5: Header Place Chain */}
                 <div className="text-[10px] font-bold text-gray-800 uppercase border border-gray-400 inline-block px-1.5 py-0.5">{routeText}</div>
               </div>
             </>
@@ -123,7 +129,6 @@ export default function JobViewModal({ job, onClose }) {
               <h1 className="text-3xl font-black uppercase tracking-tight mb-1">FACTORY JOB CARD</h1>
               <div className="flex items-center gap-2">
                 <div className="text-xs font-bold font-mono text-gray-700">{localJob.display_id || `JOB-${localJob.id.slice(0, 8).toUpperCase()}`}</div>
-                {/* ⭐️ ROUND 6.5: Header Place Chain */}
                 <div className="text-[10px] font-bold text-gray-800 uppercase border border-gray-400 inline-block px-1.5 py-0.5">{routeText}</div>
               </div>
             </>
@@ -155,20 +160,45 @@ export default function JobViewModal({ job, onClose }) {
         <div><span className="text-gray-500 font-bold">SKU:</span> <span className="font-bold text-black ml-1">{localJob.product?.sku || "N/A"}</span></div>
       </div>
 
-      {/* SPECS STRIP */}
-      <div className="grid grid-cols-6 border-2 border-black divide-x-2 divide-black text-[10px] mb-4">
-        <div className="p-1.5 flex flex-col"><span className="text-gray-500 font-bold uppercase">Part Size</span><span className="font-bold text-sm mt-0.5">{localJob.product?.size || "N/A"}</span></div>
-        <div className="p-1.5 flex flex-col"><span className="text-gray-500 font-bold uppercase">Raw Sheet</span><span className="font-bold text-sm mt-0.5">{localJob.specifications?.size_before_cut || localJob.product?.sheet_size || "N/A"}</span></div>
-        <div className="p-1.5 flex flex-col"><span className="text-gray-500 font-bold uppercase">Cut Size</span><span className="font-bold text-sm mt-0.5">{localJob.specifications?.size_after_cut || "N/A"}</span></div>
-        <div className="p-1.5 flex flex-col"><span className="text-gray-500 font-bold uppercase">Material/GSM</span><span className="font-bold text-sm mt-0.5 leading-tight">{localJob.product?.material || "N/A"}<br/>{formatGsm(localJob.product?.gsm)}</span></div>
-        <div className="p-1.5 flex flex-col"><span className="text-gray-500 font-bold uppercase">Die No.</span><span className="font-bold text-sm mt-0.5">N/A</span></div>
-        <div className="p-1.5 flex flex-col"><span className="text-gray-500 font-bold uppercase">Colours/Finish</span><span className="font-bold text-sm mt-0.5">N/A</span></div>
-      </div>
+      {/* ⭐️ ROUND 7: CUTTING LIST / MATERIALS TABLE */}
+      <div className="font-bold uppercase mb-1 text-xs">Cutting List / Materials</div>
+      <table className="w-full text-left border-collapse border-2 border-black text-[10px] mb-4">
+        <thead>
+          <tr className="bg-gray-100 border-b-2 border-black uppercase text-gray-700">
+            <th className="border-r-2 border-black p-1.5">Material</th>
+            <th className="border-r-2 border-black p-1.5 w-32">Piece / Purpose</th>
+            <th className="border-r-2 border-black p-1.5 w-32">Size</th>
+            <th className="border-r-2 border-black p-1.5 w-20 text-center">Qty / Unit</th>
+            <th className="border-r-2 border-black p-1.5 w-20 text-center bg-gray-200">Total Qty</th>
+            <th className="p-1.5 w-32">Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          {cuttingList.map((row, i) => {
+             const calculatedTotal = (Number(row.qty_per_unit) || 1) * (localJob.quantity_target || 0);
+             return (
+               <tr key={i} className="border-b border-black">
+                 <td className="border-r-2 border-black p-1.5 font-bold text-sm">
+                   {row.material_name}
+                   {row.category === 'board' && row.thickness_mm ? <span className="text-[10px] font-normal text-gray-600 ml-1">({row.thickness_mm}mm)</span> : ''}
+                   {row.category === 'paper' && row.gsm ? <span className="text-[10px] font-normal text-gray-600 ml-1">({row.gsm} GSM)</span> : ''}
+                   {(!row.category && row.gsm) ? <span className="text-[10px] font-normal text-gray-600 ml-1">({row.gsm} GSM)</span> : ''}
+                 </td>
+                 <td className="border-r-2 border-black p-1.5 font-bold uppercase">{row.piece_purpose}</td>
+                 <td className="border-r-2 border-black p-1.5">{row.size || '—'}</td>
+                 <td className="border-r-2 border-black p-1.5 text-center">{row.qty_per_unit} {row.unit}</td>
+                 <td className="border-r-2 border-black p-1.5 text-center font-bold text-sm bg-gray-50">{calculatedTotal.toLocaleString()} {row.unit}</td>
+                 <td className="p-1.5 text-[9px]">{row.notes || '—'}</td>
+               </tr>
+             );
+          })}
+        </tbody>
+      </table>
 
       {/* MATERIALS STRIP */}
       {issuedMaterials.length > 0 && (
         <div className="mb-4 text-xs">
-          <span className="font-bold uppercase border-b border-black pb-0.5 mr-3">Materials Issued:</span>
+          <span className="font-bold uppercase border-b border-black pb-0.5 mr-3">Materials Issued (Inventory):</span>
           {issuedMaterials.map(mat => (
             <span key={mat.id} className="mr-4 inline-block font-medium">
               {mat.itemName} — <span className="font-bold">{Math.abs(mat.qty).toLocaleString()}</span> <span className="text-[9px] text-gray-500">({mat.date})</span>
@@ -184,7 +214,6 @@ export default function JobViewModal({ job, onClose }) {
           <tr className="bg-gray-100 border-b-2 border-black">
             <th className="border-r-2 border-black p-2 w-8 text-center">#</th>
             <th className="border-r-2 border-black p-2">Process & Specifications</th>
-            {/* ⭐️ ROUND 6.5: New Split Machine & Place Headers */}
             <th className="border-r-2 border-black p-2 w-28">Machine</th>
             <th className="border-r-2 border-black p-2 w-16">Place</th>
             <th className="border-r-2 border-black p-2 w-16 text-center">Qty In</th>
@@ -202,7 +231,6 @@ export default function JobViewModal({ job, onClose }) {
 
             return (
               <Fragment key={idx}>
-                {/* ⭐️ ROUND 6.5: Print Transfer Marker */}
                 {isTransfer && (
                   <tr className="bg-gray-200 border-b border-black">
                     <td colSpan="8" className="p-1.5 text-center text-[10px] font-black uppercase tracking-widest text-black">
@@ -297,7 +325,6 @@ export default function JobViewModal({ job, onClose }) {
                   <span className="bg-primary-500/20 text-primary-400 px-2 py-0.5 rounded text-xs font-mono font-bold uppercase tracking-wider">
                     {localJob.display_id || `JOB-${localJob.id.slice(0, 8).toUpperCase()}`}
                   </span>
-                  {/* ⭐️ ROUND 6.5: Screen Header Route Text */}
                   <span className="bg-gray-800 text-gray-300 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border border-gray-700">
                     {routeText}
                   </span>
@@ -328,32 +355,44 @@ export default function JobViewModal({ job, onClose }) {
           </div>
 
           <div className="p-6 overflow-y-auto custom-scrollbar flex-1 bg-[#0a0f1a] space-y-6">
+            
+            {/* ⭐️ ROUND 7: On-Screen Cutting List */}
             <div>
-              <h3 className="text-sm font-bold text-gray-400 mb-3 uppercase tracking-wider">Production Specifications</h3>
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                <div className="bg-gray-900 border border-gray-800 p-4 rounded-lg">
-                  <div className="text-xs text-gray-500 mb-1">Target Quantity</div>
-                  <div className="text-lg font-bold text-white">{localJob.quantity_target?.toLocaleString() || 0}</div>
-                  {isMultiPart && (
-                    <div className="text-[10px] text-primary-500/80 mt-0.5">{renderQtyMath()}</div>
-                  )}
-                </div>
-                <div className="bg-gray-900 border border-gray-800 p-4 rounded-lg">
-                  <div className="text-xs text-gray-500 mb-1">Product Size</div>
-                  <div className="text-sm font-bold text-white">{localJob.product?.size || 'N/A'}</div>
-                </div>
-                <div className="bg-gray-900 border border-gray-800 p-4 rounded-lg">
-                  <div className="text-xs text-gray-500 mb-1">Raw Sheet Size</div>
-                  <div className="text-sm font-bold text-white">{localJob.specifications?.size_before_cut || localJob.product?.sheet_size || 'N/A'}</div>
-                </div>
-                <div className="bg-gray-900 border border-gray-800 p-4 rounded-lg">
-                  <div className="text-xs text-gray-500 mb-1">Cut Size (Guillotine)</div>
-                  <div className="text-sm font-bold text-white">{localJob.specifications?.size_after_cut || 'N/A'}</div>
-                </div>
-                <div className="bg-gray-900 border border-gray-800 p-4 rounded-lg">
-                  <div className="text-xs text-gray-500 mb-1">Material / Paper</div>
-                  <div className="text-sm font-bold text-white">{localJob.product?.material || 'N/A'} {formatGsm(localJob.product?.gsm)}</div>
-                </div>
+              <h3 className="text-sm font-bold text-gray-400 mb-3 uppercase tracking-wider flex justify-between">
+                <span>Cutting List & Materials</span>
+                <span className="text-primary-500">Target: {localJob.quantity_target?.toLocaleString()} Sets</span>
+              </h3>
+              <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="bg-gray-950 text-gray-500 border-b border-gray-800 uppercase">
+                      <th className="p-3 font-bold">Material</th>
+                      <th className="p-3 font-bold">Piece / Purpose</th>
+                      <th className="p-3 font-bold">Size</th>
+                      <th className="p-3 font-bold text-center">Qty/Unit</th>
+                      <th className="p-3 font-bold text-center text-primary-400">Total Req.</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-800">
+                    {cuttingList.map((row, i) => {
+                       const calculatedTotal = (Number(row.qty_per_unit) || 1) * (localJob.quantity_target || 0);
+                       return (
+                         <tr key={i} className="hover:bg-gray-800/50">
+                           <td className="p-3 font-bold text-white">
+                             {row.material_name}
+                             {row.category === 'board' && row.thickness_mm ? <span className="text-[10px] font-normal text-gray-500 ml-1">({row.thickness_mm}mm)</span> : ''}
+                             {row.category === 'paper' && row.gsm ? <span className="text-[10px] font-normal text-gray-500 ml-1">({row.gsm} GSM)</span> : ''}
+                             {(!row.category && row.gsm) ? <span className="text-[10px] font-normal text-gray-500 ml-1">({row.gsm} GSM)</span> : ''}
+                           </td>
+                           <td className="p-3 text-gray-300 font-medium uppercase">{row.piece_purpose}</td>
+                           <td className="p-3 text-gray-400">{row.size || '—'}</td>
+                           <td className="p-3 text-center text-gray-400">{row.qty_per_unit} {row.unit}</td>
+                           <td className="p-3 text-center font-bold text-primary-400">{calculatedTotal.toLocaleString()} {row.unit}</td>
+                         </tr>
+                       );
+                    })}
+                  </tbody>
+                </table>
               </div>
             </div>
 
@@ -393,7 +432,6 @@ export default function JobViewModal({ job, onClose }) {
 
                   return (
                     <Fragment key={idx}>
-                      {/* ⭐️ ROUND 6.5: Screen Transfer Marker */}
                       {isTransfer && (
                         <div className="flex items-center justify-center my-1.5">
                           <div className="bg-gray-800 border border-gray-700 text-gray-300 text-[10px] font-bold uppercase tracking-widest px-4 py-1.5 rounded-full shadow-lg">
@@ -419,7 +457,6 @@ export default function JobViewModal({ job, onClose }) {
                             <div className="text-white font-bold">{step.process_name}</div>
                             <div className="text-xs text-gray-500 mt-1 flex items-center gap-2">
                               {step.assigned_machine_name || 'Unassigned Machine'}
-                              {/* ⭐️ ROUND 6.5: Screen Place Badge */}
                               {currPlace && <span className="px-1.5 py-0.5 bg-gray-800 rounded font-mono text-[9px] text-gray-400 border border-gray-700">Place: {currPlace}</span>}
                             </div>
                             
