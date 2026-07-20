@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { collection, onSnapshot, doc, deleteDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
 
-// Hooks
 import { useProducts } from "../hooks/useProducts";
 import { useCustomers } from "../hooks/useCustomers";
 import { useProcesses } from "../hooks/useProcesses";
@@ -10,24 +9,19 @@ import { useMachines } from "../hooks/useMachines";
 import { useDies } from "../hooks/useDies";
 import { useProduceMath } from "../hooks/useProduceMath";
 
-// Components
 import ProductTable from "../components/ProductTable";
 import ProduceJobSetModal from "../components/ProduceJobSetModal";
 import ProductTemplateModal from "../components/ProductTemplateModal";
 import InlineAddModal from "../components/InlineAddModal";
 
 export default function ProductManagement() {
-  // 1. Firebase Data Hooks
   const { products, loading: prodLoading } = useProducts();
   const { customers } = useCustomers();
   const { processes: dbProcesses } = useProcesses();
   const { machines } = useMachines();
   const { dies } = useDies();
-
-  // 2. Custom Produce Math Hook
   const produceMath = useProduceMath();
 
-  // 3. Local Layout State
   const [searchQuery, setSearchQuery] = useState("");
   const [toastMessage, setToastMessage] = useState("");
   const [showToast, setShowToast] = useState(false);
@@ -36,8 +30,9 @@ export default function ProductManagement() {
   const [editingProduct, setEditingProduct] = useState(null);
   const [inlineModal, setInlineModal] = useState({ isOpen: false, type: "" });
 
-  // 4. Categories Subscription
   const [categories, setCategories] = useState([]);
+  const [inventoryItems, setInventoryItems] = useState([]);
+
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "productCategories"), (snapshot) => {
       const cats = [];
@@ -47,7 +42,17 @@ export default function ProductManagement() {
     return () => unsub();
   }, []);
 
-  // 5. Action Handlers
+  // ⭐️ ROUND 7.1: Fetch Inventory Items for the Stock Picker and Shortage Logic
+  useEffect(() => {
+    // Note: Assuming your collection is named 'inventoryItems' or 'inventory'
+    const unsub = onSnapshot(collection(db, "inventoryItems"), (snapshot) => {
+      const items = [];
+      snapshot.forEach(doc => items.push({ id: doc.id, ...doc.data() }));
+      setInventoryItems(items);
+    });
+    return () => unsub();
+  }, []);
+
   const triggerToast = (msg) => {
     setToastMessage(msg);
     setShowToast(true);
@@ -80,7 +85,6 @@ export default function ProductManagement() {
   return (
     <div className="max-w-[1600px] mx-auto p-6 h-full flex flex-col relative">
       
-      {/* Toast Notification */}
       {showToast && (
         <div className="fixed top-6 right-6 bg-green-600/90 backdrop-blur-sm border border-green-500 text-white px-6 py-4 rounded-xl shadow-2xl z-[100] font-bold animate-fade-in flex items-center gap-3">
           <svg className="w-6 h-6 text-green-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -90,7 +94,6 @@ export default function ProductManagement() {
         </div>
       )}
 
-      {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
         <div>
           <h2 className="text-3xl font-bold text-white tracking-tight">Product Management</h2>
@@ -101,7 +104,6 @@ export default function ProductManagement() {
         </button>
       </div>
 
-      {/* Search Bar */}
       <div className="mb-6 relative w-full max-w-md">
         <input 
           type="text" 
@@ -112,7 +114,6 @@ export default function ProductManagement() {
         />
       </div>
 
-      {/* Main Data Table Component */}
       <ProductTable 
         products={filteredProducts} 
         machines={machines}
@@ -121,7 +122,6 @@ export default function ProductManagement() {
         onDelete={handleDelete}
       />
 
-      {/* Produce Job Set Modal Component */}
       <ProduceJobSetModal 
         isOpen={produceMath.isProduceModalOpen}
         onClose={() => produceMath.setProduceModalOpen(false)}
@@ -139,10 +139,11 @@ export default function ProductManagement() {
         togglePartExpanded={produceMath.togglePartExpanded}
         machines={machines}
         dbProcesses={dbProcesses}
+        inventoryItems={inventoryItems}
+        dies={dies}
         onSuccess={triggerToast}
       />
 
-      {/* Product Template Setup Modal Component */}
       <ProductTemplateModal 
         isOpen={isTemplateModalOpen}
         onClose={() => setTemplateModalOpen(false)}
@@ -152,14 +153,14 @@ export default function ProductManagement() {
         machines={machines}
         dbProcesses={dbProcesses}
         dies={dies}
+        inventoryItems={inventoryItems}
         onSaveSuccess={(savedData) => {
           setTemplateModalOpen(false);
-          produceMath.openProduceModal(savedData); // Keep auto-opening produce modal after save
+          produceMath.openProduceModal(savedData);
         }}
         openInlineModal={(type) => setInlineModal({ isOpen: true, type })}
       />
 
-      {/* Inline Quick-Add Component */}
       <InlineAddModal 
         isOpen={inlineModal.isOpen}
         type={inlineModal.type}
@@ -169,7 +170,6 @@ export default function ProductManagement() {
           setInlineModal({ isOpen: false, type: "" });
         }}
       />
-
     </div>
   );
 }

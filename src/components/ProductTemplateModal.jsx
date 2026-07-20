@@ -35,6 +35,7 @@ export default function ProductTemplateModal({
   machines,
   dbProcesses,
   dies,
+  inventoryItems, // ⭐️ ROUND 7.1: Added to populate the datalist picker
   onSaveSuccess,
   openInlineModal
 }) {
@@ -55,7 +56,6 @@ export default function ProductTemplateModal({
         
         if (editingProduct.parts && editingProduct.parts.length > 0) {
           setParts(editingProduct.parts.map(p => {
-            // ⭐️ ROUND 7: Migrate legacy parts to the new materialRows array format automatically
             const matRows = p.materialRows?.length > 0 ? p.materialRows : [{
               id: Date.now() + Math.random(),
               material_name: p.paperType || p.material || "",
@@ -144,7 +144,6 @@ export default function ProductTemplateModal({
     }));
   };
 
-  // ⭐️ ROUND 7: Material Row Handlers
   const handleMaterialRowAdd = (partId) => {
     setParts(parts.map(p => p.id === partId ? { ...p, materialRows: [...(p.materialRows || []), defaultMaterialRow()] } : p));
   };
@@ -328,7 +327,6 @@ export default function ProductTemplateModal({
 
                 <div className="p-4 space-y-4">
                   
-                  {/* ⭐️ ROUND 7: Dynamic Material Rows Section */}
                   <div className="border border-gray-800 rounded-lg overflow-hidden">
                     <div className="bg-gray-950 px-4 py-2 border-b border-gray-800 flex justify-between items-center">
                       <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Materials & Cutting List</span>
@@ -359,7 +357,22 @@ export default function ProductTemplateModal({
                                   <button type="button" onClick={() => handleMaterialRowMove(part.id, rIdx, 'down')} className="text-gray-600 hover:text-white" disabled={rIdx === part.materialRows.length - 1}>▼</button>
                                 </div>
                               </td>
-                              <td className="p-1.5"><input type="text" placeholder="e.g. Kappa 2mm" value={row.material_name} onChange={e => handleMaterialRowChange(part.id, row.id, 'material_name', e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white" /></td>
+                              <td className="p-1.5">
+                                {/* ⭐️ ROUND 7.1: Inventory Picker with Free Text Fallback */}
+                                <input 
+                                  type="text" 
+                                  list={`inv-list-${row.id}`}
+                                  placeholder="e.g. Kappa 2mm" 
+                                  value={row.material_name} 
+                                  onChange={e => handleMaterialRowChange(part.id, row.id, 'material_name', e.target.value)} 
+                                  className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white" 
+                                />
+                                <datalist id={`inv-list-${row.id}`}>
+                                  {inventoryItems?.map(i => (
+                                    <option key={i.id} value={i.itemName}>{i.itemName} (Stock: {i.qty || i.balance || 0})</option>
+                                  ))}
+                                </datalist>
+                              </td>
                               <td className="p-1.5">
                                 <select value={row.category} onChange={e => handleMaterialRowChange(part.id, row.id, 'category', e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white">
                                   <option value="paper">Paper/Art</option>

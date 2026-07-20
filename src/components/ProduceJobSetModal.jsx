@@ -20,6 +20,8 @@ export default function ProduceJobSetModal({
   togglePartExpanded,
   machines,
   dbProcesses,
+  inventoryItems, // ⭐️ ROUND 7.1: Needed for Stock check
+  dies,           // ⭐️ ROUND 7.1: Needed for Die check
   onSuccess
 }) {
   const [producing, setProducing] = useState(false);
@@ -130,9 +132,7 @@ export default function ProduceJobSetModal({
             name: activeProduceProduct.name, 
             sku: activeProduceProduct.sku || "",
             category: activeProduceProduct.category || "", 
-            // ⭐️ ROUND 7: Pass the material rows through to the final job payload
             materialRows: masterPart.materialRows || [],
-            // Legacy fallbacks kept for safety
             size: masterPart.size || "", 
             material: masterPart.paperType || masterPart.material || "", 
             gsm: cleanGsm(masterPart.paperGsm || masterPart.gsm || ""),
@@ -171,7 +171,7 @@ export default function ProduceJobSetModal({
       <div className="bg-gray-900 border border-primary-500/30 rounded-xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl">
         <div className="p-6 border-b border-gray-800 bg-[#151724] shrink-0">
           <h3 className="text-xl font-bold text-white">🚀 Generate Job Set</h3>
-          <p className="text-xs text-gray-400 mt-1">Specify counts per material item below to configure overs for waste-prone layers.</p>
+          <p className="text-xs text-gray-400 mt-1">Review Pre-Production requirements and set counts.</p>
         </div>
         
         <form onSubmit={handleQuickProduce} className="p-6 overflow-y-auto custom-scrollbar flex-1 space-y-6 bg-[#0a0f1a]">
@@ -188,12 +188,27 @@ export default function ProduceJobSetModal({
           
           {produceParts.length > 0 && (
             <div className="space-y-4">
-              {produceParts.map((p, pIdx) => (
+              {produceParts.map((p, pIdx) => {
+                
+                // ⭐️ ROUND 7.1: Pre-Production Check calculations
+                const masterPart = activeProduceProduct.parts.find(mp => mp.id === p.id) || activeProduceProduct.parts[pIdx];
+                const cuttingList = masterPart.materialRows || [];
+                
+                // Auto-append routing dies to checklist preview
+                const activeDieIds = new Set();
+                p.sequence?.forEach(step => {
+                   Object.values(step.process_details || {}).forEach(val => {
+                       const foundDie = dies?.find(d => d.dieNumber === val);
+                       if (foundDie) activeDieIds.add(foundDie.id);
+                   });
+                });
+
+                return (
                 <div key={p.id} className="bg-gray-900 border border-gray-800 p-4 rounded-lg">
                   <div className="flex justify-between items-center mb-3">
                     <span className="text-white font-bold text-sm">Part {String.fromCharCode(65 + pIdx)}: {p.part_name}</span>
                     <button type="button" onClick={() => togglePartExpanded(pIdx)} className="text-xs text-gray-400 hover:text-white bg-gray-950 px-3 py-1 rounded border border-gray-700">
-                      {p.expanded ? 'Hide Chained Routings' : 'Review Step-by-Step Chained Qtys'}
+                      {p.expanded ? 'Hide Details & Checklists' : 'Review Pre-Production Details'}
                     </button>
                   </div>
 
@@ -221,22 +236,70 @@ export default function ProduceJobSetModal({
                   </div>
 
                   {p.expanded && (
-                    <div className="mt-4 border-t border-gray-800 pt-4 space-y-2">
-                      {p.sequence.map((step, sIdx) => (
-                        <div key={sIdx} className="flex items-center gap-3 bg-gray-950 p-2.5 rounded border border-gray-800 text-xs">
-                          <span className="text-gray-500 font-bold w-4">{sIdx+1}.</span>
-                          <span className="text-gray-300 w-48 truncate">{step.process_name}</span>
-                          <div className="flex items-center gap-2">
-                            <div className="bg-gray-900 px-2 py-1 rounded border border-gray-700 text-gray-400">In: <input type="number" value={step.input_qty} onChange={e => handleStepQtyChange(pIdx, sIdx, 'input_qty', e.target.value)} className="w-20 bg-transparent text-white font-mono outline-none" /></div>
-                            <span className="text-primary-500 font-bold">→</span>
-                            <div className="bg-gray-900 px-2 py-1 rounded border border-gray-700 text-gray-400">Out: <input type="number" value={step.output_qty} onChange={e => handleStepQtyChange(pIdx, sIdx, 'output_qty', e.target.value)} className="w-20 bg-transparent text-white font-mono outline-none" /></div>
-                          </div>
+                    <div className="mt-4 border-t border-gray-800 pt-4 space-y-4">
+                      
+                      {/* ⭐️ ROUND 7.1: Pre-Production Checklist Preview */}
+                      <div className="bg-gray-950 rounded border border-gray-800 p-3">
+                        <h4 className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">Pre-Production Checklist Preview</h4>
+                        <div className="space-y-1 text-xs">
+                          {cuttingList.map((row, i) => {
+                            const req = (Number(row.qty_per_unit) || 1) * (Number(p.part_sets) || 0);
+                            const invItem = inventoryItems?.find(inv => inv.itemName === row.material_name);
+                            const stock = invItem ? (Number(invItem.qty) || Number(invItem.balance) || 0) : null;
+                            const isShort = stock !== null && req > stock;
+                            
+                            return (
+                              <div key={i} className="flex justify-between items-center py-1 border-b border-gray-800/50">
+                                <div>
+                                  <span className="text-gray-300 font-bold">{row.material_name}</span>
+                                  <span className="text-gray-500 ml-2">({row.piece_purpose})</span>
+                                </div>
+                                <div className="flex items-center gap-4">
+                                  <span className="text-gray-400">Req: <strong className="text-white">{req.toLocaleString()}</strong></span>
+                                  {stock !== null ? (
+                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${isShort ? 'bg-red-500/20 text-red-400' : 'bg-gray-800 text-gray-400'}`}>
+                                      Stock: {stock.toLocaleString()} {isShort && `(SHORT ${req - stock})`}
+                                    </span>
+                                  ) : (
+                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-gray-800 text-gray-600">Free Text (—)</span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                          
+                          {Array.from(activeDieIds).map(id => {
+                            const d = dies.find(die => die.id === id);
+                            return (
+                              <div key={`die-${id}`} className="flex justify-between items-center py-1 border-b border-gray-800/50">
+                                <div>
+                                  <span className="text-purple-400 font-bold">{d.dieName}</span>
+                                  <span className="text-gray-500 ml-2">({d.dieNumber})</span>
+                                </div>
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-purple-500/10 text-purple-400 border border-purple-500/20">Die / Tooling</span>
+                              </div>
+                            );
+                          })}
                         </div>
-                      ))}
+                      </div>
+
+                      <div className="space-y-2">
+                        {p.sequence.map((step, sIdx) => (
+                          <div key={sIdx} className="flex items-center gap-3 bg-gray-950 p-2.5 rounded border border-gray-800 text-xs">
+                            <span className="text-gray-500 font-bold w-4">{sIdx+1}.</span>
+                            <span className="text-gray-300 w-48 truncate">{step.process_name}</span>
+                            <div className="flex items-center gap-2">
+                              <div className="bg-gray-900 px-2 py-1 rounded border border-gray-700 text-gray-400">In: <input type="number" value={step.input_qty} onChange={e => handleStepQtyChange(pIdx, sIdx, 'input_qty', e.target.value)} className="w-20 bg-transparent text-white font-mono outline-none" /></div>
+                              <span className="text-primary-500 font-bold">→</span>
+                              <div className="bg-gray-900 px-2 py-1 rounded border border-gray-700 text-gray-400">Out: <input type="number" value={step.output_qty} onChange={e => handleStepQtyChange(pIdx, sIdx, 'output_qty', e.target.value)} className="w-20 bg-transparent text-white font-mono outline-none" /></div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>
-              ))}
+              )})}
             </div>
           )}
 

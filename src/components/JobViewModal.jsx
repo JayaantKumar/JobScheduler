@@ -13,6 +13,22 @@ export default function JobViewModal({ job, onClose }) {
   const [qtyReject, setQtyReject] = useState("");
   const [updating, setUpdating] = useState(false);
 
+  // ⭐️ ROUND 7.1: Local Data Hooks for Print Auto-Appending
+  const [inventoryItems, setInventoryItems] = useState([]);
+  const [dies, setDies] = useState([]);
+
+  useEffect(() => {
+    const fetchDependencies = async () => {
+      try {
+        const invSnap = await getDocs(collection(db, "inventoryItems"));
+        setInventoryItems(invSnap.docs.map(d => ({id: d.id, ...d.data()})));
+        const dieSnap = await getDocs(collection(db, "dies"));
+        setDies(dieSnap.docs.map(d => ({id: d.id, ...d.data()})));
+      } catch (err) { console.error("Failed to fetch dependencies", err); }
+    };
+    fetchDependencies();
+  }, []);
+
   useEffect(() => {
     if (localJob?.set_code) {
       const fetchSiblings = async () => {
@@ -88,9 +104,9 @@ export default function JobViewModal({ job, onClose }) {
     .filter((p, i, arr) => i === 0 || p !== arr[i-1]);
   const routeText = placeChain?.length > 0 ? `Route: ${placeChain.join(" → ")}` : "Route: Unassigned";
 
-  // ⭐️ ROUND 7: Determine which materials array to use (New format vs Legacy fallback)
-  const cuttingList = localJob.product?.materialRows?.length > 0 
-    ? localJob.product.materialRows 
+  // ⭐️ ROUND 7.1: Pre-Production Checklist Construction
+  let preProdChecklist = localJob.product?.materialRows?.length > 0 
+    ? [...localJob.product.materialRows]
     : [{
         id: 'legacy-1',
         material_name: localJob.product?.material || "N/A",
@@ -101,6 +117,28 @@ export default function JobViewModal({ job, onClose }) {
         gsm: localJob.product?.gsm || "",
         notes: `Raw: ${localJob.specifications?.size_before_cut || localJob.product?.sheet_size || "N/A"}`
       }];
+
+  // Auto-append active dies from sequence
+  const activeDieIds = new Set();
+  localJob.process_sequence?.forEach(step => {
+     Object.values(step.process_details || {}).forEach(val => {
+         const foundDie = dies.find(d => d.dieNumber === val);
+         if (foundDie) activeDieIds.add(foundDie.id);
+     });
+  });
+  
+  Array.from(activeDieIds).forEach(id => {
+     const d = dies.find(die => die.id === id);
+     preProdChecklist.push({
+        isDie: true,
+        material_name: d.dieName,
+        piece_purpose: d.dieNumber,
+        category: 'Die / Tooling',
+        qty_per_unit: 1,
+        unit: 'pcs',
+        notes: 'Auto-included from routing'
+     });
+  });
 
   // ============================================================================
   // 🖨️ THE PRINT PORTAL VIEW 
@@ -160,34 +198,48 @@ export default function JobViewModal({ job, onClose }) {
         <div><span className="text-gray-500 font-bold">SKU:</span> <span className="font-bold text-black ml-1">{localJob.product?.sku || "N/A"}</span></div>
       </div>
 
-      {/* ⭐️ ROUND 7: CUTTING LIST / MATERIALS TABLE */}
-      <div className="font-bold uppercase mb-1 text-xs">Cutting List / Materials</div>
+      {/* ⭐️ ROUND 7.1: PRE-PRODUCTION CHECKLIST TABLE */}
+      <div className="font-bold uppercase mb-1 text-xs">Pre-Production Checklist</div>
       <table className="w-full text-left border-collapse border-2 border-black text-[10px] mb-4">
         <thead>
           <tr className="bg-gray-100 border-b-2 border-black uppercase text-gray-700">
-            <th className="border-r-2 border-black p-1.5">Material</th>
+            <th className="border-r-2 border-black p-1.5 w-6 text-center">☐</th>
+            <th className="border-r-2 border-black p-1.5">Item / Material</th>
             <th className="border-r-2 border-black p-1.5 w-32">Piece / Purpose</th>
             <th className="border-r-2 border-black p-1.5 w-32">Size</th>
-            <th className="border-r-2 border-black p-1.5 w-20 text-center">Qty / Unit</th>
-            <th className="border-r-2 border-black p-1.5 w-20 text-center bg-gray-200">Total Qty</th>
+            <th className="border-r-2 border-black p-1.5 w-24 text-center bg-gray-200">Total Required</th>
             <th className="p-1.5 w-32">Notes</th>
           </tr>
         </thead>
         <tbody>
-          {cuttingList.map((row, i) => {
-             const calculatedTotal = (Number(row.qty_per_unit) || 1) * (localJob.quantity_target || 0);
+          {preProdChecklist.map((row, i) => {
+             const calculatedTotal = row.isDie ? 1 : (Number(row.qty_per_unit) || 1) * (localJob.quantity_target || 0);
+             
+             let stockFlag = null;
+             if (!row.isDie) {
+                const invItem = inventoryItems.find(inv => inv.itemName === row.material_name);
+                if (invItem) {
+                   const bal = Number(invItem.qty || invItem.balance || 0);
+                   if (calculatedTotal > bal) {
+                      stockFlag = <span className="ml-1 bg-red-600 text-white px-1 py-0.5 rounded text-[8px] font-black tracking-wider">SHORT {calculatedTotal - bal}</span>;
+                   }
+                }
+             }
+
              return (
                <tr key={i} className="border-b border-black">
+                 <td className="border-r-2 border-black p-1.5 text-center text-lg font-bold">☐</td>
                  <td className="border-r-2 border-black p-1.5 font-bold text-sm">
                    {row.material_name}
                    {row.category === 'board' && row.thickness_mm ? <span className="text-[10px] font-normal text-gray-600 ml-1">({row.thickness_mm}mm)</span> : ''}
                    {row.category === 'paper' && row.gsm ? <span className="text-[10px] font-normal text-gray-600 ml-1">({row.gsm} GSM)</span> : ''}
-                   {(!row.category && row.gsm) ? <span className="text-[10px] font-normal text-gray-600 ml-1">({row.gsm} GSM)</span> : ''}
+                   {stockFlag}
                  </td>
                  <td className="border-r-2 border-black p-1.5 font-bold uppercase">{row.piece_purpose}</td>
                  <td className="border-r-2 border-black p-1.5">{row.size || '—'}</td>
-                 <td className="border-r-2 border-black p-1.5 text-center">{row.qty_per_unit} {row.unit}</td>
-                 <td className="border-r-2 border-black p-1.5 text-center font-bold text-sm bg-gray-50">{calculatedTotal.toLocaleString()} {row.unit}</td>
+                 <td className="border-r-2 border-black p-1.5 text-center font-bold text-sm bg-gray-50">
+                    {row.isDie ? '—' : `${calculatedTotal.toLocaleString()} ${row.unit}`}
+                 </td>
                  <td className="p-1.5 text-[9px]">{row.notes || '—'}</td>
                </tr>
              );
@@ -356,38 +408,54 @@ export default function JobViewModal({ job, onClose }) {
 
           <div className="p-6 overflow-y-auto custom-scrollbar flex-1 bg-[#0a0f1a] space-y-6">
             
-            {/* ⭐️ ROUND 7: On-Screen Cutting List */}
+            {/* ⭐️ ROUND 7.1: On-Screen Pre-Production Checklist */}
             <div>
               <h3 className="text-sm font-bold text-gray-400 mb-3 uppercase tracking-wider flex justify-between">
-                <span>Cutting List & Materials</span>
+                <span>Pre-Production Checklist</span>
                 <span className="text-primary-500">Target: {localJob.quantity_target?.toLocaleString()} Sets</span>
               </h3>
               <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="bg-gray-950 text-gray-500 border-b border-gray-800 uppercase">
-                      <th className="p-3 font-bold">Material</th>
+                      <th className="p-3 font-bold">Material / Item</th>
                       <th className="p-3 font-bold">Piece / Purpose</th>
-                      <th className="p-3 font-bold">Size</th>
-                      <th className="p-3 font-bold text-center">Qty/Unit</th>
-                      <th className="p-3 font-bold text-center text-primary-400">Total Req.</th>
+                      <th className="p-3 font-bold text-center">Total Req.</th>
+                      <th className="p-3 font-bold text-center">Stock</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-800">
-                    {cuttingList.map((row, i) => {
-                       const calculatedTotal = (Number(row.qty_per_unit) || 1) * (localJob.quantity_target || 0);
+                    {preProdChecklist.map((row, i) => {
+                       const calculatedTotal = row.isDie ? 1 : (Number(row.qty_per_unit) || 1) * (localJob.quantity_target || 0);
+                       
+                       let stockDisplay = <span className="text-gray-500">—</span>;
+                       if (!row.isDie) {
+                          const invItem = inventoryItems.find(inv => inv.itemName === row.material_name);
+                          if (invItem) {
+                             const bal = Number(invItem.qty || invItem.balance || 0);
+                             const isShort = calculatedTotal > bal;
+                             stockDisplay = (
+                               <span className={`px-2 py-0.5 rounded font-bold uppercase ${isShort ? 'bg-red-500/20 text-red-400' : 'bg-gray-800 text-gray-400'}`}>
+                                 {bal.toLocaleString()} {isShort && `(SHORT)`}
+                               </span>
+                             );
+                          }
+                       } else {
+                         stockDisplay = <span className="text-purple-400 font-bold uppercase text-[10px]">Tooling</span>;
+                       }
+
                        return (
                          <tr key={i} className="hover:bg-gray-800/50">
                            <td className="p-3 font-bold text-white">
                              {row.material_name}
                              {row.category === 'board' && row.thickness_mm ? <span className="text-[10px] font-normal text-gray-500 ml-1">({row.thickness_mm}mm)</span> : ''}
                              {row.category === 'paper' && row.gsm ? <span className="text-[10px] font-normal text-gray-500 ml-1">({row.gsm} GSM)</span> : ''}
-                             {(!row.category && row.gsm) ? <span className="text-[10px] font-normal text-gray-500 ml-1">({row.gsm} GSM)</span> : ''}
                            </td>
                            <td className="p-3 text-gray-300 font-medium uppercase">{row.piece_purpose}</td>
-                           <td className="p-3 text-gray-400">{row.size || '—'}</td>
-                           <td className="p-3 text-center text-gray-400">{row.qty_per_unit} {row.unit}</td>
-                           <td className="p-3 text-center font-bold text-primary-400">{calculatedTotal.toLocaleString()} {row.unit}</td>
+                           <td className="p-3 text-center font-bold text-primary-400">
+                              {row.isDie ? '—' : `${calculatedTotal.toLocaleString()} ${row.unit}`}
+                           </td>
+                           <td className="p-3 text-center">{stockDisplay}</td>
                          </tr>
                        );
                     })}
