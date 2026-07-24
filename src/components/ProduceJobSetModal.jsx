@@ -20,8 +20,8 @@ export default function ProduceJobSetModal({
   togglePartExpanded,
   machines,
   dbProcesses,
-  inventoryItems, // ⭐️ ROUND 7.1: Needed for Stock check
-  dies,           // ⭐️ ROUND 7.1: Needed for Die check
+  inventoryItems,
+  dies,
   onSuccess
 }) {
   const [producing, setProducing] = useState(false);
@@ -189,12 +189,9 @@ export default function ProduceJobSetModal({
           {produceParts.length > 0 && (
             <div className="space-y-4">
               {produceParts.map((p, pIdx) => {
-                
-                // ⭐️ ROUND 7.1: Pre-Production Check calculations
                 const masterPart = activeProduceProduct.parts.find(mp => mp.id === p.id) || activeProduceProduct.parts[pIdx];
                 const cuttingList = masterPart.materialRows || [];
                 
-                // Auto-append routing dies to checklist preview
                 const activeDieIds = new Set();
                 p.sequence?.forEach(step => {
                    Object.values(step.process_details || {}).forEach(val => {
@@ -238,13 +235,18 @@ export default function ProduceJobSetModal({
                   {p.expanded && (
                     <div className="mt-4 border-t border-gray-800 pt-4 space-y-4">
                       
-                      {/* ⭐️ ROUND 7.1: Pre-Production Checklist Preview */}
                       <div className="bg-gray-950 rounded border border-gray-800 p-3">
                         <h4 className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">Pre-Production Checklist Preview</h4>
                         <div className="space-y-1 text-xs">
                           {cuttingList.map((row, i) => {
                             const req = (Number(row.qty_per_unit) || 1) * (Number(p.part_sets) || 0);
-                            const invItem = inventoryItems?.find(inv => inv.itemName === row.material_name);
+                            
+                            // ⭐️ ROUND 7.2 FIX: Reads the correct inventory label field for shortage matching
+                            const invItem = inventoryItems?.find(inv => {
+                              const displayLabel = inv.name || inv.itemName || inv.label || "Unnamed Material";
+                              return displayLabel === row.material_name;
+                            });
+                            
                             const stock = invItem ? (Number(invItem.qty) || Number(invItem.balance) || 0) : null;
                             const isShort = stock !== null && req > stock;
                             

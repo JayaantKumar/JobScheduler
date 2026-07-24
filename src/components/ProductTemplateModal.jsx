@@ -8,7 +8,7 @@ const defaultSequence = () => ({ id: Date.now(), process_name: "", assigned_mach
 const defaultMaterialRow = () => ({
   id: Date.now() + Math.random(),
   material_name: "",
-  category: "paper", // paper, board, other
+  category: "paper",
   piece_purpose: "",
   size: "",
   qty_per_unit: 1,
@@ -35,7 +35,7 @@ export default function ProductTemplateModal({
   machines,
   dbProcesses,
   dies,
-  inventoryItems, // ⭐️ ROUND 7.1: Added to populate the datalist picker
+  inventoryItems,
   onSaveSuccess,
   openInlineModal
 }) {
@@ -358,7 +358,7 @@ export default function ProductTemplateModal({
                                 </div>
                               </td>
                               <td className="p-1.5">
-                                {/* ⭐️ ROUND 7.1: Inventory Picker with Free Text Fallback */}
+                                {/* ⭐️ ROUND 7.2 FIX: Reads the correct inventory label field for the autocomplete options */}
                                 <input 
                                   type="text" 
                                   list={`inv-list-${row.id}`}
@@ -368,9 +368,14 @@ export default function ProductTemplateModal({
                                   className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white" 
                                 />
                                 <datalist id={`inv-list-${row.id}`}>
-                                  {inventoryItems?.map(i => (
-                                    <option key={i.id} value={i.itemName}>{i.itemName} (Stock: {i.qty || i.balance || 0})</option>
-                                  ))}
+                                  {inventoryItems?.map(i => {
+                                    const displayLabel = i.name || i.itemName || i.label || "Unnamed Material";
+                                    return (
+                                      <option key={i.id} value={displayLabel}>
+                                        {displayLabel} (Stock: {i.qty || i.balance || 0})
+                                      </option>
+                                    );
+                                  })}
                                 </datalist>
                               </td>
                               <td className="p-1.5">

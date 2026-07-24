@@ -13,7 +13,6 @@ export default function JobViewModal({ job, onClose }) {
   const [qtyReject, setQtyReject] = useState("");
   const [updating, setUpdating] = useState(false);
 
-  // ⭐️ ROUND 7.1: Local Data Hooks for Print Auto-Appending
   const [inventoryItems, setInventoryItems] = useState([]);
   const [dies, setDies] = useState([]);
 
@@ -104,7 +103,6 @@ export default function JobViewModal({ job, onClose }) {
     .filter((p, i, arr) => i === 0 || p !== arr[i-1]);
   const routeText = placeChain?.length > 0 ? `Route: ${placeChain.join(" → ")}` : "Route: Unassigned";
 
-  // ⭐️ ROUND 7.1: Pre-Production Checklist Construction
   let preProdChecklist = localJob.product?.materialRows?.length > 0 
     ? [...localJob.product.materialRows]
     : [{
@@ -118,7 +116,6 @@ export default function JobViewModal({ job, onClose }) {
         notes: `Raw: ${localJob.specifications?.size_before_cut || localJob.product?.sheet_size || "N/A"}`
       }];
 
-  // Auto-append active dies from sequence
   const activeDieIds = new Set();
   localJob.process_sequence?.forEach(step => {
      Object.values(step.process_details || {}).forEach(val => {
@@ -140,13 +137,9 @@ export default function JobViewModal({ job, onClose }) {
      });
   });
 
-  // ============================================================================
-  // 🖨️ THE PRINT PORTAL VIEW 
-  // ============================================================================
   const PrintView = (
     <div id="print-card" className="hidden print:block w-full bg-white text-black font-sans relative text-sm">
       
-      {/* HEADER BAND */}
       <div className="flex justify-between items-start border-b-2 border-black pb-3 mb-3">
         <div className="flex-1">
           {isMultiPart ? (
@@ -190,7 +183,6 @@ export default function JobViewModal({ job, onClose }) {
         </div>
       </div>
 
-      {/* INFO STRIP */}
       <div className="flex justify-between items-center bg-gray-100 border-b-2 border-black py-1.5 px-2 mb-3 text-xs uppercase">
         <div><span className="text-gray-500 font-bold">Customer:</span> <span className="font-bold text-black ml-1">{localJob.customer}</span></div>
         <div><span className="text-gray-500 font-bold">Product:</span> <span className="font-bold text-black ml-1">{localJob.product?.name || "N/A"}</span></div>
@@ -198,7 +190,6 @@ export default function JobViewModal({ job, onClose }) {
         <div><span className="text-gray-500 font-bold">SKU:</span> <span className="font-bold text-black ml-1">{localJob.product?.sku || "N/A"}</span></div>
       </div>
 
-      {/* ⭐️ ROUND 7.1: PRE-PRODUCTION CHECKLIST TABLE */}
       <div className="font-bold uppercase mb-1 text-xs">Pre-Production Checklist</div>
       <table className="w-full text-left border-collapse border-2 border-black text-[10px] mb-4">
         <thead>
@@ -217,7 +208,11 @@ export default function JobViewModal({ job, onClose }) {
              
              let stockFlag = null;
              if (!row.isDie) {
-                const invItem = inventoryItems.find(inv => inv.itemName === row.material_name);
+                // ⭐️ ROUND 7.2 FIX: Matches inventory item correctly for Print Sheet
+                const invItem = inventoryItems.find(inv => {
+                  const displayLabel = inv.name || inv.itemName || inv.label || "Unnamed Material";
+                  return displayLabel === row.material_name;
+                });
                 if (invItem) {
                    const bal = Number(invItem.qty || invItem.balance || 0);
                    if (calculatedTotal > bal) {
@@ -247,7 +242,6 @@ export default function JobViewModal({ job, onClose }) {
         </tbody>
       </table>
 
-      {/* MATERIALS STRIP */}
       {issuedMaterials.length > 0 && (
         <div className="mb-4 text-xs">
           <span className="font-bold uppercase border-b border-black pb-0.5 mr-3">Materials Issued (Inventory):</span>
@@ -259,7 +253,6 @@ export default function JobViewModal({ job, onClose }) {
         </div>
       )}
 
-      {/* ROUTING TABLE */}
       <div className="font-bold uppercase mb-1 text-xs">Process Routing & Operator Sign-off</div>
       <table id="routing-table" className="w-full text-left border-collapse border-2 border-black text-xs mb-4">
         <thead>
@@ -313,7 +306,6 @@ export default function JobViewModal({ job, onClose }) {
         </tbody>
       </table>
 
-      {/* SPECIAL INSTRUCTIONS */}
       {localJob.notes && (
         <div className="border border-black p-3 mb-4">
           <h3 className="text-[10px] font-bold text-gray-600 uppercase mb-1">Special Instructions / Notes</h3>
@@ -321,7 +313,6 @@ export default function JobViewModal({ job, onClose }) {
         </div>
       )}
 
-      {/* FOOTER */}
       <div className="flex justify-between items-stretch border-2 border-black mt-auto">
         <div className="p-2 flex-1 border-r-2 border-black bg-gray-50">
           <div className="text-[10px] font-bold uppercase mb-1">Linked Cards in Set {isMultiPart ? `(SET-${localJob.set_code})` : ''}</div>
@@ -342,13 +333,9 @@ export default function JobViewModal({ job, onClose }) {
           <div className="mt-auto border-b border-black w-full"></div>
         </div>
       </div>
-
     </div>
   );
 
-  // ============================================================================
-  // 💻 THE DIGITAL SCREEN VIEW 
-  // ============================================================================
   return (
     <>
       <style type="text/css" media="print">
@@ -366,7 +353,6 @@ export default function JobViewModal({ job, onClose }) {
         `}
       </style>
 
-      {/* Screen Render */}
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm print:hidden">
         <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-4xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
           
@@ -408,7 +394,6 @@ export default function JobViewModal({ job, onClose }) {
 
           <div className="p-6 overflow-y-auto custom-scrollbar flex-1 bg-[#0a0f1a] space-y-6">
             
-            {/* ⭐️ ROUND 7.1: On-Screen Pre-Production Checklist */}
             <div>
               <h3 className="text-sm font-bold text-gray-400 mb-3 uppercase tracking-wider flex justify-between">
                 <span>Pre-Production Checklist</span>
@@ -430,7 +415,11 @@ export default function JobViewModal({ job, onClose }) {
                        
                        let stockDisplay = <span className="text-gray-500">—</span>;
                        if (!row.isDie) {
-                          const invItem = inventoryItems.find(inv => inv.itemName === row.material_name);
+                          // ⭐️ ROUND 7.2 FIX: Matches inventory item correctly for Digital Screen
+                          const invItem = inventoryItems.find(inv => {
+                            const displayLabel = inv.name || inv.itemName || inv.label || "Unnamed Material";
+                            return displayLabel === row.material_name;
+                          });
                           if (invItem) {
                              const bal = Number(invItem.qty || invItem.balance || 0);
                              const isShort = calculatedTotal > bal;
