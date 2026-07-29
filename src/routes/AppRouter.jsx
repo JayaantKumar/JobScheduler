@@ -10,7 +10,8 @@ import Analytics from "../pages/Analytics";
 import MasterData from "../pages/MasterData";
 import ProductManagement from "../pages/ProductManagement";
 import ProcessManagement from "../pages/ProcessManagement";
-import InventoryManagement from "../pages/InventoryManagement"; // ⭐️ ADDED IMPORT
+import InventoryManagement from "../pages/InventoryManagement";
+import OperationsBoard from "../components/OperationsBoard"; // ⭐️ ADDED IMPORT
 
 const ProtectedRoute = ({ children, requiredRole }) => {
   const { user, role } = useAuth();
@@ -49,9 +50,10 @@ export const AppRouter = () => {
           <Route path="master-data" element={<MasterData />} />
           <Route path="jobs" element={<Jobs />} />
           <Route path="product-management" element={<ProductManagement />} />
-          
-          {/* ⭐️ ADDED NEW INVENTORY ROUTE */}
           <Route path="inventory-management" element={<InventoryManagement />} />
+          
+          {/* ⭐️ ADDED NEW OPERATIONS BOARD ROUTE */}
+          <Route path="operations-board" element={<OperationsBoard />} />
         </Route>
         
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

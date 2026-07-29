@@ -80,6 +80,16 @@ export default function AdminLayout() {
           >
             Job Management
           </NavLink>
+          
+          {/* ⭐️ ADDED NEW OPERATIONS BOARD LINK */}
+          <NavLink
+            to="/dashboard/operations-board"
+            onClick={handleNavClick}
+            className={navLinkClasses}
+          >
+            Operations Board
+          </NavLink>
+
           <NavLink
             to="/dashboard/machines"
             onClick={handleNavClick}

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { collection, addDoc, updateDoc, doc, serverTimestamp } from "firebase/firestore";
-import { db } from "../firebase/config";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { db, storage } from "../firebase/config";
 import { cleanGsm } from "../utils/helpers";
 
 const defaultSequence = () => ({ id: Date.now(), process_name: "", assigned_machine: "", process_details: {}, remarks: "" });
@@ -44,6 +45,9 @@ export default function ProductTemplateModal({
   const [category, setCategory] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [parts, setParts] = useState([defaultPart()]);
+  
+  // ⭐️ ROUND 8: File Attachments State
+  const [files, setFiles] = useState([]); 
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -53,6 +57,7 @@ export default function ProductTemplateModal({
         setSku(editingProduct.sku || "");
         setCategory(editingProduct.category || editingProduct.type || "");
         setCustomerName(editingProduct.customerName || "");
+        setFiles(editingProduct.files || []); // Load existing files
         
         if (editingProduct.parts && editingProduct.parts.length > 0) {
           setParts(editingProduct.parts.map(p => {
@@ -99,6 +104,7 @@ export default function ProductTemplateModal({
       } else {
         setName(""); setSku(""); setCategory(""); setCustomerName("");
         setParts([defaultPart()]);
+        setFiles([]);
       }
     }
   }, [isOpen, editingProduct]);
@@ -190,27 +196,99 @@ export default function ProductTemplateModal({
     return filtered.length > 0 ? filtered : machines;
   };
 
+  // ⭐️ ROUND 8: File Selection & Validation
+  const handleFileSelect = (e) => {
+    const selected = Array.from(e.target.files);
+    const validFiles = [];
+    selected.forEach(f => {
+      if (f.size > 25 * 1024 * 1024) {
+        alert(`File ${f.name} exceeds the 25MB limit.`);
+        return;
+      }
+      validFiles.push({
+        id: Date.now() + Math.random(),
+        rawFile: f, 
+        name: f.name,
+        category: "Artwork",
+        version: "v1",
+        status: "Draft",
+        notes: "",
+        url: null, 
+        uploaded_at: new Date().toISOString()
+      });
+    });
+    if (validFiles.length > 0) setFiles([...files, ...validFiles]);
+    e.target.value = null; // reset input
+  };
+
+  // ⭐️ ROUND 8: File Versioning & State Management
+  const handleFileChange = (fileId, field, val) => {
+    setFiles(prev => {
+      let updated = prev.map(f => f.id === fileId ? { ...f, [field]: val } : f);
+      
+      // Auto-supersede rule: Only ONE Approved file per category allowed
+      const modifiedFile = updated.find(f => f.id === fileId);
+      if (modifiedFile && modifiedFile.status === "APPROVED") {
+        updated = updated.map(f => {
+          if (f.id !== fileId && f.category === modifiedFile.category && f.status === "APPROVED") {
+            return { ...f, status: "Superseded" };
+          }
+          return f;
+        });
+      }
+      return updated;
+    });
+  };
+
+  const handleRemoveFile = (fileId) => {
+    setFiles(files.filter(f => f.id !== fileId));
+  };
+
+  const copyShareLink = (url) => {
+    if (!url) return alert("Save the product first to generate a live link.");
+    navigator.clipboard.writeText(url);
+    alert("Share link copied to clipboard!");
+  };
+
   const handleSave = async (e) => {
     e.preventDefault();
     setSaving(true);
     
-    const cleanParts = parts.map(part => ({
-      ...part,
-      materialRows: part.materialRows.map(r => ({
-        ...r, 
-        gsm: r.category === 'board' ? "" : cleanGsm(r.gsm),
-        thickness_mm: r.category === 'paper' ? "" : r.thickness_mm
-      })),
-      sequence: part.sequence.filter(s => s.process_name.trim() !== "").map((s, idx) => ({ ...s, step_order: idx + 1 }))
-    }));
-
-    const payload = {
-      name, sku, category, customerName,
-      parts: cleanParts,
-      updated_at: serverTimestamp()
-    };
-
     try {
+      // ⭐️ ROUND 8: Process & Upload files first
+      const processedFiles = await Promise.all(files.map(async (fileObj) => {
+        if (fileObj.rawFile) {
+          const fileExt = fileObj.name.split('.').pop();
+          const cleanName = fileObj.name.replace(`.${fileExt}`, '').replace(/[^a-zA-Z0-9]/g, '_');
+          const storagePath = `products/${Date.now()}_${cleanName}.${fileExt}`;
+          const storageRef = ref(storage, storagePath);
+          
+          await uploadBytes(storageRef, fileObj.rawFile);
+          const downloadUrl = await getDownloadURL(storageRef);
+          
+          const { rawFile: _rawFile, ...rest } = fileObj; // Alias to _rawFile to satisfy ESLint
+          return { ...rest, url: downloadUrl };
+        }
+        return fileObj; // Already uploaded previously
+      }));
+
+      const cleanParts = parts.map(part => ({
+        ...part,
+        materialRows: part.materialRows.map(r => ({
+          ...r, 
+          gsm: r.category === 'board' ? "" : cleanGsm(r.gsm),
+          thickness_mm: r.category === 'paper' ? "" : r.thickness_mm
+        })),
+        sequence: part.sequence.filter(s => s.process_name.trim() !== "").map((s, idx) => ({ ...s, step_order: idx + 1 }))
+      }));
+
+      const payload = {
+        name, sku, category, customerName,
+        parts: cleanParts,
+        files: processedFiles, // Inject finalized files array
+        updated_at: serverTimestamp()
+      };
+
       let savedProdData = { ...payload };
       if (editingProduct) {
         await updateDoc(doc(db, "products", editingProduct.id), payload);
@@ -307,6 +385,88 @@ export default function ProductTemplateModal({
             </div>
           </div>
 
+          {/* ⭐️ ROUND 8: Product Files & Assets */}
+          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden shadow-lg">
+            <div className="bg-[#151724] border-b border-gray-800 p-4 flex justify-between items-center">
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                <svg className="w-4 h-4 text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>
+                Master Files & Assets
+              </h3>
+              <label className="bg-gray-800 hover:bg-gray-700 text-white text-xs font-bold px-4 py-2 rounded-lg cursor-pointer border border-gray-700 transition-colors">
+                + Upload File
+                <input type="file" multiple accept=".pdf,.ai,.cdr,.eps,.psd,.jpg,.jpeg,.png,.xlsx,.docx" className="hidden" onChange={handleFileSelect} />
+              </label>
+            </div>
+            {files.length > 0 ? (
+              <div className="p-4 overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="bg-gray-950 text-[10px] uppercase text-gray-500 border-b border-gray-800">
+                      <th className="p-2 font-bold min-w-[150px]">File Name</th>
+                      <th className="p-2 font-bold w-36">Category</th>
+                      <th className="p-2 font-bold w-20">Version</th>
+                      <th className="p-2 font-bold w-36">Status</th>
+                      <th className="p-2 font-bold">Notes</th>
+                      <th className="p-2 w-24 text-center">Share</th>
+                      <th className="p-2 w-8"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-800 bg-gray-950/50">
+                    {files.map((file) => {
+                      const isSuperseded = file.status === "Superseded";
+                      return (
+                        <tr key={file.id} className={isSuperseded ? "opacity-50" : ""}>
+                          <td className="p-2 text-xs text-white truncate max-w-[150px]" title={file.name}>
+                            <span className={isSuperseded ? "line-through text-gray-500" : ""}>{file.name}</span>
+                            {file.rawFile && <span className="ml-2 text-[9px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded uppercase font-bold">Pending Save</span>}
+                          </td>
+                          <td className="p-2">
+                            <select value={file.category} onChange={e => handleFileChange(file.id, 'category', e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white">
+                              <option value="Artwork">Artwork</option>
+                              <option value="Dieline">Dieline</option>
+                              <option value="Mockup / 3D">Mockup / 3D</option>
+                              <option value="Client PO">Client PO</option>
+                              <option value="Sample Photo">Sample Photo</option>
+                              <option value="Quality Reference">Quality Reference</option>
+                              <option value="Other">Other</option>
+                            </select>
+                          </td>
+                          <td className="p-2">
+                            <input type="text" placeholder="v1" value={file.version} onChange={e => handleFileChange(file.id, 'version', e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white" />
+                          </td>
+                          <td className="p-2">
+                            <select value={file.status} onChange={e => handleFileChange(file.id, 'status', e.target.value)} className={`w-full bg-gray-900 border rounded px-2 py-1 text-xs font-bold ${file.status === 'APPROVED' ? 'border-green-500/50 text-green-400' : 'border-gray-700 text-white'}`}>
+                              <option value="Draft">Draft</option>
+                              <option value="Sent for Approval">Sent for Approval</option>
+                              <option value="APPROVED">APPROVED</option>
+                              <option value="Superseded">Superseded</option>
+                              <option value="Rejected">Rejected</option>
+                            </select>
+                          </td>
+                          <td className="p-2">
+                            <input type="text" placeholder="Optional notes..." value={file.notes} onChange={e => handleFileChange(file.id, 'notes', e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white" />
+                          </td>
+                          <td className="p-2 text-center">
+                            <button type="button" onClick={() => copyShareLink(file.url)} disabled={!file.url} className="text-[10px] uppercase font-bold text-primary-400 hover:text-white disabled:opacity-30 disabled:hover:text-primary-400 bg-primary-900/20 px-2 py-1 rounded">
+                              Copy Link
+                            </button>
+                          </td>
+                          <td className="p-2 text-center">
+                            <button type="button" onClick={() => handleRemoveFile(file.id)} className="text-gray-600 hover:text-red-400 font-bold text-xs">✕</button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="p-6 text-center text-sm text-gray-500">
+                No files attached. Upload artwork, dielines, and client POs here.
+              </div>
+            )}
+          </div>
+
           <div className="space-y-6">
             <div className="flex justify-between items-end border-b-2 border-gray-800 pb-2">
               <h3 className="text-sm font-bold text-white uppercase tracking-wider">Product Parts Specs</h3>
@@ -358,7 +518,6 @@ export default function ProductTemplateModal({
                                 </div>
                               </td>
                               <td className="p-1.5">
-                                {/* ⭐️ ROUND 7.2 FIX: Reads the correct inventory label field for the autocomplete options */}
                                 <input 
                                   type="text" 
                                   list={`inv-list-${row.id}`}
@@ -450,8 +609,16 @@ export default function ProductTemplateModal({
           
           <div className="pt-4 flex justify-end gap-3 border-t border-gray-800">
             <button type="button" onClick={onClose} className="px-4 py-2 text-gray-400 bg-gray-950 rounded">Cancel</button>
-            <button type="submit" disabled={saving} className="bg-primary-600 hover:bg-primary-500 text-white font-bold px-6 py-2 rounded shadow-lg">
-              {saving ? "Saving..." : "Save Template"}
+            <button type="submit" disabled={saving} className="bg-primary-600 hover:bg-primary-500 text-white font-bold px-6 py-2 rounded shadow-lg flex items-center gap-2">
+              {saving ? (
+                <>
+                  <svg className="animate-spin h-4 w-4 text-white" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Saving & Uploading...
+                </>
+              ) : "Save Template"}
             </button>
           </div>
         </form>

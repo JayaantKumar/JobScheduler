@@ -45,6 +45,7 @@ export default function ProduceJobSetModal({
       const mm = String(today.getMonth() + 1).padStart(2, '0');
       const yy = String(today.getFullYear()).slice(-2);
       const datePrefix = `${dd}${mm}${yy}`; 
+      const creationTimestamp = new Date().toISOString();
 
       const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString();
       const q = query(collection(db, "jobs"), where("job_date", ">=", startOfDay));
@@ -99,6 +100,7 @@ export default function ProduceJobSetModal({
             process_id: `sys_proc_${index}`,
             process_name: step.process_name || "Unassigned Process",
             status: "pending",
+            status_updated_at: creationTimestamp, // ⭐️ ROUND 8: Baseline for days-at-step timer
             input_qty: step.input_qty || pState.final_pcs, 
             output_qty: step.output_qty || pState.final_pcs, 
             remarks: instructions, 
@@ -113,7 +115,7 @@ export default function ProduceJobSetModal({
           title: `${activeProduceProduct.name} - ${masterPart.part_name || "Part"}`,
           customer: activeProduceProduct.customerName || "Unknown",
           priority: "normal",
-          job_date: new Date().toISOString(),
+          job_date: creationTimestamp,
           
           set_code: set_code,
           display_id: display_id,
@@ -133,6 +135,7 @@ export default function ProduceJobSetModal({
             sku: activeProduceProduct.sku || "",
             category: activeProduceProduct.category || "", 
             materialRows: masterPart.materialRows || [],
+            files: activeProduceProduct.files || [], // ⭐️ ROUND 8: Pass Master Files down to the job card
             size: masterPart.size || "", 
             material: masterPart.paperType || masterPart.material || "", 
             gsm: cleanGsm(masterPart.paperGsm || masterPart.gsm || ""),
@@ -148,7 +151,18 @@ export default function ProduceJobSetModal({
           deadline: new Date(produceDate).toISOString(),
           status: "pending", 
           process_sequence: final_process_sequence, 
-          notes: "Auto-generated multi-part set."
+          notes: "Auto-generated multi-part set.",
+          
+          // ⭐️ ROUND 8: Initialize the operations log
+          activity_log: [{
+            id: Date.now().toString() + i,
+            timestamp: creationTimestamp,
+            actor: "System",
+            process_name: "Job Generation",
+            old_status: "none",
+            new_status: "created",
+            note: "Job card created and sent to floor."
+          }]
         };
 
         const newJobRef = doc(collection(db, "jobs"));
