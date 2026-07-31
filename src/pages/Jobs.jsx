@@ -53,6 +53,39 @@ export default function Jobs() {
 
   const tabs = ["All", "Pending", "In Progress", "Completed", "Overdue"];
 
+  // ⭐️ ROUND 8.1 Helper: Calculate Current Step and Days at Step for the UI Chip
+  const getStepStatusUI = (job) => {
+    const seq = job.process_sequence || [];
+    const currentIdx = seq.findIndex(s => s.status !== 'completed');
+    
+    if (currentIdx === -1) {
+      return (
+        <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border bg-green-500/10 text-green-400 border-green-500/20">
+          COMPLETED
+        </span>
+      );
+    }
+
+    const currentStep = seq[currentIdx];
+    const statusDate = currentStep.status_updated_at || currentStep.started_at || job.job_date;
+    const diffDays = statusDate ? Math.floor((new Date() - new Date(statusDate)) / (1000 * 60 * 60 * 24)) : 0;
+    
+    let colorClass = "bg-gray-800 text-gray-400 border-gray-700";
+    if (diffDays >= 4) colorClass = "bg-red-500/10 text-red-400 border-red-500/30";
+    else if (diffDays >= 2) colorClass = "bg-orange-500/10 text-orange-400 border-orange-500/30";
+    else if (currentStep.status === 'in_progress') colorClass = "bg-blue-500/10 text-blue-400 border-blue-500/30";
+    else if (currentStep.status === 'on_hold') colorClass = "bg-yellow-500/10 text-yellow-400 border-yellow-500/30";
+
+    return (
+      <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded border text-[9px] font-bold tracking-wider ${colorClass}`}>
+        <span className="uppercase">{currentIdx + 1}/{seq.length} · {currentStep.process_name}</span>
+        {diffDays > 0 && (
+           <span className="ml-1 border-l border-current pl-1.5 opacity-80">{diffDays}d</span>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="max-w-[1600px] mx-auto p-4 sm:p-6 h-full flex flex-col">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 sm:mb-8">
@@ -86,7 +119,7 @@ export default function Jobs() {
                 <th className="py-4 px-6 w-[15%]">Job / Set ID</th>
                 <th className="py-4 px-6 w-[25%]">Product / Part Name</th>
                 <th className="py-4 px-6 w-[15%]">Target Qty</th>
-                <th className="py-4 px-6 w-[15%]">Status</th>
+                <th className="py-4 px-6 w-[15%]">Current Step / Status</th>
                 <th className="py-4 px-6 w-[15%]">Processes / Rollup</th>
                 <th className="py-4 px-6 w-[15%] text-right">Actions</th>
               </tr>
@@ -114,7 +147,6 @@ export default function Jobs() {
                       <Fragment key={`set-${setCode}`}>
                         <tr className="bg-[#151724] border-t-2 border-gray-800">
                           <td className="py-4 px-6">
-                            {/* ⭐️ FIXED: Correctly prepends SET- to both old legacy codes and new sequential codes */}
                             <span className="font-mono text-sm font-bold text-primary-400">
                               SET-{setCode}
                             </span>
@@ -156,13 +188,8 @@ export default function Jobs() {
                               {job.quantity_target?.toLocaleString()} pcs
                             </td>
                             <td className="py-3 px-6">
-                              <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border ${
-                                job.status === 'completed' ? 'bg-green-500/10 text-green-400 border-green-500/20' : 
-                                job.status === 'in_progress' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 
-                                'bg-yellow-500/10 text-yellow-400 border-yellow-500/20'
-                              }`}>
-                                {job.status}
-                              </span>
+                              {/* ⭐️ ROUND 8.1: Replaced flat chip with dynamic active step and days tracker */}
+                              {getStepStatusUI(job)}
                             </td>
                             <td className="py-3 px-6">
                               <div className="flex gap-1.5 items-center">
@@ -197,13 +224,8 @@ export default function Jobs() {
                         {job.quantity_target?.toLocaleString() || 0} pcs
                       </td>
                       <td className="py-4 px-6">
-                         <span className={`px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wider border ${
-                            job.status === 'completed' ? 'bg-green-500/10 text-green-400 border-green-500/20' : 
-                            job.status === 'in_progress' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 
-                            'bg-yellow-500/10 text-yellow-400 border-yellow-500/20'
-                          }`}>
-                            {job.status}
-                          </span>
+                         {/* ⭐️ ROUND 8.1: Replaced flat chip with dynamic active step and days tracker */}
+                         {getStepStatusUI(job)}
                       </td>
                       <td className="py-4 px-6">
                         <div className="flex gap-1.5 items-center">
@@ -227,7 +249,11 @@ export default function Jobs() {
         </div>
       </div>
 
-      {viewingJob && <JobViewModal job={viewingJob} onClose={() => setViewingJob(null)} />}
+      {viewingJob && <JobViewModal job={viewingJob} onClose={() => {
+        setViewingJob(null);
+        // This ensures the main list re-renders correctly if step status was updated inside the modal
+        window.dispatchEvent(new Event("focus")); 
+      }} />}
     </div>
   );
 }

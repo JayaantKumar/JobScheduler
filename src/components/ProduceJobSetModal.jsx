@@ -100,7 +100,7 @@ export default function ProduceJobSetModal({
             process_id: `sys_proc_${index}`,
             process_name: step.process_name || "Unassigned Process",
             status: "pending",
-            status_updated_at: creationTimestamp, // ⭐️ ROUND 8: Baseline for days-at-step timer
+            status_updated_at: creationTimestamp, 
             input_qty: step.input_qty || pState.final_pcs, 
             output_qty: step.output_qty || pState.final_pcs, 
             remarks: instructions, 
@@ -135,7 +135,7 @@ export default function ProduceJobSetModal({
             sku: activeProduceProduct.sku || "",
             category: activeProduceProduct.category || "", 
             materialRows: masterPart.materialRows || [],
-            files: activeProduceProduct.files || [], // ⭐️ ROUND 8: Pass Master Files down to the job card
+            files: activeProduceProduct.files || [], 
             size: masterPart.size || "", 
             material: masterPart.paperType || masterPart.material || "", 
             gsm: cleanGsm(masterPart.paperGsm || masterPart.gsm || ""),
@@ -153,7 +153,6 @@ export default function ProduceJobSetModal({
           process_sequence: final_process_sequence, 
           notes: "Auto-generated multi-part set.",
           
-          // ⭐️ ROUND 8: Initialize the operations log
           activity_log: [{
             id: Date.now().toString() + i,
             timestamp: creationTimestamp,
@@ -195,7 +194,7 @@ export default function ProduceJobSetModal({
               <input autoFocus required type="number" value={produceQty} onChange={handleProduceQtyChange} placeholder="e.g. 340" className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-3 text-lg font-bold text-white focus:outline-none" />
             </div>
             <div>
-              <label className="block text-sm font-bold text-gray-400 mb-1">Production Due Date *</label>
+              <label className="block text-sm font-bold text-primary-400 mb-1">Production Due Date *</label>
               <input required type="date" value={produceDate} onChange={e => setProduceDate(e.target.value)} className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-3 text-lg text-white [color-scheme:dark]" />
             </div>
           </div>
@@ -206,6 +205,11 @@ export default function ProduceJobSetModal({
                 const masterPart = activeProduceProduct.parts.find(mp => mp.id === p.id) || activeProduceProduct.parts[pIdx];
                 const cuttingList = masterPart.materialRows || [];
                 
+                // Determine target location place based on the first assigned machine in sequence
+                const firstStepWithMachine = p.sequence?.find(step => step.assigned_machine);
+                const assignedMach = firstStepWithMachine ? machines?.find(m => m.id === firstStepWithMachine.assigned_machine) : null;
+                const targetPlace = assignedMach?.place || "Unassigned";
+
                 const activeDieIds = new Set();
                 p.sequence?.forEach(step => {
                    Object.values(step.process_details || {}).forEach(val => {
@@ -250,19 +254,45 @@ export default function ProduceJobSetModal({
                     <div className="mt-4 border-t border-gray-800 pt-4 space-y-4">
                       
                       <div className="bg-gray-950 rounded border border-gray-800 p-3">
-                        <h4 className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">Pre-Production Checklist Preview</h4>
+                        <h4 className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">Pre-Production Checklist Preview (Location: {targetPlace})</h4>
                         <div className="space-y-1 text-xs">
                           {cuttingList.map((row, i) => {
                             const req = (Number(row.qty_per_unit) || 1) * (Number(p.part_sets) || 0);
                             
-                            // ⭐️ ROUND 7.2 FIX: Reads the correct inventory label field for shortage matching
                             const invItem = inventoryItems?.find(inv => {
                               const displayLabel = inv.name || inv.itemName || inv.label || "Unnamed Material";
                               return displayLabel === row.material_name;
                             });
                             
-                            const stock = invItem ? (Number(invItem.qty) || Number(invItem.balance) || 0) : null;
-                            const isShort = stock !== null && req > stock;
+                            let stockDisplay = <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-gray-800 text-gray-600">Free Text (—)</span>;
+
+                            if (invItem) {
+                              const totalBal = Number(invItem.balance ?? invItem.qty ?? 0);
+                              const localBalances = invItem.balances || {};
+                              const localBal = targetPlace !== "Unassigned" && localBalances[targetPlace] !== undefined 
+                                ? Number(localBalances[targetPlace]) 
+                                : totalBal;
+
+                              if (req > totalBal) {
+                                stockDisplay = (
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-red-500/20 text-red-400">
+                                    SHORT {req - totalBal}
+                                  </span>
+                                );
+                              } else if (req > localBal) {
+                                stockDisplay = (
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-purple-500/20 text-purple-400 border border-purple-500/30">
+                                    TRANSFER REQ ({targetPlace})
+                                  </span>
+                                );
+                              } else {
+                                stockDisplay = (
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-green-500/10 text-green-400">
+                                    OK ({localBal} at {targetPlace})
+                                  </span>
+                                );
+                              }
+                            }
                             
                             return (
                               <div key={i} className="flex justify-between items-center py-1 border-b border-gray-800/50">
@@ -272,13 +302,7 @@ export default function ProduceJobSetModal({
                                 </div>
                                 <div className="flex items-center gap-4">
                                   <span className="text-gray-400">Req: <strong className="text-white">{req.toLocaleString()}</strong></span>
-                                  {stock !== null ? (
-                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${isShort ? 'bg-red-500/20 text-red-400' : 'bg-gray-800 text-gray-400'}`}>
-                                      Stock: {stock.toLocaleString()} {isShort && `(SHORT ${req - stock})`}
-                                    </span>
-                                  ) : (
-                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-gray-800 text-gray-600">Free Text (—)</span>
-                                  )}
+                                  {stockDisplay}
                                 </div>
                               </div>
                             );

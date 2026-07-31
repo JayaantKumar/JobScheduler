@@ -12,7 +12,14 @@ export default function MasterData() {
   const [customers, setCustomers] = useState([]);
   const [productCategories, setProductCategories] = useState([]);
   const [rates, setRates] = useState([]);
-  const [machines, setMachines] = useState([]); // Needed for Die assignments
+  const [machines, setMachines] = useState([]);
+
+  // --- ⭐️ ROUND 9: LOCATIONS STATE ---
+  const [locations, setLocations] = useState([]);
+  const [isLocModalOpen, setLocModalOpen] = useState(false);
+  const [editingLoc, setEditingLoc] = useState(null);
+  const [locForm, setLocForm] = useState({ name: "", code: "", address: "", notes: "", active: true });
+  const [savingLoc, setSavingLoc] = useState(false);
 
   // --- INVENTORY MODULE STATES ---
   const [matCategories, setMatCategories] = useState([]);
@@ -27,7 +34,7 @@ export default function MasterData() {
   const [genericModal, setGenericModal] = useState({ isOpen: false, type: "", editId: null, name: "", extraValue: "" });
   const [savingGeneric, setSavingGeneric] = useState(false);
 
-  // --- ⭐️ ROUND 6.2: DIE REGISTER MODAL STATE ---
+  // --- DIE REGISTER MODAL STATE ---
   const [isDieModalOpen, setDieModalOpen] = useState(false);
   const [editingDie, setEditingDie] = useState(null);
   const [dieForm, setDieForm] = useState({
@@ -38,7 +45,7 @@ export default function MasterData() {
   const [confirmConfig, setConfirmConfig] = useState(null);
 
   // Active Tab View
-  const [activeSubTab, setActiveSubTab] = useState("material_cats");
+  const [activeSubTab, setActiveSubTab] = useState("locations");
 
   // --- REAL-TIME FIRESTORE SYNCHRONIZATION ---
   useEffect(() => {
@@ -48,15 +55,96 @@ export default function MasterData() {
     const unsubProdCats = onSnapshot(collection(db, "productCategories"), snap => setProductCategories(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubMachines = onSnapshot(collection(db, "machines"), snap => setMachines(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     
+    // ⭐️ ROUND 9: Listen for Locations
+    const unsubLocs = onSnapshot(collection(db, "locations"), snap => setLocations(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+
     const unsubRates = onSnapshot(collection(db, "rates"), snap => {
       setRates(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       setLoading(false);
     });
 
     return () => {
-      unsubDies(); unsubMatCats(); unsubCust(); unsubProdCats(); unsubMachines(); unsubRates();
+      unsubDies(); unsubMatCats(); unsubCust(); unsubProdCats(); unsubMachines(); unsubRates(); unsubLocs();
     };
   }, []);
+
+  // --- ⭐️ ROUND 9: LOCATIONS HANDLERS ---
+  const openLocModal = (loc = null) => {
+    if (loc) {
+      setEditingLoc(loc);
+      setLocForm({
+        name: loc.name || "", code: loc.code || "", address: loc.address || "",
+        notes: loc.notes || "", active: loc.active ?? true
+      });
+    } else {
+      setEditingLoc(null);
+      setLocForm({ name: "", code: "", address: "", notes: "", active: true });
+    }
+    setLocModalOpen(true);
+  };
+
+  const handleSaveLoc = async (e) => {
+    e.preventDefault();
+    if (!locForm.name.trim() || !locForm.code.trim()) return;
+    setSavingLoc(true);
+    try {
+      // Force code to be uppercase to match exact machine Place strings (e.g. "OJ274")
+      const formattedCode = locForm.code.trim().toUpperCase();
+      const payload = { ...locForm, code: formattedCode, updated_at: serverTimestamp() };
+      
+      if (editingLoc) {
+        await updateDoc(doc(db, "locations", editingLoc.id), payload);
+      } else {
+        await addDoc(collection(db, "locations"), { ...payload, created_at: serverTimestamp() });
+      }
+      setLocModalOpen(false);
+    } catch (err) { 
+      alert("Failed to save location: " + err.message); 
+    } finally { 
+      setSavingLoc(false); 
+    }
+  };
+
+  const handleDeleteLoc = async (loc) => {
+    try {
+      const invSnap = await getDocs(collection(db, "inventoryItems"));
+      let hasStock = false;
+      
+      invSnap.forEach(d => {
+        const item = d.data();
+        // Check if item has a balance at this location id, or if legacy location string matches the code
+        if ((item.balances && item.balances[loc.id] > 0) || item.location === loc.code) {
+          hasStock = true;
+        }
+      });
+
+      if (hasStock) {
+        setConfirmConfig({
+          isOpen: true,
+          title: "Cannot Delete Location",
+          message: `The location "${loc.name}" (${loc.code}) currently holds inventory stock. You must transfer or adjust the stock to zero before deleting this location.`,
+          isAlertOnly: true,
+          onConfirm: () => setConfirmConfig(null)
+        });
+        return;
+      }
+
+      setConfirmConfig({
+        isOpen: true,
+        title: "Delete Location",
+        message: `Are you sure you want to permanently delete the location: ${loc.name}?`,
+        isDanger: true,
+        confirmText: "Delete Location",
+        onConfirm: async () => {
+          setConfirmConfig(null);
+          await deleteDoc(doc(db, "locations", loc.id));
+        },
+        onCancel: () => setConfirmConfig(null)
+      });
+    } catch (error) {
+      console.error("Error checking location usage:", error);
+    }
+  };
 
   // --- MATERIAL CATEGORY HANDLERS ---
   const openMatModal = (cat = null) => {
@@ -120,7 +208,7 @@ export default function MasterData() {
     }
   };
 
-  // --- ⭐️ ROUND 6.2: MASTER DIES HANDLERS ---
+  // --- MASTER DIES HANDLERS ---
   const openDieModal = (die = null) => {
     if (die) {
       setEditingDie(die);
@@ -156,7 +244,6 @@ export default function MasterData() {
 
   const handleDeleteDie = async (die) => {
     try {
-      // 1. Deep scan the products collection to see if this die number is referenced in any routing
       const prodSnap = await getDocs(collection(db, "products"));
       let isUsed = false;
       prodSnap.forEach(d => {
@@ -183,7 +270,6 @@ export default function MasterData() {
         return;
       }
 
-      // 2. If safe, confirm deletion
       setConfirmConfig({
         isOpen: true,
         title: "Delete Master Die",
@@ -280,8 +366,9 @@ export default function MasterData() {
 
       {/* SUB-TABS ENGINE */}
       <div className="flex items-center gap-6 border-b border-gray-800 mb-6 overflow-x-auto no-scrollbar">
-        {["material_cats", "dies", "customers", "product_cats", "rates"].map(tab => {
+        {["locations", "material_cats", "dies", "customers", "product_cats", "rates"].map(tab => {
           const labels = {
+            locations: "Storage Locations",
             material_cats: "Raw Material Categories",
             dies: "Master Inventory Dies",
             customers: "Customers",
@@ -299,6 +386,68 @@ export default function MasterData() {
           );
         })}
       </div>
+
+      {/* ======================================================== */}
+      {/* ⭐️ ROUND 9: STORAGE LOCATIONS VIEW */}
+      {/* ======================================================== */}
+      {activeSubTab === "locations" && (
+        <div className="space-y-6 flex-1 flex flex-col">
+          <div className="flex justify-between items-center">
+            <div>
+              <h3 className="text-lg font-bold text-white">Factory Storage Locations</h3>
+              <p className="text-xs text-gray-500">Master list of buildings, floors, and specific machine zones.</p>
+            </div>
+            <button onClick={() => openLocModal()} className="bg-primary-600 hover:bg-primary-500 text-white text-xs font-bold px-4 py-2.5 rounded-lg transition-colors shadow-lg">+ Add Location</button>
+          </div>
+          
+          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden shadow-xl flex-1">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse min-w-[900px]">
+                <thead>
+                  <tr className="bg-gray-950/50 border-b border-gray-800 text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+                    <th className="py-4 px-6 w-[20%]">Location Code</th>
+                    <th className="py-4 px-6 w-[30%]">Name / Designation</th>
+                    <th className="py-4 px-6 w-[25%]">Address / Notes</th>
+                    <th className="py-4 px-6 w-[10%] text-center">Status</th>
+                    <th className="py-4 px-6 w-[15%] text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-800">
+                  {locations.length === 0 ? (
+                    <tr><td colSpan="5" className="py-12 text-center text-gray-500 italic text-sm">No locations configured. Add your first plant or zone.</td></tr>
+                  ) : (
+                    locations.map((loc) => (
+                      <tr key={loc.id} className={`hover:bg-gray-800/20 transition-colors ${!loc.active ? 'opacity-50' : ''}`}>
+                        <td className="py-4 px-6">
+                          <span className="bg-primary-900/20 text-primary-400 border border-primary-500/30 px-2 py-1 rounded font-mono text-sm font-bold tracking-wider">{loc.code}</span>
+                        </td>
+                        <td className="py-4 px-6 font-bold text-white text-sm">
+                          {loc.name}
+                        </td>
+                        <td className="py-4 px-6">
+                          <div className="text-xs text-gray-300 font-medium">{loc.address || "—"}</div>
+                          {loc.notes && <div className="text-[10px] text-gray-500 mt-1">{loc.notes}</div>}
+                        </td>
+                        <td className="py-4 px-6 text-center">
+                          <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${loc.active ? 'bg-green-500/10 text-green-400' : 'bg-gray-800 text-gray-500'}`}>
+                            {loc.active ? 'Active' : 'Inactive'}
+                          </span>
+                        </td>
+                        <td className="py-4 px-6 text-right">
+                          <div className="flex justify-end gap-2 items-center">
+                            <button onClick={() => openLocModal(loc)} className="text-xs font-medium text-gray-400 hover:text-white border border-gray-700 hover:bg-gray-800 px-3 py-1 rounded transition-colors">Edit</button>
+                            <button onClick={() => handleDeleteLoc(loc)} className="text-xs font-medium text-gray-600 hover:text-red-400 p-1 rounded transition-colors">Delete</button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ======================================================== */}
       {/* VIEW 1: RAW MATERIAL CATEGORIES */}
@@ -356,7 +505,7 @@ export default function MasterData() {
       )}
 
       {/* ======================================================== */}
-      {/* ⭐️ ROUND 6.2: RESTORED MASTER DIES VIEW */}
+      {/* MASTER DIES VIEW */}
       {/* ======================================================== */}
       {activeSubTab === "dies" && (
         <div className="space-y-6 flex-1 flex flex-col">
@@ -480,8 +629,52 @@ export default function MasterData() {
       })()}
 
       {/* ======================================================== */}
-      {/* ⭐️ ROUND 6.2: DIE CRUD MODAL */}
+      {/* ⭐️ ROUND 9: LOCATIONS CRUD MODAL */}
       {/* ======================================================== */}
+      {isLocModalOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-xl flex flex-col shadow-2xl overflow-hidden animate-fade-in">
+            <div className="p-6 border-b border-gray-800 bg-[#151724]">
+              <h3 className="text-lg font-bold text-white">{editingLoc ? "Edit Location" : "Add Storage Location"}</h3>
+              <p className="text-xs text-gray-400 mt-1">Ensure the Location Code exactly matches the Machine "Place" identifier.</p>
+            </div>
+            <form onSubmit={handleSaveLoc} className="p-6 space-y-4 bg-[#0a0f1a]">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className={labelClass}>Location Code *</label>
+                  <input required type="text" value={locForm.code} onChange={e => setLocForm({...locForm, code: e.target.value.toUpperCase()})} className={`${inputClass} font-mono`} placeholder="e.g. P56, OJ274" />
+                </div>
+                <div>
+                  <label className={labelClass}>Location Name *</label>
+                  <input required type="text" value={locForm.name} onChange={e => setLocForm({...locForm, name: e.target.value})} className={inputClass} placeholder="e.g. Plant 2 - Rigid Floor" />
+                </div>
+              </div>
+              <div>
+                <label className={labelClass}>Address (Optional)</label>
+                <input type="text" value={locForm.address} onChange={e => setLocForm({...locForm, address: e.target.value})} className={inputClass} placeholder="Physical street address or building..." />
+              </div>
+              <div>
+                <label className={labelClass}>Additional Notes</label>
+                <textarea rows="2" value={locForm.notes} onChange={e => setLocForm({...locForm, notes: e.target.value})} className={`${inputClass} resize-none`} placeholder="Access codes, contact persons..."></textarea>
+              </div>
+              <div className="pt-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={locForm.active} onChange={e => setLocForm({...locForm, active: e.target.checked})} className="rounded bg-gray-900 border-gray-700 w-4 h-4 text-primary-600 focus:ring-primary-500" />
+                  <span className="text-sm font-medium text-gray-300">Location is currently active</span>
+                </label>
+              </div>
+              <div className="pt-4 flex justify-end gap-3 border-t border-gray-800">
+                <button type="button" onClick={() => setLocModalOpen(false)} className="px-4 py-2 bg-gray-950 hover:bg-gray-800 text-xs text-gray-400 hover:text-white rounded transition-colors font-medium">Cancel</button>
+                <button type="submit" disabled={savingLoc} className="bg-primary-600 hover:bg-primary-500 disabled:opacity-50 text-xs font-bold text-white px-5 py-2 rounded transition-colors shadow-lg">
+                  {savingLoc ? "Saving..." : "Save Location"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* DIE CRUD MODAL */}
       {isDieModalOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-fade-in">
@@ -540,7 +733,7 @@ export default function MasterData() {
         </div>
       )}
 
-      {/* GENERIC ADD/EDIT MODAL (Customers, Product Cats, Rates) */}
+      {/* GENERIC ADD/EDIT MODAL */}
       {genericModal.isOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-md flex flex-col shadow-2xl overflow-hidden animate-fade-in">

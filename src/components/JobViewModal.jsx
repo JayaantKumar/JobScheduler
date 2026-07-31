@@ -1,7 +1,8 @@
 import { useState, useEffect, Fragment } from "react";
 import { createPortal } from "react-dom";
-import { collection, query, where, getDocs, doc, updateDoc } from "firebase/firestore";
-import { db } from "../firebase/config";
+import { collection, query, where, getDocs, doc, getDoc, updateDoc } from "firebase/firestore";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { db, storage } from "../firebase/config";
 
 export default function JobViewModal({ job, onClose }) {
   const [localJob, setLocalJob] = useState(job);
@@ -12,7 +13,6 @@ export default function JobViewModal({ job, onClose }) {
   const [qtyOk, setQtyOk] = useState("");
   const [qtyReject, setQtyReject] = useState("");
   
-  // ⭐️ ROUND 8: Hold Status States
   const [activeHoldIdx, setActiveHoldIdx] = useState(null);
   const [holdReason, setHoldReason] = useState("");
   const [holdNote, setHoldNote] = useState("");
@@ -20,6 +20,11 @@ export default function JobViewModal({ job, onClose }) {
   const [updating, setUpdating] = useState(false);
   const [inventoryItems, setInventoryItems] = useState([]);
   const [dies, setDies] = useState([]);
+
+  // ⭐️ ROUND 8.1: Live Product Files & Job-Level Files
+  const [liveProductFiles, setLiveProductFiles] = useState([]);
+  const [files, setFiles] = useState(job.files || []); 
+  const [savingFiles, setSavingFiles] = useState(false);
 
   useEffect(() => {
     const fetchDependencies = async () => {
@@ -32,6 +37,19 @@ export default function JobViewModal({ job, onClose }) {
     };
     fetchDependencies();
   }, []);
+
+  useEffect(() => {
+    if (!localJob?.product?.id) return;
+    const fetchLiveProduct = async () => {
+      try {
+        const pDoc = await getDoc(doc(db, "products", localJob.product.id));
+        if (pDoc.exists()) {
+          setLiveProductFiles(pDoc.data().files || []);
+        }
+      } catch (error) { console.error("Failed to fetch live product files:", error); }
+    };
+    fetchLiveProduct();
+  }, [localJob?.product?.id]);
 
   useEffect(() => {
     if (localJob?.set_code) {
@@ -64,14 +82,13 @@ export default function JobViewModal({ job, onClose }) {
 
   const handlePrint = () => window.print();
 
-  // ⭐️ ROUND 8: Centralized Step Status Logic (Ready for WhatsApp Automation Phase)
   const updateStepStatus = async (idx, newStatus, extraData = {}) => {
     setUpdating(true);
     try {
       const updatedSequence = [...localJob.process_sequence];
       const currentStep = updatedSequence[idx];
       const now = new Date().toISOString();
-      const actor = "Ops Coordinator"; // Will be dynamic when user roles are added
+      const actor = "Ops Coordinator"; 
 
       updatedSequence[idx] = {
         ...currentStep,
@@ -99,7 +116,7 @@ export default function JobViewModal({ job, onClose }) {
         note: extraData.hold_note || null
       };
 
-      const newLog = [logEntry, ...(localJob.activity_log || [])]; // Newest first
+      const newLog = [logEntry, ...(localJob.activity_log || [])]; 
       const allCompleted = updatedSequence.every(s => s.status === "completed");
       const newJobStatus = allCompleted ? "completed" : "in_progress";
 
@@ -128,46 +145,127 @@ export default function JobViewModal({ job, onClose }) {
     });
   };
 
-  // ⭐️ ROUND 8: Copy Client Update Generator
+  const handleFileSelect = (e) => {
+    const selected = Array.from(e.target.files);
+    const validFiles = [];
+    selected.forEach(f => {
+      if (f.size > 25 * 1024 * 1024) return alert(`File ${f.name} exceeds the 25MB limit.`);
+      validFiles.push({
+        id: Date.now() + Math.random(),
+        rawFile: f, 
+        name: f.name,
+        category: "Client PO",
+        version: "v1",
+        status: "APPROVED",
+        notes: "",
+        url: null, 
+        uploaded_at: new Date().toISOString()
+      });
+    });
+    if (validFiles.length > 0) setFiles([...files, ...validFiles]);
+    e.target.value = null;
+  };
+
+  const handleFileChange = (fileId, field, val) => {
+    setFiles(prev => {
+      let updated = prev.map(f => f.id === fileId ? { ...f, [field]: val } : f);
+      const modifiedFile = updated.find(f => f.id === fileId);
+      if (modifiedFile && modifiedFile.status === "APPROVED") {
+        updated = updated.map(f => (f.id !== fileId && f.category === modifiedFile.category && f.status === "APPROVED") ? { ...f, status: "Superseded" } : f);
+      }
+      return updated;
+    });
+  };
+
+  const handleRemoveFile = (fileId) => setFiles(files.filter(f => f.id !== fileId));
+
+  const saveJobFiles = async () => {
+    setSavingFiles(true);
+    try {
+      const processedFiles = await Promise.all(files.map(async (fileObj) => {
+        if (fileObj.rawFile) {
+          const fileExt = fileObj.name.split('.').pop();
+          const cleanName = fileObj.name.replace(`.${fileExt}`, '').replace(/[^a-zA-Z0-9]/g, '_');
+          const storagePath = `jobs/${localJob.id}/${Date.now()}_${cleanName}.${fileExt}`;
+          const storageRef = ref(storage, storagePath);
+          await uploadBytes(storageRef, fileObj.rawFile);
+          const downloadUrl = await getDownloadURL(storageRef);
+          const { rawFile: _rawFile, ...rest } = fileObj; 
+          return { ...rest, url: downloadUrl };
+        }
+        return fileObj; 
+      }));
+
+      await updateDoc(doc(db, "jobs", localJob.id), { files: processedFiles });
+      setLocalJob(prev => ({ ...prev, files: processedFiles }));
+      setFiles(processedFiles);
+      alert("Job files saved successfully!");
+    } catch (error) { 
+      alert("Error saving files: " + error.message); 
+    } finally { 
+      setSavingFiles(false); 
+    }
+  };
+
   const generateClientUpdate = () => {
-    const completedNames = localJob.process_sequence
-      .filter(s => s.status === 'completed')
-      .map(s => s.process_name.toLowerCase())
-      .join(" and ");
-      
+    const completedNames = localJob.process_sequence.filter(s => s.status === 'completed').map(s => s.process_name.toLowerCase()).join(" and ");
     const currentStep = localJob.process_sequence.find(s => s.status !== 'completed');
     const currentName = currentStep ? currentStep.process_name.toLowerCase() : "final packing";
     const qty = localJob.quantity_target?.toLocaleString() || 0;
-    const dateStr = localJob.deadline ? new Date(localJob.deadline).toLocaleDateString("en-GB", { day: 'numeric', month: 'short' }) : 'TBD';
+    
+    const dueDateObj = localJob.deadline ? new Date(localJob.deadline) : null;
+    const dateStr = dueDateObj ? dueDateObj.toLocaleDateString("en-GB", { day: 'numeric', month: 'short' }) : 'TBD';
+    
+    const today = new Date();
+    today.setHours(0,0,0,0);
+    const isOverdue = dueDateObj && dueDateObj < today;
+    const isOnHold = currentStep?.status === 'on_hold';
 
     let msg = `${localJob.customer} / ${localJob.product?.name || localJob.title} (${qty} pcs): `;
     if (completedNames) msg += `${completedNames} complete, `;
-    msg += `currently at ${currentName}, on track for dispatch ${dateStr}.`;
+
+    if (isOnHold) {
+      msg += `currently paused at ${currentName}; revised timeline to follow.`;
+    } else if (isOverdue) {
+      msg += `currently at ${currentName}, dispatch pending (re-evaluating timeline).`;
+    } else {
+      msg += `currently at ${currentName}, on track for dispatch ${dateStr}.`;
+    }
 
     navigator.clipboard.writeText(msg);
     alert("Client update copied to clipboard!\n\n" + msg);
   };
 
-  // ⭐️ ROUND 8: Copy Approved Files Generator
+  const approvedArtworkJob = (localJob.files || []).find(f => f.category === 'Artwork' && f.status === 'APPROVED');
+  const approvedArtworkProd = liveProductFiles.find(f => f.category === 'Artwork' && f.status === 'APPROVED');
+  const approvedArtwork = approvedArtworkJob || approvedArtworkProd;
+
+  const approvedDielineJob = (localJob.files || []).find(f => f.category === 'Dieline' && f.status === 'APPROVED');
+  const approvedDielineProd = liveProductFiles.find(f => f.category === 'Dieline' && f.status === 'APPROVED');
+  const approvedDieline = approvedDielineJob || approvedDielineProd;
+
   const copyApprovedFiles = () => {
-    const approvedFiles = (localJob.product?.files || []).filter(f => f.status === "APPROVED" && f.url);
-    if (approvedFiles.length === 0) return alert("No approved files found to share.");
+    const categories = new Set([...(localJob.files || []), ...liveProductFiles].map(f => f.category));
+    const finalFiles = [];
     
-    const links = approvedFiles.map(f => `${f.name} (${f.category} - ${f.version}): ${f.url}`).join("\n\n");
+    categories.forEach(cat => {
+      const jFile = (localJob.files || []).find(f => f.category === cat && f.status === "APPROVED" && f.url);
+      if (jFile) finalFiles.push(jFile);
+      else {
+        const pFile = liveProductFiles.find(f => f.category === cat && f.status === "APPROVED" && f.url);
+        if (pFile) finalFiles.push(pFile);
+      }
+    });
+
+    if (finalFiles.length === 0) return alert("No approved files found to share.");
+    const links = finalFiles.map(f => `${f.name} (${f.category} - ${f.version}): ${f.url}`).join("\n\n");
     const msg = `Approved Files for ${localJob.display_id}:\n\n${links}`;
     
     navigator.clipboard.writeText(msg);
     alert("File share links copied to clipboard!");
   };
 
-  // ⭐️ ROUND 8: Extract active artwork for print checks
-  const productFiles = localJob.product?.files || [];
-  const approvedArtwork = productFiles.find(f => f.category === 'Artwork' && f.status === 'APPROVED');
-  const approvedDieline = productFiles.find(f => f.category === 'Dieline' && f.status === 'APPROVED');
-
   const totalSteps = localJob.process_sequence?.length || 0;
-  const completedSteps = localJob.process_sequence?.filter(p => p.status === "completed").length || 0;
-  const _progressPercent = totalSteps > 0 ? Math.round((completedSteps / totalSteps) * 100) : 0;
   const currentActiveIdx = localJob.process_sequence?.findIndex(s => s.status !== 'completed');
 
   const dueDate = localJob.deadline ? new Date(localJob.deadline).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "N/A";
@@ -182,6 +280,9 @@ export default function JobViewModal({ job, onClose }) {
 
   const placeChain = localJob.process_sequence?.map(s => s.assigned_machine_place).filter(p => p && p.trim() !== "").filter((p, i, arr) => i === 0 || p !== arr[i-1]);
   const routeText = placeChain?.length > 0 ? `Route: ${placeChain.join(" → ")}` : "Route: Unassigned";
+
+  // Determine Target Location based on first active job routing step
+  const targetPlace = localJob.process_sequence?.find(s => s.assigned_machine_place && s.assigned_machine_place.trim() !== "")?.assigned_machine_place || "Unassigned";
 
   let preProdChecklist = localJob.product?.materialRows?.length > 0 
     ? [...localJob.product.materialRows]
@@ -251,7 +352,6 @@ export default function JobViewModal({ job, onClose }) {
         <div><span className="text-gray-500 font-bold">SKU:</span> <span className="font-bold text-black ml-1">{localJob.product?.sku || "N/A"}</span></div>
       </div>
 
-      {/* ⭐️ ROUND 8: File Version Warnings & Print Display */}
       <div className="mb-4 border-2 border-black flex">
         <div className="flex-1 p-2">
           <div className="text-[10px] font-bold uppercase text-gray-600 tracking-wider mb-1">Master Files & Assets</div>
@@ -288,14 +388,26 @@ export default function JobViewModal({ job, onClose }) {
           {preProdChecklist.map((row, i) => {
              const calculatedTotal = row.isDie ? 1 : (Number(row.qty_per_unit) || 1) * (localJob.quantity_target || 0);
              let stockFlag = null;
+             
+             // PRINT VIEW LOCATION CHECK (Lint Fixed)
              if (!row.isDie) {
                 const invItem = inventoryItems.find(inv => {
                   const displayLabel = inv.name || inv.itemName || inv.label || "Unnamed Material";
                   return displayLabel === row.material_name;
                 });
+                
                 if (invItem) {
-                   const bal = Number(invItem.qty || invItem.balance || 0);
-                   if (calculatedTotal > bal) stockFlag = <span className="ml-1 bg-red-600 text-white px-1 py-0.5 rounded text-[8px] font-black tracking-wider">SHORT {calculatedTotal - bal}</span>;
+                   const totalBal = Number(invItem.balance || 0);
+                   const localBal = Number(invItem.balances?.[targetPlace] || 0);
+                   
+                   if (calculatedTotal > totalBal) {
+                       stockFlag = <span className="ml-1 bg-red-600 text-white px-1.5 py-0.5 rounded text-[8px] font-black tracking-wider">SHORT {calculatedTotal - totalBal}</span>;
+                   } else if (calculatedTotal > localBal) {
+                       const holding = Object.entries(invItem.balances || {}).filter(([, q]) => q > 0).map(([l]) => `${l}`).join(', ');
+                       stockFlag = <span className="ml-1 bg-purple-200 border border-purple-800 text-purple-900 px-1.5 py-0.5 rounded text-[8px] font-black tracking-wider uppercase">TRANSFER TO {targetPlace} (FROM {holding || 'UNASSIGNED'})</span>;
+                   } else {
+                       stockFlag = <span className="ml-1 text-gray-500 text-[8px] font-bold">[OK - {targetPlace}]</span>;
+                   }
                 }
              }
 
@@ -460,7 +572,6 @@ export default function JobViewModal({ job, onClose }) {
               </div>
             </div>
 
-            {/* ⭐️ ROUND 8: Visual Stepper UI */}
             <div className="mt-6">
               <div className="flex justify-between items-end mb-2">
                 <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Production Routing</span>
@@ -507,22 +618,44 @@ export default function JobViewModal({ job, onClose }) {
                         <th className="p-3 font-bold">Material / Item</th>
                         <th className="p-3 font-bold">Piece</th>
                         <th className="p-3 font-bold text-center">Req.</th>
-                        <th className="p-3 font-bold text-center">Stock</th>
+                        <th className="p-3 font-bold text-center">Stock Check</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-800">
                       {preProdChecklist.map((row, i) => {
                          const calculatedTotal = row.isDie ? 1 : (Number(row.qty_per_unit) || 1) * (localJob.quantity_target || 0);
                          let stockDisplay = <span className="text-gray-500">—</span>;
+                         
+                         // DIGITAL UI LOCATION CHECK (Lint Fixed)
                          if (!row.isDie) {
                             const invItem = inventoryItems.find(inv => {
                               const displayLabel = inv.name || inv.itemName || inv.label || "Unnamed Material";
                               return displayLabel === row.material_name;
                             });
+                            
                             if (invItem) {
-                               const bal = Number(invItem.qty || invItem.balance || 0);
-                               const isShort = calculatedTotal > bal;
-                               stockDisplay = <span className={`px-2 py-0.5 rounded font-bold uppercase ${isShort ? 'bg-red-500/20 text-red-400' : 'bg-gray-800 text-gray-400'}`}>{bal.toLocaleString()} {isShort && `(SHORT)`}</span>;
+                               const totalBal = Number(invItem.balance || 0);
+                               const localBal = Number(invItem.balances?.[targetPlace] || 0);
+                               
+                               if (calculatedTotal > totalBal) {
+                                   stockDisplay = (
+                                     <div className="flex flex-col items-center gap-1">
+                                       <span className="px-2 py-0.5 rounded font-bold uppercase bg-red-500/20 text-red-400 text-[10px]">SHORT {calculatedTotal - totalBal}</span>
+                                       <span className="text-[9px] text-gray-500">Total: {totalBal}</span>
+                                     </div>
+                                   );
+                               } else if (calculatedTotal > localBal) {
+                                   const holding = Object.entries(invItem.balances || {}).filter(([, q]) => q > 0).map(([l]) => `${l}`).join(', ');
+                                   stockDisplay = (
+                                     <div className="flex flex-col items-center gap-1 text-center">
+                                       <span className="px-2 py-0.5 rounded font-bold uppercase bg-purple-500/20 text-purple-400 text-[9px] leading-tight border border-purple-500/30 shadow-lg shadow-purple-900/20">TRANSFER REQ</span>
+                                       <span className="text-[9px] text-gray-400">Need at {targetPlace}</span>
+                                       <span className="text-[8px] text-gray-500">Stock at: {holding || 'Unassigned'}</span>
+                                     </div>
+                                   );
+                               } else {
+                                   stockDisplay = <span className="px-2 py-0.5 rounded font-bold uppercase bg-green-500/10 text-green-400 text-[10px]">OK ({localBal} at {targetPlace})</span>;
+                               }
                             }
                          } else {
                            stockDisplay = <span className="text-purple-400 font-bold uppercase text-[10px]">Tooling</span>;
@@ -533,7 +666,7 @@ export default function JobViewModal({ job, onClose }) {
                              <td className="p-3 font-bold text-white truncate max-w-[120px]" title={row.material_name}>{row.material_name}</td>
                              <td className="p-3 text-gray-300 font-medium uppercase truncate max-w-[80px]" title={row.piece_purpose}>{row.piece_purpose}</td>
                              <td className="p-3 text-center font-bold text-primary-400">{row.isDie ? '—' : `${calculatedTotal.toLocaleString()}`}</td>
-                             <td className="p-3 text-center">{stockDisplay}</td>
+                             <td className="p-3 text-center align-middle">{stockDisplay}</td>
                            </tr>
                          );
                       })}
@@ -542,7 +675,6 @@ export default function JobViewModal({ job, onClose }) {
                 </div>
               </div>
 
-              {/* ⭐️ ROUND 8: Activity Log Panel */}
               <div>
                 <h3 className="text-sm font-bold text-gray-400 mb-3 uppercase tracking-wider">Job Activity Log</h3>
                 <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 h-[220px] overflow-y-auto custom-scrollbar space-y-3">
@@ -563,6 +695,83 @@ export default function JobViewModal({ job, onClose }) {
                   )}
                 </div>
               </div>
+            </div>
+
+            <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden shadow-lg">
+              <div className="bg-[#151724] border-b border-gray-800 p-4 flex justify-between items-center">
+                <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                  <svg className="w-4 h-4 text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>
+                  Job-Specific Files & Run Assets
+                </h3>
+                <div className="flex gap-3">
+                  <label className="bg-gray-800 hover:bg-gray-700 text-white text-xs font-bold px-4 py-2 rounded cursor-pointer border border-gray-700 transition-colors">
+                    + Attach File
+                    <input type="file" multiple accept=".pdf,.ai,.cdr,.eps,.psd,.jpg,.jpeg,.png,.xlsx,.docx" className="hidden" onChange={handleFileSelect} />
+                  </label>
+                  <button onClick={saveJobFiles} disabled={savingFiles} className="bg-primary-600 hover:bg-primary-500 disabled:opacity-50 text-white text-xs font-bold px-4 py-2 rounded transition-colors shadow-lg">
+                    {savingFiles ? "Saving..." : "Save Job Files"}
+                  </button>
+                </div>
+              </div>
+              {files.length > 0 ? (
+                <div className="p-4 overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="bg-gray-950 text-[10px] uppercase text-gray-500 border-b border-gray-800">
+                        <th className="p-2 font-bold min-w-[150px]">File Name</th>
+                        <th className="p-2 font-bold w-36">Category</th>
+                        <th className="p-2 font-bold w-20">Version</th>
+                        <th className="p-2 font-bold w-36">Status</th>
+                        <th className="p-2 font-bold">Notes</th>
+                        <th className="p-2 w-8"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-800 bg-gray-950/50">
+                      {files.map((file) => {
+                        const isSuperseded = file.status === "Superseded";
+                        return (
+                          <tr key={file.id} className={isSuperseded ? "opacity-50" : ""}>
+                            <td className="p-2 text-xs text-white truncate max-w-[150px]" title={file.name}>
+                              <span className={isSuperseded ? "line-through text-gray-500" : ""}>{file.name}</span>
+                              {file.rawFile && <span className="ml-2 text-[9px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded uppercase font-bold">Unsaved</span>}
+                            </td>
+                            <td className="p-2">
+                              <select value={file.category} onChange={e => handleFileChange(file.id, 'category', e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white">
+                                <option value="Client PO">Client PO</option>
+                                <option value="Artwork">Artwork</option>
+                                <option value="Dieline">Dieline</option>
+                                <option value="Sample Photo">Sample Photo</option>
+                                <option value="Quality Reference">Quality Reference</option>
+                                <option value="Other">Other</option>
+                              </select>
+                            </td>
+                            <td className="p-2">
+                              <input type="text" placeholder="v1" value={file.version} onChange={e => handleFileChange(file.id, 'version', e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white" />
+                            </td>
+                            <td className="p-2">
+                              <select value={file.status} onChange={e => handleFileChange(file.id, 'status', e.target.value)} className={`w-full bg-gray-900 border rounded px-2 py-1 text-xs font-bold ${file.status === 'APPROVED' ? 'border-green-500/50 text-green-400' : 'border-gray-700 text-white'}`}>
+                                <option value="APPROVED">APPROVED</option>
+                                <option value="Draft">Draft</option>
+                                <option value="Superseded">Superseded</option>
+                              </select>
+                            </td>
+                            <td className="p-2">
+                              <input type="text" placeholder="Optional notes..." value={file.notes} onChange={e => handleFileChange(file.id, 'notes', e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white" />
+                            </td>
+                            <td className="p-2 text-center">
+                              <button type="button" onClick={() => handleRemoveFile(file.id)} className="text-gray-600 hover:text-red-400 font-bold text-xs">✕</button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="p-6 text-center text-sm text-gray-500">
+                  No job-specific files. (Master product artwork is linked automatically).
+                </div>
+              )}
             </div>
 
             <div>
@@ -615,7 +824,6 @@ export default function JobViewModal({ job, onClose }) {
                             </div>
                           </div>
                           
-                          {/* ⭐️ ROUND 8: Step Action Controls */}
                           <div className="text-right flex flex-wrap justify-end gap-2 max-w-[200px]">
                             {status === 'pending' && (
                               <button onClick={() => updateStepStatus(idx, 'in_progress')} disabled={updating} className="text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded shadow-lg transition-colors disabled:opacity-50">
@@ -644,7 +852,6 @@ export default function JobViewModal({ job, onClose }) {
                           </div>
                         </div>
 
-                        {/* ⭐️ ROUND 8: Put On Hold UI */}
                         {activeHoldIdx === idx && (
                           <div className="mt-2 bg-gray-950 p-4 rounded-lg border border-orange-500/30 ml-12 animate-fade-in">
                             <h4 className="text-xs font-bold text-orange-400 mb-3 uppercase tracking-wider">Put Step On Hold</h4>
@@ -673,7 +880,6 @@ export default function JobViewModal({ job, onClose }) {
                           </div>
                         )}
 
-                        {/* Existing Complete Step UI */}
                         {completingStepIdx === idx && (
                           <div className="mt-2 bg-gray-950 p-4 rounded-lg border border-green-500/30 ml-12 animate-fade-in">
                             <h4 className="text-xs font-bold text-green-400 mb-3 uppercase tracking-wider">Complete Process: {step.process_name}</h4>

@@ -1,11 +1,10 @@
 import { useState, useEffect } from "react";
-import { collection, addDoc, updateDoc, doc, serverTimestamp } from "firebase/firestore";
+import { collection, addDoc, updateDoc, doc, serverTimestamp, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { useProcesses } from "../hooks/useProcesses";
 
 // 1. MASTER HARDCODED LIST 
 const PREDEFINED_TYPES = [
-  // The client's specific requested additions:
   "Manual Work (Hand Labour)", 
   "Forming + conveyor", 
   "Automatic gluing", 
@@ -13,7 +12,6 @@ const PREDEFINED_TYPES = [
   "UV Printing", 
   "Manual Side Pasting", 
   "Sorting",
-  // The core machines that require dynamic fields:
   "Sheet Cutting", 
   "Corrugation", 
   "Printing", 
@@ -28,6 +26,10 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
   
   // Fetch dynamic processes from the database
   const { processes: dbProcesses, loading: procLoading } = useProcesses();
+
+  // ⭐️ ROUND 9: Locations state for the dropdown
+  const [locations, setLocations] = useState([]);
+  const [locLoading, setLocLoading] = useState(true);
 
   // Combine Hardcoded + Database Processes + Existing Custom Types into one master dropdown
   const dbProcessNames = dbProcesses.map(p => p.processName);
@@ -49,6 +51,15 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
   
   const [specs, setSpecs] = useState(editingMachine?.specs || { dimUnit: "in" });
   const [loading, setLoading] = useState(false);
+
+  // ⭐️ ROUND 9: Fetch Locations from Master Data
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "locations"), (snap) => {
+      setLocations(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      setLocLoading(false);
+    });
+    return () => unsub();
+  }, []);
 
   // AUTO-GENERATE ID
   useEffect(() => {
@@ -85,7 +96,7 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!name.trim()) return alert("Error: Please enter a Machine Name.");
-    if (!place.trim()) return alert("Error: Please enter a Machine Place.");
+    if (!place.trim()) return alert("Error: Please select a Machine Place/Location.");
 
     const finalType = type === "Custom" ? customType : type;
     if (!finalType || !finalType.trim()) return alert("Error: Please select a Machine Type.");
@@ -130,9 +141,24 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
             <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Die Cutter Alpha" className={inputClass} />
           </div>
 
+          {/* ⭐️ ROUND 9: Dropdown bound to locations Master Data */}
           <div>
             <label className="block text-sm font-medium text-gray-400 mb-1">Machine Place (Factory) *</label>
-            <input type="text" value={place} onChange={e => setPlace(e.target.value)} placeholder="e.g. Section A" className={inputClass} />
+            <select 
+              value={place} 
+              onChange={e => setPlace(e.target.value)} 
+              className={inputClass}
+            >
+              <option value="">{locLoading ? "Loading Locations..." : "-- Select Location --"}</option>
+              {locations.filter(l => l.active).map(loc => (
+                <option key={loc.id} value={loc.code}>{loc.name} ({loc.code})</option>
+              ))}
+              
+              {/* Fallback for legacy text values not yet mapped */}
+              {place && !locations.find(l => l.code === place) && (
+                <option value={place}>{place} (Legacy Unmapped)</option>
+              )}
+            </select>
           </div>
 
           <div>
