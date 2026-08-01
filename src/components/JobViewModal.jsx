@@ -21,66 +21,95 @@ export default function JobViewModal({ job, onClose }) {
   const [inventoryItems, setInventoryItems] = useState([]);
   const [dies, setDies] = useState([]);
 
-  // ⭐️ ROUND 8.1: Live Product Files & Job-Level Files
   const [liveProductFiles, setLiveProductFiles] = useState([]);
   const [files, setFiles] = useState(job.files || []); 
   const [savingFiles, setSavingFiles] = useState(false);
 
   useEffect(() => {
+    let isMounted = true;
     const fetchDependencies = async () => {
       try {
         const invSnap = await getDocs(collection(db, "inventoryItems"));
-        setInventoryItems(invSnap.docs.map(d => ({id: d.id, ...d.data()})));
         const dieSnap = await getDocs(collection(db, "dies"));
-        setDies(dieSnap.docs.map(d => ({id: d.id, ...d.data()})));
+        if (isMounted) {
+          setInventoryItems(invSnap.docs.map(d => ({id: d.id, ...d.data()})));
+          setDies(dieSnap.docs.map(d => ({id: d.id, ...d.data()})));
+        }
       } catch (err) { console.error("Failed to fetch dependencies", err); }
     };
     fetchDependencies();
+    return () => { isMounted = false; };
   }, []);
 
+  // ⭐️ ROUND 9.1: BUG 1 FIX - Strict scope and cleanup to prevent artwork leaks
   useEffect(() => {
+    let isMounted = true;
+    setLiveProductFiles([]); // Instantly clear previous state on job change
+    
     if (!localJob?.product?.id) return;
+    
     const fetchLiveProduct = async () => {
       try {
         const pDoc = await getDoc(doc(db, "products", localJob.product.id));
-        if (pDoc.exists()) {
+        if (pDoc.exists() && isMounted) {
           setLiveProductFiles(pDoc.data().files || []);
         }
       } catch (error) { console.error("Failed to fetch live product files:", error); }
     };
     fetchLiveProduct();
-  }, [localJob?.product?.id]);
+    return () => { isMounted = false; };
+  }, [localJob?.product?.id, localJob?.id]);
 
+  // ⭐️ ROUND 9.1: BUG 4 FIX - Strict numeric sort for siblings
   useEffect(() => {
+    let isMounted = true;
     if (localJob?.set_code) {
       const fetchSiblings = async () => {
         try {
           const q = query(collection(db, "jobs"), where("set_code", "==", localJob.set_code));
           const snap = await getDocs(q);
-          const sibs = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.part_index - b.part_index);
-          setSiblings(sibs);
+          if (isMounted) {
+            const sibs = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+              .sort((a, b) => Number(a.part_index || 0) - Number(b.part_index || 0));
+            setSiblings(sibs);
+          }
         } catch (error) { console.error("Failed to fetch sibling cards:", error); }
       };
       fetchSiblings();
     }
-  }, [localJob]);
+    return () => { isMounted = false; };
+  }, [localJob?.set_code]);
 
   useEffect(() => {
+    let isMounted = true;
     if (!localJob?.id) return;
     const fetchMaterials = async () => {
       try {
         const q = query(collection(db, "inventoryTransactions"), where("job_ref_id", "==", localJob.id), where("type", "==", "out"));
         const snap = await getDocs(q);
-        const materials = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        setIssuedMaterials(materials);
+        if (isMounted) {
+          const materials = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          setIssuedMaterials(materials);
+        }
       } catch (err) { console.error("Failed to fetch issued materials:", err); }
     };
     fetchMaterials();
+    return () => { isMounted = false; };
   }, [localJob?.id]);
 
   if (!localJob) return null;
 
-  const handlePrint = () => window.print();
+  // ⭐️ ROUND 9.1: BUG 6 FIX - Clean PDF Filename Generation
+  const handlePrint = () => {
+    const originalTitle = document.title;
+    const dateStr = new Date().toLocaleDateString('en-GB').replace(/\//g, '-');
+    const safeJobId = (localJob.display_id || 'JOB').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const safePart = (localJob.part_name || 'Main').replace(/[^a-zA-Z0-9_-]/g, '_');
+    
+    document.title = `${safeJobId}_${safePart}_${dateStr}`;
+    window.print();
+    document.title = originalTitle;
+  };
 
   const updateStepStatus = async (idx, newStatus, extraData = {}) => {
     setUpdating(true);
@@ -280,8 +309,6 @@ export default function JobViewModal({ job, onClose }) {
 
   const placeChain = localJob.process_sequence?.map(s => s.assigned_machine_place).filter(p => p && p.trim() !== "").filter((p, i, arr) => i === 0 || p !== arr[i-1]);
   const routeText = placeChain?.length > 0 ? `Route: ${placeChain.join(" → ")}` : "Route: Unassigned";
-
-  // Determine Target Location based on first active job routing step
   const targetPlace = localJob.process_sequence?.find(s => s.assigned_machine_place && s.assigned_machine_place.trim() !== "")?.assigned_machine_place || "Unassigned";
 
   let preProdChecklist = localJob.product?.materialRows?.length > 0 
@@ -377,7 +404,7 @@ export default function JobViewModal({ job, onClose }) {
         <thead>
           <tr className="bg-gray-100 border-b-2 border-black uppercase text-gray-700">
             <th className="border-r-2 border-black p-1.5 w-6 text-center">☐</th>
-            <th className="border-r-2 border-black p-1.5">Item / Material</th>
+            <th className="border-r-2 border-black p-1.5">Item / Material Specification</th>
             <th className="border-r-2 border-black p-1.5 w-32">Piece / Purpose</th>
             <th className="border-r-2 border-black p-1.5 w-32">Size</th>
             <th className="border-r-2 border-black p-1.5 w-24 text-center bg-gray-200">Total Required</th>
@@ -386,10 +413,12 @@ export default function JobViewModal({ job, onClose }) {
         </thead>
         <tbody>
           {preProdChecklist.map((row, i) => {
+             // Basic fallback calculating Total Required (Will be replaced by Step 2 Basis logic in parent)
              const calculatedTotal = row.isDie ? 1 : (Number(row.qty_per_unit) || 1) * (localJob.quantity_target || 0);
              let stockFlag = null;
+             let displaySpec = row.material_name;
+             let displaySize = row.size || "—";
              
-             // PRINT VIEW LOCATION CHECK (Lint Fixed)
              if (!row.isDie) {
                 const invItem = inventoryItems.find(inv => {
                   const displayLabel = inv.name || inv.itemName || inv.label || "Unnamed Material";
@@ -408,6 +437,14 @@ export default function JobViewModal({ job, onClose }) {
                    } else {
                        stockFlag = <span className="ml-1 text-gray-500 text-[8px] font-bold">[OK - {targetPlace}]</span>;
                    }
+
+                   // ⭐️ ROUND 9.1: BUG 5 FIX - Format Spec Name Cleanly
+                   const rawName = row.material_name.split('·')[0].trim();
+                   const gsmThick = row.category === 'board' ? `${row.thickness_mm || '?'} mm` : `${row.gsm || '?'} GSM`;
+                   const brand = invItem.details?.Brand || invItem.details?.Mill;
+                   
+                   displaySpec = brand ? `${rawName} (${brand}) · ${gsmThick}` : `${rawName} · ${gsmThick}`;
+                   if (invItem.details?.Size) displaySize = invItem.details.Size;
                 }
              }
 
@@ -415,13 +452,10 @@ export default function JobViewModal({ job, onClose }) {
                <tr key={i} className="border-b border-black">
                  <td className="border-r-2 border-black p-1.5 text-center text-lg font-bold">☐</td>
                  <td className="border-r-2 border-black p-1.5 font-bold text-sm">
-                   {row.material_name}
-                   {row.category === 'board' && row.thickness_mm ? <span className="text-[10px] font-normal text-gray-600 ml-1">({row.thickness_mm}mm)</span> : ''}
-                   {row.category === 'paper' && row.gsm ? <span className="text-[10px] font-normal text-gray-600 ml-1">({row.gsm} GSM)</span> : ''}
-                   {stockFlag}
+                   {displaySpec} {stockFlag}
                  </td>
                  <td className="border-r-2 border-black p-1.5 font-bold uppercase">{row.piece_purpose}</td>
-                 <td className="border-r-2 border-black p-1.5">{row.size || '—'}</td>
+                 <td className="border-r-2 border-black p-1.5 font-mono text-[10px]">{displaySize}</td>
                  <td className="border-r-2 border-black p-1.5 text-center font-bold text-sm bg-gray-50">{row.isDie ? '—' : `${calculatedTotal.toLocaleString()} ${row.unit}`}</td>
                  <td className="p-1.5 text-[9px]">{row.notes || '—'}</td>
                </tr>
@@ -626,7 +660,6 @@ export default function JobViewModal({ job, onClose }) {
                          const calculatedTotal = row.isDie ? 1 : (Number(row.qty_per_unit) || 1) * (localJob.quantity_target || 0);
                          let stockDisplay = <span className="text-gray-500">—</span>;
                          
-                         // DIGITAL UI LOCATION CHECK (Lint Fixed)
                          if (!row.isDie) {
                             const invItem = inventoryItems.find(inv => {
                               const displayLabel = inv.name || inv.itemName || inv.label || "Unnamed Material";

@@ -14,28 +14,30 @@ export default function OperationsBoard() {
   const [overdueOnly, setOverdueOnly] = useState(false);
 
   useEffect(() => {
+    let isMounted = true;
     const fetchActiveJobs = async () => {
       setLoading(true);
       try {
-        // Fetch all jobs that are not entirely completed
         const q = query(collection(db, "jobs"), where("status", "==", "in_progress"));
         const pendingQ = query(collection(db, "jobs"), where("status", "==", "pending"));
         
         const [inProgressSnap, pendingSnap] = await Promise.all([getDocs(q), getDocs(pendingQ)]);
         
-        const jobsData = [
-          ...inProgressSnap.docs.map(d => ({ id: d.id, ...d.data() })),
-          ...pendingSnap.docs.map(d => ({ id: d.id, ...d.data() }))
-        ];
-        
-        setRawJobs(jobsData);
+        if (isMounted) {
+          const jobsData = [
+            ...inProgressSnap.docs.map(d => ({ id: d.id, ...d.data() })),
+            ...pendingSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+          ];
+          setRawJobs(jobsData);
+        }
       } catch (error) {
         console.error("Failed to fetch operations data:", error);
       } finally {
-        setLoading(false);
+        if (isMounted) setLoading(false);
       }
     };
     fetchActiveJobs();
+    return () => { isMounted = false; };
   }, []);
 
   const getDaysAtStep = (dateString) => {
@@ -58,7 +60,6 @@ export default function OperationsBoard() {
       const place = currentStep?.assigned_machine_place || 'Unassigned';
       const stepStatus = currentStep?.status || 'pending';
       
-      // Fallback to job_date if the step hasn't been started/updated yet
       const statusDate = currentStep?.status_updated_at || currentStep?.started_at || job.job_date;
       const daysAtStep = getDaysAtStep(statusDate);
       
@@ -77,8 +78,19 @@ export default function OperationsBoard() {
       };
     });
 
-    // Default Sort: Most stuck (highest days at step) first
-    return jobs.sort((a, b) => b.daysAtStep - a.daysAtStep);
+    // ⭐️ ROUND 9.1: BUG 4 FIX - Multi-level sort for the Operations Board
+    return jobs.sort((a, b) => {
+      // 1. Sort by most stuck first
+      if (b.daysAtStep !== a.daysAtStep) return b.daysAtStep - a.daysAtStep;
+      
+      // 2. Group by set code if days are identical
+      if (a.set_code && b.set_code && a.set_code !== b.set_code) {
+        return a.set_code.localeCompare(b.set_code);
+      }
+      
+      // 3. Strict Numeric sort for parts within the same set
+      return Number(a.part_index || 0) - Number(b.part_index || 0);
+    });
   }, [rawJobs]);
 
   // Apply UI Filters
@@ -93,7 +105,6 @@ export default function OperationsBoard() {
     });
   }, [processedJobs, filterCustomer, filterPlace, filterStatus, stuckOnly, overdueOnly]);
 
-  // Extract unique values for dropdowns
   const uniqueCustomers = [...new Set(processedJobs.map(j => j.customer))].filter(Boolean).sort();
   const uniquePlaces = [...new Set(processedJobs.map(j => j.place))].filter(p => p !== 'Unassigned').sort();
 

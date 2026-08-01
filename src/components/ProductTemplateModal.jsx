@@ -13,7 +13,9 @@ const defaultMaterialRow = () => ({
   piece_purpose: "",
   size: "",
   qty_per_unit: 1,
-  unit: "pcs",
+  unit: "sheets",
+  basis: "per_step", // ⭐️ ROUND 9.1: New default for paper/board
+  basis_step_index: 0,
   thickness_mm: "",
   gsm: "",
   notes: ""
@@ -46,7 +48,6 @@ export default function ProductTemplateModal({
   const [customerName, setCustomerName] = useState("");
   const [parts, setParts] = useState([defaultPart()]);
   
-  // ⭐️ ROUND 8: File Attachments State
   const [files, setFiles] = useState([]); 
   const [saving, setSaving] = useState(false);
 
@@ -57,7 +58,7 @@ export default function ProductTemplateModal({
         setSku(editingProduct.sku || "");
         setCategory(editingProduct.category || editingProduct.type || "");
         setCustomerName(editingProduct.customerName || "");
-        setFiles(editingProduct.files || []); // Load existing files
+        setFiles(editingProduct.files || []); 
         
         if (editingProduct.parts && editingProduct.parts.length > 0) {
           setParts(editingProduct.parts.map(p => {
@@ -69,6 +70,8 @@ export default function ProductTemplateModal({
               size: p.cut_size || p.size || "",
               qty_per_unit: 1,
               unit: "pcs",
+              basis: "per_piece",
+              basis_step_index: 0,
               thickness_mm: "",
               gsm: cleanGsm(p.paperGsm || p.gsm || ""),
               notes: p.sheet_size ? `Raw Sheet: ${p.sheet_size} | ${p.customMaterial || ""}` : (p.customMaterial || "")
@@ -94,6 +97,8 @@ export default function ProductTemplateModal({
               size: editingProduct.cut_size || editingProduct.size || "",
               qty_per_unit: 1,
               unit: "pcs",
+              basis: "per_piece",
+              basis_step_index: 0,
               thickness_mm: "",
               gsm: cleanGsm(editingProduct.paperGsm || editingProduct.gsm || ""),
               notes: editingProduct.sheet_size ? `Raw Sheet: ${editingProduct.sheet_size}` : ""
@@ -158,10 +163,26 @@ export default function ProductTemplateModal({
     setParts(parts.map(p => p.id === partId ? { ...p, materialRows: p.materialRows.filter(r => r.id !== rowId) } : p));
   };
 
+  // ⭐️ ROUND 9.1: BUG 2 FIX - Apply Smart Defaults when changing category
   const handleMaterialRowChange = (partId, rowId, field, val) => {
     setParts(parts.map(p => {
       if (p.id === partId) {
-        const newRows = p.materialRows.map(r => r.id === rowId ? { ...r, [field]: val } : r);
+        const newRows = p.materialRows.map(r => {
+          if (r.id === rowId) {
+            let updates = { [field]: val };
+            if (field === 'category') {
+               if (val === 'paper' || val === 'board' || val === 'rigid') {
+                  updates.basis = 'per_step';
+                  updates.unit = 'sheets';
+               } else {
+                  updates.basis = 'per_piece';
+                  updates.unit = 'pcs';
+               }
+            }
+            return { ...r, ...updates };
+          }
+          return r;
+        });
         return { ...p, materialRows: newRows };
       }
       return p;
@@ -196,7 +217,6 @@ export default function ProductTemplateModal({
     return filtered.length > 0 ? filtered : machines;
   };
 
-  // ⭐️ ROUND 8: File Selection & Validation
   const handleFileSelect = (e) => {
     const selected = Array.from(e.target.files);
     const validFiles = [];
@@ -218,15 +238,12 @@ export default function ProductTemplateModal({
       });
     });
     if (validFiles.length > 0) setFiles([...files, ...validFiles]);
-    e.target.value = null; // reset input
+    e.target.value = null; 
   };
 
-  // ⭐️ ROUND 8: File Versioning & State Management
   const handleFileChange = (fileId, field, val) => {
     setFiles(prev => {
       let updated = prev.map(f => f.id === fileId ? { ...f, [field]: val } : f);
-      
-      // Auto-supersede rule: Only ONE Approved file per category allowed
       const modifiedFile = updated.find(f => f.id === fileId);
       if (modifiedFile && modifiedFile.status === "APPROVED") {
         updated = updated.map(f => {
@@ -255,7 +272,6 @@ export default function ProductTemplateModal({
     setSaving(true);
     
     try {
-      // ⭐️ ROUND 8: Process & Upload files first
       const processedFiles = await Promise.all(files.map(async (fileObj) => {
         if (fileObj.rawFile) {
           const fileExt = fileObj.name.split('.').pop();
@@ -266,10 +282,10 @@ export default function ProductTemplateModal({
           await uploadBytes(storageRef, fileObj.rawFile);
           const downloadUrl = await getDownloadURL(storageRef);
           
-          const { rawFile: _rawFile, ...rest } = fileObj; // Alias to _rawFile to satisfy ESLint
+          const { rawFile: _rawFile, ...rest } = fileObj;
           return { ...rest, url: downloadUrl };
         }
-        return fileObj; // Already uploaded previously
+        return fileObj; 
       }));
 
       const cleanParts = parts.map(part => ({
@@ -285,7 +301,7 @@ export default function ProductTemplateModal({
       const payload = {
         name, sku, category, customerName,
         parts: cleanParts,
-        files: processedFiles, // Inject finalized files array
+        files: processedFiles,
         updated_at: serverTimestamp()
       };
 
@@ -385,7 +401,6 @@ export default function ProductTemplateModal({
             </div>
           </div>
 
-          {/* ⭐️ ROUND 8: Product Files & Assets */}
           <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden shadow-lg">
             <div className="bg-[#151724] border-b border-gray-800 p-4 flex justify-between items-center">
               <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
@@ -502,8 +517,10 @@ export default function ProductTemplateModal({
                             <th className="p-2 font-bold w-20">Thk / GSM</th>
                             <th className="p-2 font-bold w-32">Piece / Purpose</th>
                             <th className="p-2 font-bold w-24">Size (L×W)</th>
-                            <th className="p-2 font-bold w-20">Qty/Unit</th>
+                            <th className="p-2 font-bold w-16">Qty/Unit</th>
                             <th className="p-2 font-bold w-24">Unit</th>
+                            {/* ⭐️ ROUND 9.1: BUG 2 FIX - Added Basis Column */}
+                            <th className="p-2 font-bold w-28">Basis Calc</th>
                             <th className="p-2 font-bold">Notes</th>
                             <th className="p-2 w-8"></th>
                           </tr>
@@ -563,6 +580,21 @@ export default function ProductTemplateModal({
                                   <option value="meters">meters</option>
                                   <option value="grams">grams</option>
                                 </select>
+                              </td>
+                              {/* ⭐️ ROUND 9.1: BUG 2 FIX - Render Basis Dropdowns */}
+                              <td className="p-1.5 text-center bg-gray-950">
+                                <select value={row.basis || 'per_piece'} onChange={e => handleMaterialRowChange(part.id, row.id, 'basis', e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-[9px] text-white font-bold uppercase tracking-wider mb-1">
+                                  <option value="per_piece">Per Fin. Piece</option>
+                                  <option value="per_step">Per Step In</option>
+                                  <option value="fixed">Fixed Total</option>
+                                </select>
+                                {row.basis === 'per_step' && (
+                                   <select value={row.basis_step_index || 0} onChange={e => handleMaterialRowChange(part.id, row.id, 'basis_step_index', Number(e.target.value))} className="w-full bg-gray-800 border border-gray-600 rounded px-1 py-1 text-[9px] text-gray-300 outline-none">
+                                     {part.sequence.map((s, sIdx) => (
+                                       <option key={s.id} value={sIdx}>Step {sIdx + 1}</option>
+                                     ))}
+                                   </select>
+                                )}
                               </td>
                               <td className="p-1.5"><input type="text" placeholder="Notes" value={row.notes} onChange={e => handleMaterialRowChange(part.id, row.id, 'notes', e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white" /></td>
                               <td className="p-1.5 text-center">

@@ -7,19 +7,28 @@ export const useJobs = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // We order by deadline to see what needs to be scheduled first
+    let isMounted = true;
     const q = query(collection(db, "jobs"), orderBy("deadline", "asc"));
     
     const unsubscribe = onSnapshot(q, (snapshot) => {
+      if (!isMounted) return;
+      
       const jobData = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       }));
+      
       setJobs(jobData);
       setLoading(false);
+    }, (error) => {
+      console.error("Firestore snapshot error:", error);
+      if (isMounted) setLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
   }, []);
 
   return { jobs, loading };

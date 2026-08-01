@@ -36,7 +36,6 @@ export default function ProduceJobSetModal({
     
     setProducing(true);
     
-    // Force React to paint the "Generating..." spinner before freezing the thread with Firebase
     await new Promise(resolve => setTimeout(resolve, 50)); 
 
     try {
@@ -111,6 +110,18 @@ export default function ProduceJobSetModal({
           };
         });
 
+        // ⭐️ ROUND 9.1: BUG 2 FIX - Inject Basis Defaults into job payload
+        const processedMaterialRows = (masterPart.materialRows || []).map(row => {
+          const cat = row.category?.toLowerCase() || '';
+          const isBoardOrPaper = cat === 'paper' || cat === 'board' || cat === 'rigid';
+          return {
+            ...row,
+            basis: row.basis || (isBoardOrPaper ? 'per_step' : 'per_piece'),
+            basis_step_index: row.basis_step_index || 0,
+            unit: row.unit || (isBoardOrPaper ? 'sheets' : 'pcs')
+          };
+        });
+
         const newJobPayload = {
           title: `${activeProduceProduct.name} - ${masterPart.part_name || "Part"}`,
           customer: activeProduceProduct.customerName || "Unknown",
@@ -134,7 +145,7 @@ export default function ProduceJobSetModal({
             name: activeProduceProduct.name, 
             sku: activeProduceProduct.sku || "",
             category: activeProduceProduct.category || "", 
-            materialRows: masterPart.materialRows || [],
+            materialRows: processedMaterialRows, // Updated payload mapping
             files: activeProduceProduct.files || [], 
             size: masterPart.size || "", 
             material: masterPart.paperType || masterPart.material || "", 
@@ -205,7 +216,6 @@ export default function ProduceJobSetModal({
                 const masterPart = activeProduceProduct.parts.find(mp => mp.id === p.id) || activeProduceProduct.parts[pIdx];
                 const cuttingList = masterPart.materialRows || [];
                 
-                // Determine target location place based on the first assigned machine in sequence
                 const firstStepWithMachine = p.sequence?.find(step => step.assigned_machine);
                 const assignedMach = firstStepWithMachine ? machines?.find(m => m.id === firstStepWithMachine.assigned_machine) : null;
                 const targetPlace = assignedMach?.place || "Unassigned";
@@ -228,8 +238,12 @@ export default function ProduceJobSetModal({
                   </div>
 
                   <div className="flex flex-wrap gap-4 items-end bg-gray-950 p-3 rounded border border-gray-800">
-                    <div>
-                      <label className="block text-[10px] uppercase text-primary-400 font-bold mb-1">Target Sets for Part</label>
+                    <div className="relative">
+                      {/* ⭐️ ROUND 9.1: BUG 3 FIX - Visual Dirty Indicator */}
+                      <label className="block text-[10px] uppercase text-primary-400 font-bold mb-1">
+                        Target Sets for Part
+                        {p.dirtyFields?.part_sets && <span className="absolute -top-1 -right-2 w-2 h-2 bg-orange-500 rounded-full shadow-[0_0_4px_#f97316]" title="Manually edited (Locked)"></span>}
+                      </label>
                       <input type="number" value={p.part_sets} onChange={e => updatePartSets(pIdx, e.target.value)} className="w-24 bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-xs text-white font-bold focus:border-primary-500 outline-none" />
                     </div>
                     <div>
@@ -237,8 +251,11 @@ export default function ProduceJobSetModal({
                       <input type="number" step="any" value={p.active_multiplier} onChange={e => updatePartMultiplier(pIdx, e.target.value)} className="w-20 bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-xs text-white" disabled={p.is_custom_override} />
                     </div>
                     <div className="text-gray-600 font-bold mb-1.5 text-xs">OR</div>
-                    <div>
-                      <label className="block text-[10px] uppercase text-gray-500 font-bold mb-1">Direct Pieces Override</label>
+                    <div className="relative">
+                      <label className="block text-[10px] uppercase text-gray-500 font-bold mb-1">
+                        Direct Pieces Override
+                        {p.dirtyFields?.custom_override && <span className="absolute -top-1 -right-2 w-2 h-2 bg-orange-500 rounded-full shadow-[0_0_4px_#f97316]" title="Manually edited (Locked)"></span>}
+                      </label>
                       <div className="flex items-center gap-2">
                         <input type="checkbox" checked={p.is_custom_override} onChange={e => toggleCustomOverride(pIdx, e.target.checked)} />
                         <input type="number" value={p.is_custom_override ? p.final_pcs : ""} onChange={e => updatePartCustomPcs(pIdx, e.target.value)} disabled={!p.is_custom_override} className="w-28 bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-xs text-white disabled:opacity-50" placeholder="Custom Pcs" />
@@ -257,7 +274,21 @@ export default function ProduceJobSetModal({
                         <h4 className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">Pre-Production Checklist Preview (Location: {targetPlace})</h4>
                         <div className="space-y-1 text-xs">
                           {cuttingList.map((row, i) => {
-                            const req = (Number(row.qty_per_unit) || 1) * (Number(p.part_sets) || 0);
+                            // ⭐️ ROUND 9.1: BUG 2 FIX - Apply Basis Logic to calculations and output correct Unit
+                            const cat = row.category?.toLowerCase() || '';
+                            const isBoardOrPaper = cat === 'paper' || cat === 'board' || cat === 'rigid';
+                            const effBasis = row.basis || (isBoardOrPaper ? 'per_step' : 'per_piece');
+                            
+                            let req = 0;
+                            if (effBasis === 'fixed') {
+                              req = Number(row.qty_per_unit) || 1;
+                            } else if (effBasis === 'per_step') {
+                              const sIdx = row.basis_step_index || 0;
+                              const stepQty = p.sequence[sIdx] ? Number(p.sequence[sIdx].input_qty) : Number(p.final_pcs);
+                              req = (Number(row.qty_per_unit) || 1) * stepQty;
+                            } else {
+                              req = (Number(row.qty_per_unit) || 1) * Number(p.final_pcs);
+                            }
                             
                             const invItem = inventoryItems?.find(inv => {
                               const displayLabel = inv.name || inv.itemName || inv.label || "Unnamed Material";
@@ -274,23 +305,11 @@ export default function ProduceJobSetModal({
                                 : totalBal;
 
                               if (req > totalBal) {
-                                stockDisplay = (
-                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-red-500/20 text-red-400">
-                                    SHORT {req - totalBal}
-                                  </span>
-                                );
+                                stockDisplay = <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-red-500/20 text-red-400">SHORT {req - totalBal}</span>;
                               } else if (req > localBal) {
-                                stockDisplay = (
-                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-purple-500/20 text-purple-400 border border-purple-500/30">
-                                    TRANSFER REQ ({targetPlace})
-                                  </span>
-                                );
+                                stockDisplay = <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-purple-500/20 text-purple-400 border border-purple-500/30">TRANSFER REQ ({targetPlace})</span>;
                               } else {
-                                stockDisplay = (
-                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-green-500/10 text-green-400">
-                                    OK ({localBal} at {targetPlace})
-                                  </span>
-                                );
+                                stockDisplay = <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-green-500/10 text-green-400">OK ({localBal} at {targetPlace})</span>;
                               }
                             }
                             
@@ -301,7 +320,9 @@ export default function ProduceJobSetModal({
                                   <span className="text-gray-500 ml-2">({row.piece_purpose})</span>
                                 </div>
                                 <div className="flex items-center gap-4">
-                                  <span className="text-gray-400">Req: <strong className="text-white">{req.toLocaleString()}</strong></span>
+                                  <span className="text-gray-400">
+                                    Req: <strong className="text-white">{req.toLocaleString()}</strong> <span className="text-[9px] uppercase">{row.unit || (isBoardOrPaper ? 'sheets' : 'pcs')}</span>
+                                  </span>
                                   {stockDisplay}
                                 </div>
                               </div>
@@ -329,9 +350,16 @@ export default function ProduceJobSetModal({
                             <span className="text-gray-500 font-bold w-4">{sIdx+1}.</span>
                             <span className="text-gray-300 w-48 truncate">{step.process_name}</span>
                             <div className="flex items-center gap-2">
-                              <div className="bg-gray-900 px-2 py-1 rounded border border-gray-700 text-gray-400">In: <input type="number" value={step.input_qty} onChange={e => handleStepQtyChange(pIdx, sIdx, 'input_qty', e.target.value)} className="w-20 bg-transparent text-white font-mono outline-none" /></div>
+                              {/* ⭐️ ROUND 9.1: BUG 3 FIX - Visual Dirty Indicators */}
+                              <div className="bg-gray-900 px-2 py-1 rounded border border-gray-700 text-gray-400 relative">
+                                In: <input type="number" value={step.input_qty} onChange={e => handleStepQtyChange(pIdx, sIdx, 'input_qty', e.target.value)} className="w-20 bg-transparent text-white font-mono outline-none" />
+                                {p.dirtyFields?.[`input_${sIdx}`] && <span className="absolute -top-1 -right-1 w-2 h-2 bg-orange-500 rounded-full shadow-[0_0_4px_#f97316]" title="Manually edited (Locked)"></span>}
+                              </div>
                               <span className="text-primary-500 font-bold">→</span>
-                              <div className="bg-gray-900 px-2 py-1 rounded border border-gray-700 text-gray-400">Out: <input type="number" value={step.output_qty} onChange={e => handleStepQtyChange(pIdx, sIdx, 'output_qty', e.target.value)} className="w-20 bg-transparent text-white font-mono outline-none" /></div>
+                              <div className="bg-gray-900 px-2 py-1 rounded border border-gray-700 text-gray-400 relative">
+                                Out: <input type="number" value={step.output_qty} onChange={e => handleStepQtyChange(pIdx, sIdx, 'output_qty', e.target.value)} className="w-20 bg-transparent text-white font-mono outline-none" />
+                                {p.dirtyFields?.[`output_${sIdx}`] && <span className="absolute -top-1 -right-1 w-2 h-2 bg-orange-500 rounded-full shadow-[0_0_4px_#f97316]" title="Manually edited (Locked)"></span>}
+                              </div>
                             </div>
                           </div>
                         ))}

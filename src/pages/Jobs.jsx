@@ -31,7 +31,11 @@ export default function Jobs() {
     }
   });
 
-  Object.values(setMap).forEach(group => groupedJobs.push(group));
+  // ⭐️ ROUND 9.1: BUG 4 FIX - Sort the child cards within each set by part_index ascending
+  Object.values(setMap).forEach(group => {
+    group.sort((a, b) => Number(a.part_index || 0) - Number(b.part_index || 0));
+    groupedJobs.push(group);
+  });
 
   const filteredGroups = groupedJobs.filter(group => {
     if (activeTab === "All") return true;
@@ -188,7 +192,6 @@ export default function Jobs() {
                               {job.quantity_target?.toLocaleString()} pcs
                             </td>
                             <td className="py-3 px-6">
-                              {/* ⭐️ ROUND 8.1: Replaced flat chip with dynamic active step and days tracker */}
                               {getStepStatusUI(job)}
                             </td>
                             <td className="py-3 px-6">
@@ -224,7 +227,6 @@ export default function Jobs() {
                         {job.quantity_target?.toLocaleString() || 0} pcs
                       </td>
                       <td className="py-4 px-6">
-                         {/* ⭐️ ROUND 8.1: Replaced flat chip with dynamic active step and days tracker */}
                          {getStepStatusUI(job)}
                       </td>
                       <td className="py-4 px-6">
@@ -251,7 +253,6 @@ export default function Jobs() {
 
       {viewingJob && <JobViewModal job={viewingJob} onClose={() => {
         setViewingJob(null);
-        // This ensures the main list re-renders correctly if step status was updated inside the modal
         window.dispatchEvent(new Event("focus")); 
       }} />}
     </div>
