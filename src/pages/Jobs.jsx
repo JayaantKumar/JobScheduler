@@ -31,33 +31,46 @@ export default function Jobs() {
     }
   });
 
-  // ⭐️ ROUND 9.1: BUG 4 FIX - Sort the child cards within each set by part_index ascending
   Object.values(setMap).forEach(group => {
     group.sort((a, b) => Number(a.part_index || 0) - Number(b.part_index || 0));
     groupedJobs.push(group);
   });
 
+  // ⭐️ ROUND 9.2: BUG 3 FIX - Accurate Job State Checking
+  const isJobOnHold = (job) => {
+    const activeStep = job.process_sequence?.find(s => s.status !== 'completed');
+    return activeStep?.status === 'on_hold';
+  };
+
+  const isJobInProgress = (job) => {
+    const activeStep = job.process_sequence?.find(s => s.status !== 'completed');
+    return activeStep?.status === 'in_progress' || activeStep?.status === 'scheduled';
+  };
+
   const filteredGroups = groupedJobs.filter(group => {
     if (activeTab === "All") return true;
 
     const hasPending = group.some(j => j.status === "pending");
-    const hasInProgress = group.some(j => j.status === "in_progress" || j.status === "scheduled");
+    const hasOnHold = group.some(isJobOnHold);
+    const hasInProgress = group.some(isJobInProgress);
     const allCompleted = group.every(j => j.status === "completed");
     const hasOverdue = group.some(j => j.status !== "completed" && new Date(j.deadline) < new Date());
 
     if (activeTab === "Completed") return allCompleted;
     if (activeTab === "Overdue") return hasOverdue;
-    if (activeTab === "Pending") return hasPending && !allCompleted;
-    if (activeTab === "In Progress") return hasInProgress;
+    if (activeTab === "On Hold") return hasOnHold;
+    // ⭐️ ROUND 9.2: BUG 3 FIX - Exclude held jobs from In Progress
+    if (activeTab === "In Progress") return hasInProgress && !hasOnHold; 
+    if (activeTab === "Pending") return hasPending && !allCompleted && !hasOnHold && !hasInProgress;
 
     return true;
   });
 
   if (loading) return <div className="p-8 text-primary-500 animate-pulse font-medium">Loading Job Data...</div>;
 
-  const tabs = ["All", "Pending", "In Progress", "Completed", "Overdue"];
+  // ⭐️ ROUND 9.2: BUG 3 FIX - Added On Hold Tab
+  const tabs = ["All", "Pending", "In Progress", "On Hold", "Completed", "Overdue"];
 
-  // ⭐️ ROUND 8.1 Helper: Calculate Current Step and Days at Step for the UI Chip
   const getStepStatusUI = (job) => {
     const seq = job.process_sequence || [];
     const currentIdx = seq.findIndex(s => s.status !== 'completed');
@@ -74,11 +87,21 @@ export default function Jobs() {
     const statusDate = currentStep.status_updated_at || currentStep.started_at || job.job_date;
     const diffDays = statusDate ? Math.floor((new Date() - new Date(statusDate)) / (1000 * 60 * 60 * 24)) : 0;
     
+    // ⭐️ ROUND 9.2: BUG 3 FIX - Display hold reason directly on the row
+    if (currentStep.status === 'on_hold') {
+      const reasonStr = currentStep.hold_reason ? ` - ${currentStep.hold_reason}` : '';
+      return (
+        <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded border text-[9px] font-bold tracking-wider bg-orange-500/10 text-orange-400 border-orange-500/30">
+          <span className="uppercase">⏸ ON HOLD{reasonStr}</span>
+          {diffDays > 0 && <span className="ml-1 border-l border-orange-500/50 pl-1.5 opacity-80">{diffDays}d</span>}
+        </div>
+      );
+    }
+    
     let colorClass = "bg-gray-800 text-gray-400 border-gray-700";
     if (diffDays >= 4) colorClass = "bg-red-500/10 text-red-400 border-red-500/30";
     else if (diffDays >= 2) colorClass = "bg-orange-500/10 text-orange-400 border-orange-500/30";
     else if (currentStep.status === 'in_progress') colorClass = "bg-blue-500/10 text-blue-400 border-blue-500/30";
-    else if (currentStep.status === 'on_hold') colorClass = "bg-yellow-500/10 text-yellow-400 border-yellow-500/30";
 
     return (
       <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded border text-[9px] font-bold tracking-wider ${colorClass}`}>
@@ -145,7 +168,8 @@ export default function Jobs() {
                     let setStatus = "pending";
                     if (isSetCompleted) setStatus = "completed";
                     else if (isSetOverdue) setStatus = "overdue";
-                    else if (group.some(j => j.status === "in_progress" || j.status === "scheduled")) setStatus = "in_progress";
+                    else if (group.some(isJobOnHold)) setStatus = "on_hold"; // ⭐️ Set-level on-hold state
+                    else if (group.some(isJobInProgress)) setStatus = "in_progress";
 
                     return (
                       <Fragment key={`set-${setCode}`}>
@@ -164,10 +188,11 @@ export default function Jobs() {
                             <span className={`px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wider border ${
                               setStatus === 'completed' ? 'bg-green-500/10 text-green-400 border-green-500/20' : 
                               setStatus === 'overdue' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                              setStatus === 'on_hold' ? 'bg-orange-500/10 text-orange-400 border-orange-500/30' :
                               setStatus === 'in_progress' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 
                               'bg-yellow-500/10 text-yellow-400 border-yellow-500/20'
                             }`}>
-                              {setStatus === 'overdue' ? 'OVERDUE' : setStatus === 'in_progress' ? 'IN PROGRESS' : setStatus}
+                              {setStatus === 'overdue' ? 'OVERDUE' : setStatus === 'on_hold' ? 'ON HOLD' : setStatus === 'in_progress' ? 'IN PROGRESS' : setStatus}
                             </span>
                           </td>
                           <td className="py-4 px-6">
@@ -197,7 +222,7 @@ export default function Jobs() {
                             <td className="py-3 px-6">
                               <div className="flex gap-1.5 items-center">
                                 {job.process_sequence?.map((step, i) => (
-                                  <div key={i} title={step.process_name} className={`w-2 h-2 rounded-full ${step.status === 'completed' ? 'bg-green-500' : step.status === 'in_progress' ? 'bg-blue-500' : 'bg-gray-700'}`} />
+                                  <div key={i} title={step.process_name} className={`w-2 h-2 rounded-full ${step.status === 'completed' ? 'bg-green-500' : step.status === 'in_progress' ? 'bg-blue-500' : step.status === 'on_hold' ? 'bg-orange-500' : 'bg-gray-700'}`} />
                                 ))}
                               </div>
                             </td>
@@ -232,7 +257,7 @@ export default function Jobs() {
                       <td className="py-4 px-6">
                         <div className="flex gap-1.5 items-center">
                           {job.process_sequence?.map((step, i) => (
-                            <div key={i} title={step.process_name} className={`w-2.5 h-2.5 rounded-full ${step.status === 'completed' ? 'bg-green-500' : step.status === 'in_progress' ? 'bg-blue-500' : 'bg-gray-700'}`} />
+                            <div key={i} title={step.process_name} className={`w-2.5 h-2.5 rounded-full ${step.status === 'completed' ? 'bg-green-500' : step.status === 'in_progress' ? 'bg-blue-500' : step.status === 'on_hold' ? 'bg-orange-500' : 'bg-gray-700'}`} />
                           ))}
                         </div>
                       </td>

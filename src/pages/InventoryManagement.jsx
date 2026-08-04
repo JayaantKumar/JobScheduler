@@ -164,7 +164,7 @@ export default function InventoryManagement() {
         await addDoc(collection(db, "inventoryItems"), {
           ...payload,
           balance: 0, 
-          balances: {}, // ⭐️ ROUND 9: New per-location balance object
+          balances: {}, 
           created_at: serverTimestamp()
         });
       }
@@ -216,7 +216,7 @@ export default function InventoryManagement() {
     try {
       const updateData = {
         balances: { [migrateLoc]: activeItem.balance || 0 },
-        location: null, // Wipe legacy text
+        location: null, 
         updated_at: serverTimestamp()
       };
       await updateDoc(doc(db, "inventoryItems", activeItem.id), updateData);
@@ -258,7 +258,6 @@ export default function InventoryManagement() {
     let newLocBalance = locBalance;
     let newTotalBalance = activeItem.balance || 0;
 
-    // Calculate impacts
     if (transType === 'in') {
       newLocBalance += qtyNum;
       newTotalBalance += qtyNum;
@@ -269,11 +268,9 @@ export default function InventoryManagement() {
       newLocBalance += qtyNum;
       newTotalBalance += qtyNum;
     } else if (transType === 'transfer') {
-      newLocBalance -= qtyNum; // transLoc drops
-      // transToLoc goes up, total stays same.
+      newLocBalance -= qtyNum; 
     }
 
-    // ⭐️ ROUND 9: Negative Balance Warning (Location specific)
     if (newLocBalance < 0 && !isConfirmedNegative && (transType === 'out' || transType === 'transfer' || (transType === 'adj' && adjDirection === 'deduct'))) {
       setConfirmConfig({
         isOpen: true,
@@ -283,7 +280,7 @@ export default function InventoryManagement() {
         isDanger: false,
         onConfirm: () => {
           setConfirmConfig(null);
-          processTransactionSubmit(true); // Re-run with override
+          processTransactionSubmit(true); 
         },
         onCancel: () => setConfirmConfig(null)
       });
@@ -306,7 +303,7 @@ export default function InventoryManagement() {
         type: transType,
         date: transDate,
         qty: transType === 'out' || (transType === 'adj' && adjDirection === 'deduct') ? -qtyNum : qtyNum,
-        location: transLoc, // Main interaction location
+        location: transLoc, 
         previous_balance: locBalance,
         new_balance: newLocBalance,
         total_balance: newTotalBalance,
@@ -314,7 +311,6 @@ export default function InventoryManagement() {
         created_at: serverTimestamp(),
       };
 
-      // Specific Payload Data
       if (transType === 'in') {
         transPayload.supplier = supplier;
         transPayload.rate = rate;
@@ -322,14 +318,14 @@ export default function InventoryManagement() {
         transPayload.job_ref_id = linkedJobId;
         transPayload.job_display = linkedJobDisplay;
         transPayload.purpose = freeTextPurpose;
-        transPayload.person = person; // Issued To
+        transPayload.person = person; 
       } else if (transType === 'adj') {
         transPayload.reason = adjReason;
       } else if (transType === 'transfer') {
-        transPayload.qty = qtyNum; // Transfers display as positive movement amounts
+        transPayload.qty = qtyNum; 
         transPayload.transfer_id = generatedId;
         transPayload.toLocation = transToLoc;
-        transPayload.person = person; // Sent By
+        transPayload.person = person; 
         transPayload.receivedBy = receivedBy;
         transPayload.vehicle = vehicle;
       }
@@ -342,7 +338,6 @@ export default function InventoryManagement() {
         [`balances.${transLoc}`]: newLocBalance
       };
 
-      // ⭐️ ROUND 9: Apply the atomic increment to the receiving location for transfers
       if (transType === 'transfer') {
         itemUpdate[`balances.${transToLoc}`] = (activeItem.balances?.[transToLoc] || 0) + qtyNum;
       }
@@ -359,7 +354,6 @@ export default function InventoryManagement() {
     processTransactionSubmit(false);
   };
 
-  // --- HISTORY HANDLER ---
   const viewHistory = async (item) => {
     setActiveItem(item);
     setHistoryModalOpen(true);
@@ -376,7 +370,6 @@ export default function InventoryManagement() {
     }
   };
 
-  // ⭐️ ROUND 9: Print Transfer Slip Logic
   const handlePrintSlip = (entry) => {
     setPrintData({ item: activeItem, tx: entry });
     setTimeout(() => window.print(), 100);
@@ -393,7 +386,6 @@ export default function InventoryManagement() {
 
   if (loading) return <div className="p-8 text-primary-500 animate-pulse font-medium">Loading Inventory Engine...</div>;
 
-  // ⭐️ ROUND 9: Transfer Slip Component
   const PrintSlip = printData && (
     <div className="hidden print:block absolute inset-0 bg-white text-black font-sans text-sm p-8">
       <div className="flex justify-between items-start border-b-2 border-black pb-4 mb-6">
@@ -448,7 +440,6 @@ export default function InventoryManagement() {
   return (
     <div className="max-w-[1600px] mx-auto p-6 h-full flex flex-col relative">
       
-      {/* INLINE CONFIRM MODAL */}
       {confirmConfig && confirmConfig.isOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
           <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-md shadow-2xl overflow-hidden animate-fade-in">
@@ -466,7 +457,6 @@ export default function InventoryManagement() {
         </div>
       )}
 
-      {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
         <div>
           <h2 className="text-3xl font-bold text-white tracking-tight">Inventory Management</h2>
@@ -477,7 +467,6 @@ export default function InventoryManagement() {
         </button>
       </div>
 
-      {/* Filters */}
       <div className="flex gap-4 mb-6">
         <input type="text" placeholder="Search item label or specs..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className={`${inputClass} max-w-md`} />
         <select value={selectedCatFilter} onChange={e => setSelectedCatFilter(e.target.value)} className={`${inputClass} max-w-xs`}>
@@ -486,7 +475,6 @@ export default function InventoryManagement() {
         </select>
       </div>
 
-      {/* Item List Table */}
       <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden shadow-xl flex-1 flex flex-col">
         <div className="overflow-x-auto flex-1">
           <table className="w-full text-left border-collapse min-w-[1050px]">
@@ -506,9 +494,8 @@ export default function InventoryManagement() {
                   const isLow = item.minStock > 0 && (item.balance || 0) <= item.minStock;
                   const needsMigration = (item.balance > 0) && (!item.balances || Object.keys(item.balances).length === 0);
                   
-                  // ⭐️ ROUND 9: Location Balances Breakdown
                   const breakdown = Object.entries(item.balances || {})
-                    .filter(([ qty]) => qty !== 0)
+                    .filter(([, qty]) => qty !== 0)
                     .map(([loc, qty]) => (
                       <span key={loc} className="inline-block bg-gray-800 text-gray-300 px-2 py-0.5 rounded text-[10px] mr-1 mb-1 border border-gray-700">
                         <span className="font-bold text-primary-400">{loc}:</span> {qty.toLocaleString()}
@@ -566,9 +553,6 @@ export default function InventoryManagement() {
         </div>
       </div>
 
-      {/* ========================================== */}
-      {/* 📦 ADD/EDIT ITEM MODAL */}
-      {/* ========================================== */}
       {isItemModalOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-3xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
@@ -642,23 +626,38 @@ export default function InventoryManagement() {
       )}
 
       {/* ========================================== */}
-      {/* ⭐️ ROUND 9: MIGRATION MODAL */}
+      {/* ⭐️ ROUND 9.2: MIGRATION MODAL WITH LOCATION WARNING / LINK */}
       {/* ========================================== */}
       {isMigrateModalOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-orange-500/50 rounded-xl w-full max-w-md shadow-2xl overflow-hidden animate-fade-in">
             <div className="p-6">
               <h3 className="text-xl font-bold text-white mb-2">Assign Legacy Stock</h3>
-              <p className="text-sm text-gray-300 mb-6">
+              <p className="text-sm text-gray-300 mb-4">
                 The item <strong>{activeItem?.name}</strong> has a total balance of <strong>{activeItem?.balance} {activeItem?.unit}</strong> but it is not assigned to a master location. Where is this stock currently sitting?
               </p>
               
+              {locations.filter(l => l.active).length === 0 ? (
+                <div className="bg-orange-500/10 border border-orange-500/40 p-4 rounded-lg mb-6 text-orange-300 text-xs space-y-2">
+                  <div className="font-bold uppercase tracking-wider">⚠️ No Locations Defined</div>
+                  <p>You must configure at least one active storage location before legacy items can be migrated.</p>
+                  <div>
+                    Please navigate to <span className="font-bold underline text-white">Master Data → Storage Locations</span> to add locations.
+                  </div>
+                </div>
+              ) : null}
+
               {errorMsg && <div className="bg-red-500/10 text-red-400 p-3 rounded text-sm mb-4">{errorMsg}</div>}
 
               <div className="mb-8">
                 <label className={labelClass}>Default Storage Location *</label>
-                <select value={migrateLoc} onChange={e => setMigrateLoc(e.target.value)} className={inputClass}>
-                  <option value="">-- Select Master Location --</option>
+                <select 
+                  value={migrateLoc} 
+                  onChange={e => setMigrateLoc(e.target.value)} 
+                  className={inputClass}
+                  disabled={locations.filter(l => l.active).length === 0}
+                >
+                  <option value="">{locations.filter(l => l.active).length === 0 ? "-- No Locations Available --" : "-- Select Master Location --"}</option>
                   {locations.filter(l => l.active).map(l => (
                     <option key={l.id} value={l.code}>{l.name} ({l.code})</option>
                   ))}
@@ -667,16 +666,19 @@ export default function InventoryManagement() {
               
               <div className="flex justify-end gap-3">
                 <button onClick={() => setMigrateModalOpen(false)} className="px-5 py-2 text-gray-400 hover:text-white bg-gray-800 rounded-lg">Cancel</button>
-                <button onClick={handleMigrateSubmit} className="bg-orange-600 hover:bg-orange-500 text-white px-6 py-2 rounded-lg font-bold transition-colors shadow-lg">Migrate Stock</button>
+                <button 
+                  onClick={handleMigrateSubmit} 
+                  disabled={locations.filter(l => l.active).length === 0} 
+                  className="bg-orange-600 hover:bg-orange-500 disabled:opacity-40 text-white px-6 py-2 rounded-lg font-bold transition-colors shadow-lg"
+                >
+                  Migrate Stock
+                </button>
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* ========================================== */}
-      {/* 🧾 STOCK TRANSACTION MODAL (THE LEDGER) */}
-      {/* ========================================== */}
       {isTransModalOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
@@ -706,7 +708,6 @@ export default function InventoryManagement() {
               
               {errorMsg && <div className="bg-red-500/10 border border-red-500/50 text-red-400 p-3 rounded text-sm font-bold">{errorMsg}</div>}
 
-              {/* ⭐️ ROUND 9: Location Logic Matrix */}
               <div className="bg-gray-950 border border-gray-800 p-4 rounded-lg">
                 <div className="grid grid-cols-2 gap-4">
                   
@@ -806,7 +807,6 @@ export default function InventoryManagement() {
                 </div>
               )}
 
-              {/* ⭐️ ROUND 9: Transfer Specific Fields */}
               {transType === 'transfer' && (
                 <div className="grid grid-cols-3 gap-4 animate-fade-in">
                   <div><label className={labelClass}>Sent By (Person)</label><input type="text" value={person} onChange={e => setPerson(e.target.value)} className={inputClass} /></div>
@@ -847,9 +847,6 @@ export default function InventoryManagement() {
         </div>
       )}
 
-      {/* ========================================== */}
-      {/* 📜 TRANSACTION HISTORY MODAL (LEDGER VIEW) */}
-      {/* ========================================== */}
       {isHistoryModalOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-5xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
@@ -936,7 +933,6 @@ export default function InventoryManagement() {
         </div>
       )}
 
-      {/* Renders the Print Slip via Portal when triggered */}
       {createPortal(PrintSlip, document.body)}
 
     </div>

@@ -7,7 +7,7 @@ export function useProduceMath() {
   const [produceDate, setProduceDate] = useState("");
   const [produceParts, setProduceParts] = useState([]);
 
-  // ⭐️ ROUND 9.1: BUG 3 FIX - Respect dirty/locked fields during global generation/recalculation
+  // ⭐️ ROUND 9.2: BUG 4 FIX - Strict preservation of existing state and IDs to prevent panel collapse
   const generateProduceParts = (qtyStr, baseParts, existingParts = []) => {
     const sets = qtyStr === "" ? "" : Number(qtyStr);
     return baseParts.map((p, pIdx) => {
@@ -22,20 +22,21 @@ export function useProduceMath() {
        const finalPcs = dirty.custom_override || dirty.part_sets ? (existing.final_pcs ?? computedPcs) : computedPcs;
 
        return {
-          id: p.id,
+          id: existing.id || p.id || `part-${pIdx}`, // ⭐️ Crucial for stable React keys
           part_name: p.part_name,
           part_sets: partSets,
           original_multiplier: mult,
           active_multiplier: existing.active_multiplier !== undefined ? existing.active_multiplier : mult,
           is_custom_override: existing.is_custom_override || false,
           final_pcs: finalPcs,
-          expanded: existing.expanded || false,
+          expanded: existing.expanded !== undefined ? existing.expanded : false, // ⭐️ Explicit preservation
           dirtyFields: dirty,
           sequence: (p.sequence || []).map((s, sIdx) => {
              const existingStep = existing.sequence?.[sIdx] || {};
              const stepDirty = dirty;
              return {
                ...s,
+               id: existingStep.id || s.id || `step-${sIdx}`, // ⭐️ Stable sequence keys
                input_qty: stepDirty[`input_${sIdx}`] && existingStep.input_qty !== undefined ? existingStep.input_qty : finalPcs,
                output_qty: stepDirty[`output_${sIdx}`] && existingStep.output_qty !== undefined ? existingStep.output_qty : finalPcs
              };
@@ -70,21 +71,23 @@ export function useProduceMath() {
   const updatePartSets = (pIdx, newSets) => {
     setProduceParts(prev => {
       const copy = [...prev];
+      const pCopy = { ...copy[pIdx] }; // ⭐️ Fix React mutability bug
       const count = newSets === "" ? "" : Number(newSets);
-      copy[pIdx].part_sets = count;
-      copy[pIdx].dirtyFields = { ...(copy[pIdx].dirtyFields || {}), part_sets: true };
+      pCopy.part_sets = count;
+      pCopy.dirtyFields = { ...(pCopy.dirtyFields || {}), part_sets: true };
       
-      if (!copy[pIdx].is_custom_override) {
-        copy[pIdx].final_pcs = count === "" ? "" : count * copy[pIdx].active_multiplier;
-        copy[pIdx].sequence = copy[pIdx].sequence.map((s, sIdx) => {
-          const stepDirty = copy[pIdx].dirtyFields;
+      if (!pCopy.is_custom_override) {
+        pCopy.final_pcs = count === "" ? "" : count * pCopy.active_multiplier;
+        pCopy.sequence = pCopy.sequence.map((s, sIdx) => {
+          const stepDirty = pCopy.dirtyFields;
           return {
             ...s,
-            input_qty: stepDirty[`input_${sIdx}`] ? s.input_qty : copy[pIdx].final_pcs,
-            output_qty: stepDirty[`output_${sIdx}`] ? s.output_qty : copy[pIdx].final_pcs
+            input_qty: stepDirty[`input_${sIdx}`] ? s.input_qty : pCopy.final_pcs,
+            output_qty: stepDirty[`output_${sIdx}`] ? s.output_qty : pCopy.final_pcs
           };
         });
       }
+      copy[pIdx] = pCopy;
       return copy;
     });
   };
@@ -92,19 +95,21 @@ export function useProduceMath() {
   const updatePartMultiplier = (pIdx, newMult) => {
     setProduceParts(prev => {
        const copy = [...prev];
+       const pCopy = { ...copy[pIdx] }; // ⭐️ Fix React mutability bug
        const mult = newMult === "" ? "" : Number(newMult);
-       copy[pIdx].active_multiplier = mult;
-       if (!copy[pIdx].is_custom_override) {
-         copy[pIdx].final_pcs = (copy[pIdx].part_sets === "" || mult === "") ? "" : copy[pIdx].part_sets * mult;
-         copy[pIdx].sequence = copy[pIdx].sequence.map((s, sIdx) => {
-           const stepDirty = copy[pIdx].dirtyFields || {};
+       pCopy.active_multiplier = mult;
+       if (!pCopy.is_custom_override) {
+         pCopy.final_pcs = (pCopy.part_sets === "" || mult === "") ? "" : pCopy.part_sets * mult;
+         pCopy.sequence = pCopy.sequence.map((s, sIdx) => {
+           const stepDirty = pCopy.dirtyFields || {};
            return {
              ...s,
-             input_qty: stepDirty[`input_${sIdx}`] ? s.input_qty : copy[pIdx].final_pcs,
-             output_qty: stepDirty[`output_${sIdx}`] ? s.output_qty : copy[pIdx].final_pcs
+             input_qty: stepDirty[`input_${sIdx}`] ? s.input_qty : pCopy.final_pcs,
+             output_qty: stepDirty[`output_${sIdx}`] ? s.output_qty : pCopy.final_pcs
            };
          });
        }
+       copy[pIdx] = pCopy;
        return copy;
     });
   };
@@ -112,12 +117,14 @@ export function useProduceMath() {
   const toggleCustomOverride = (pIdx, checked) => {
     setProduceParts(prev => {
        const copy = [...prev];
-       copy[pIdx].is_custom_override = checked;
-       copy[pIdx].dirtyFields = { ...(copy[pIdx].dirtyFields || {}), custom_override: checked };
+       const pCopy = { ...copy[pIdx] }; // ⭐️ Fix React mutability bug
+       pCopy.is_custom_override = checked;
+       pCopy.dirtyFields = { ...(pCopy.dirtyFields || {}), custom_override: checked };
        if (!checked) {
-         copy[pIdx].final_pcs = (copy[pIdx].part_sets === "" || copy[pIdx].active_multiplier === "") ? "" : copy[pIdx].part_sets * copy[pIdx].active_multiplier;
-         copy[pIdx].sequence = copy[pIdx].sequence.map(s => ({...s, input_qty: copy[pIdx].final_pcs, output_qty: copy[pIdx].final_pcs}));
+         pCopy.final_pcs = (pCopy.part_sets === "" || pCopy.active_multiplier === "") ? "" : pCopy.part_sets * pCopy.active_multiplier;
+         pCopy.sequence = pCopy.sequence.map(s => ({...s, input_qty: pCopy.final_pcs, output_qty: pCopy.final_pcs}));
        }
+       copy[pIdx] = pCopy;
        return copy;
     });
   };
@@ -125,16 +132,18 @@ export function useProduceMath() {
   const updatePartCustomPcs = (pIdx, newPcs) => {
     setProduceParts(prev => {
        const copy = [...prev];
-       copy[pIdx].final_pcs = newPcs === "" ? "" : Number(newPcs);
-       copy[pIdx].dirtyFields = { ...(copy[pIdx].dirtyFields || {}), custom_override: true };
-       copy[pIdx].sequence = copy[pIdx].sequence.map((s, sIdx) => {
-         const stepDirty = copy[pIdx].dirtyFields || {};
+       const pCopy = { ...copy[pIdx] }; // ⭐️ Fix React mutability bug
+       pCopy.final_pcs = newPcs === "" ? "" : Number(newPcs);
+       pCopy.dirtyFields = { ...(pCopy.dirtyFields || {}), custom_override: true };
+       pCopy.sequence = pCopy.sequence.map((s, sIdx) => {
+         const stepDirty = pCopy.dirtyFields || {};
          return {
            ...s,
-           input_qty: stepDirty[`input_${sIdx}`] ? s.input_qty : copy[pIdx].final_pcs,
-           output_qty: stepDirty[`output_${sIdx}`] ? s.output_qty : copy[pIdx].final_pcs
+           input_qty: stepDirty[`input_${sIdx}`] ? s.input_qty : pCopy.final_pcs,
+           output_qty: stepDirty[`output_${sIdx}`] ? s.output_qty : pCopy.final_pcs
          };
        });
+       copy[pIdx] = pCopy;
        return copy;
     });
   };
@@ -169,7 +178,9 @@ export function useProduceMath() {
   const togglePartExpanded = (pIdx) => {
     setProduceParts(prev => { 
         const copy = [...prev]; 
-        copy[pIdx].expanded = !copy[pIdx].expanded; 
+        const pCopy = { ...copy[pIdx] }; // ⭐️ Fix React mutability bug causing the UI sync drop
+        pCopy.expanded = !pCopy.expanded; 
+        copy[pIdx] = pCopy;
         return copy; 
     });
   };

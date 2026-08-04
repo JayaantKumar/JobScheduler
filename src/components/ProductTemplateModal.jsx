@@ -14,7 +14,7 @@ const defaultMaterialRow = () => ({
   size: "",
   qty_per_unit: 1,
   unit: "sheets",
-  basis: "per_step", // ⭐️ ROUND 9.1: New default for paper/board
+  basis: "per_step", 
   basis_step_index: 0,
   thickness_mm: "",
   gsm: "",
@@ -163,7 +163,6 @@ export default function ProductTemplateModal({
     setParts(parts.map(p => p.id === partId ? { ...p, materialRows: p.materialRows.filter(r => r.id !== rowId) } : p));
   };
 
-  // ⭐️ ROUND 9.1: BUG 2 FIX - Apply Smart Defaults when changing category
   const handleMaterialRowChange = (partId, rowId, field, val) => {
     setParts(parts.map(p => {
       if (p.id === partId) {
@@ -230,6 +229,8 @@ export default function ProductTemplateModal({
         rawFile: f, 
         name: f.name,
         category: "Artwork",
+        applies_to: "All Parts", // ⭐️ ROUND 9.2: Default scope
+        purpose: "",             // ⭐️ ROUND 9.2: Default purpose
         version: "v1",
         status: "Draft",
         notes: "",
@@ -244,10 +245,23 @@ export default function ProductTemplateModal({
   const handleFileChange = (fileId, field, val) => {
     setFiles(prev => {
       let updated = prev.map(f => f.id === fileId ? { ...f, [field]: val } : f);
+      
       const modifiedFile = updated.find(f => f.id === fileId);
       if (modifiedFile && modifiedFile.status === "APPROVED") {
         updated = updated.map(f => {
-          if (f.id !== fileId && f.category === modifiedFile.category && f.status === "APPROVED") {
+          // ⭐️ ROUND 9.2: Supersede ONLY if Category + Applies To + Purpose match perfectly
+          const fAppliesTo = f.applies_to || "All Parts";
+          const modAppliesTo = modifiedFile.applies_to || "All Parts";
+          const fPurpose = (f.purpose || "").toLowerCase().trim();
+          const modPurpose = (modifiedFile.purpose || "").toLowerCase().trim();
+
+          if (
+            f.id !== fileId && 
+            f.category === modifiedFile.category && 
+            f.status === "APPROVED" &&
+            fAppliesTo === modAppliesTo &&
+            fPurpose === modPurpose
+          ) {
             return { ...f, status: "Superseded" };
           }
           return f;
@@ -373,7 +387,7 @@ export default function ProductTemplateModal({
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-5xl max-h-[90vh] flex flex-col shadow-2xl">
+      <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-6xl max-h-[90vh] flex flex-col shadow-2xl">
         <div className="flex justify-between items-center p-6 border-b border-gray-800 shrink-0 bg-[#151724]">
           <h2 className="text-xl font-bold text-white">{editingProduct ? "Edit Product Template" : "Add New Product Template"}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-white bg-gray-800 p-2 rounded-lg"><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg></button>
@@ -414,15 +428,18 @@ export default function ProductTemplateModal({
             </div>
             {files.length > 0 ? (
               <div className="p-4 overflow-x-auto">
-                <table className="w-full text-left">
+                <table className="w-full text-left min-w-[800px]">
                   <thead>
                     <tr className="bg-gray-950 text-[10px] uppercase text-gray-500 border-b border-gray-800">
-                      <th className="p-2 font-bold min-w-[150px]">File Name</th>
-                      <th className="p-2 font-bold w-36">Category</th>
-                      <th className="p-2 font-bold w-20">Version</th>
-                      <th className="p-2 font-bold w-36">Status</th>
+                      <th className="p-2 font-bold min-w-[120px]">File Name</th>
+                      <th className="p-2 font-bold w-28">Category</th>
+                      {/* ⭐️ ROUND 9.2: Added fields */}
+                      <th className="p-2 font-bold w-32">Applies To</th>
+                      <th className="p-2 font-bold w-28">Purpose Label</th>
+                      <th className="p-2 font-bold w-16">Version</th>
+                      <th className="p-2 font-bold w-32">Status</th>
                       <th className="p-2 font-bold">Notes</th>
-                      <th className="p-2 w-24 text-center">Share</th>
+                      <th className="p-2 w-20 text-center">Share</th>
                       <th className="p-2 w-8"></th>
                     </tr>
                   </thead>
@@ -431,7 +448,7 @@ export default function ProductTemplateModal({
                       const isSuperseded = file.status === "Superseded";
                       return (
                         <tr key={file.id} className={isSuperseded ? "opacity-50" : ""}>
-                          <td className="p-2 text-xs text-white truncate max-w-[150px]" title={file.name}>
+                          <td className="p-2 text-xs text-white truncate max-w-[120px]" title={file.name}>
                             <span className={isSuperseded ? "line-through text-gray-500" : ""}>{file.name}</span>
                             {file.rawFile && <span className="ml-2 text-[9px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded uppercase font-bold">Pending Save</span>}
                           </td>
@@ -445,6 +462,19 @@ export default function ProductTemplateModal({
                               <option value="Quality Reference">Quality Reference</option>
                               <option value="Other">Other</option>
                             </select>
+                          </td>
+                          {/* ⭐️ ROUND 9.2: Applies To Dropdown */}
+                          <td className="p-2">
+                            <select value={file.applies_to || "All Parts"} onChange={e => handleFileChange(file.id, 'applies_to', e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white">
+                              <option value="All Parts">All Parts</option>
+                              {parts.map((p, idx) => (
+                                <option key={p.id} value={p.id}>Part {String.fromCharCode(65 + idx)}: {p.part_name}</option>
+                              ))}
+                            </select>
+                          </td>
+                          {/* ⭐️ ROUND 9.2: Purpose Label */}
+                          <td className="p-2">
+                            <input type="text" placeholder="e.g. Outer surface" value={file.purpose || ""} onChange={e => handleFileChange(file.id, 'purpose', e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white" />
                           </td>
                           <td className="p-2">
                             <input type="text" placeholder="v1" value={file.version} onChange={e => handleFileChange(file.id, 'version', e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white" />
@@ -519,7 +549,6 @@ export default function ProductTemplateModal({
                             <th className="p-2 font-bold w-24">Size (L×W)</th>
                             <th className="p-2 font-bold w-16">Qty/Unit</th>
                             <th className="p-2 font-bold w-24">Unit</th>
-                            {/* ⭐️ ROUND 9.1: BUG 2 FIX - Added Basis Column */}
                             <th className="p-2 font-bold w-28">Basis Calc</th>
                             <th className="p-2 font-bold">Notes</th>
                             <th className="p-2 w-8"></th>
@@ -581,7 +610,6 @@ export default function ProductTemplateModal({
                                   <option value="grams">grams</option>
                                 </select>
                               </td>
-                              {/* ⭐️ ROUND 9.1: BUG 2 FIX - Render Basis Dropdowns */}
                               <td className="p-1.5 text-center bg-gray-950">
                                 <select value={row.basis || 'per_piece'} onChange={e => handleMaterialRowChange(part.id, row.id, 'basis', e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-[9px] text-white font-bold uppercase tracking-wider mb-1">
                                   <option value="per_piece">Per Fin. Piece</option>

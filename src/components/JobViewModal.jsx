@@ -41,10 +41,9 @@ export default function JobViewModal({ job, onClose }) {
     return () => { isMounted = false; };
   }, []);
 
-  // ⭐️ ROUND 9.1: BUG 1 FIX - Strict scope and cleanup to prevent artwork leaks
   useEffect(() => {
     let isMounted = true;
-    setLiveProductFiles([]); // Instantly clear previous state on job change
+    setLiveProductFiles([]); 
     
     if (!localJob?.product?.id) return;
     
@@ -60,7 +59,6 @@ export default function JobViewModal({ job, onClose }) {
     return () => { isMounted = false; };
   }, [localJob?.product?.id, localJob?.id]);
 
-  // ⭐️ ROUND 9.1: BUG 4 FIX - Strict numeric sort for siblings
   useEffect(() => {
     let isMounted = true;
     if (localJob?.set_code) {
@@ -99,7 +97,6 @@ export default function JobViewModal({ job, onClose }) {
 
   if (!localJob) return null;
 
-  // ⭐️ ROUND 9.1: BUG 6 FIX - Clean PDF Filename Generation
   const handlePrint = () => {
     const originalTitle = document.title;
     const dateStr = new Date().toLocaleDateString('en-GB').replace(/\//g, '-');
@@ -184,6 +181,8 @@ export default function JobViewModal({ job, onClose }) {
         rawFile: f, 
         name: f.name,
         category: "Client PO",
+        applies_to: "All Parts", 
+        purpose: "",
         version: "v1",
         status: "APPROVED",
         notes: "",
@@ -200,7 +199,23 @@ export default function JobViewModal({ job, onClose }) {
       let updated = prev.map(f => f.id === fileId ? { ...f, [field]: val } : f);
       const modifiedFile = updated.find(f => f.id === fileId);
       if (modifiedFile && modifiedFile.status === "APPROVED") {
-        updated = updated.map(f => (f.id !== fileId && f.category === modifiedFile.category && f.status === "APPROVED") ? { ...f, status: "Superseded" } : f);
+        updated = updated.map(f => {
+          const fAppliesTo = f.applies_to || "All Parts";
+          const modAppliesTo = modifiedFile.applies_to || "All Parts";
+          const fPurpose = (f.purpose || "").toLowerCase().trim();
+          const modPurpose = (modifiedFile.purpose || "").toLowerCase().trim();
+
+          if (
+            f.id !== fileId && 
+            f.category === modifiedFile.category && 
+            f.status === "APPROVED" &&
+            fAppliesTo === modAppliesTo &&
+            fPurpose === modPurpose
+          ) {
+            return { ...f, status: "Superseded" };
+          }
+          return f;
+        });
       }
       return updated;
     });
@@ -265,29 +280,35 @@ export default function JobViewModal({ job, onClose }) {
     alert("Client update copied to clipboard!\n\n" + msg);
   };
 
-  const approvedArtworkJob = (localJob.files || []).find(f => f.category === 'Artwork' && f.status === 'APPROVED');
-  const approvedArtworkProd = liveProductFiles.find(f => f.category === 'Artwork' && f.status === 'APPROVED');
-  const approvedArtwork = approvedArtworkJob || approvedArtworkProd;
+  // ⭐️ ROUND 9.2: BUG 2 FIX - Strict Scoping and Deduplication for Artwork Printing
+  const getApplicableFiles = (category) => {
+    const jobFiles = (localJob.files || []).filter(f => f.category === category && f.status === 'APPROVED');
+    const prodFiles = liveProductFiles.filter(f => f.category === category && f.status === 'APPROVED');
+    
+    const targetPartId = localJob.product?.parts?.find(p => p.part_name === localJob.part_name)?.id;
+    
+    const isApplicable = (f) => {
+       const scope = f.applies_to || "All Parts";
+       return scope === "All Parts" || scope === localJob.part_name || (targetPartId && scope === targetPartId);
+    };
 
-  const approvedDielineJob = (localJob.files || []).find(f => f.category === 'Dieline' && f.status === 'APPROVED');
-  const approvedDielineProd = liveProductFiles.find(f => f.category === 'Dieline' && f.status === 'APPROVED');
-  const approvedDieline = approvedDielineJob || approvedDielineProd;
+    const map = new Map();
+    prodFiles.filter(isApplicable).forEach(f => map.set(f.purpose || f.name, f));
+    jobFiles.filter(isApplicable).forEach(f => map.set(f.purpose || f.name, f));
+    return Array.from(map.values());
+  };
+
+  const approvedArtworks = getApplicableFiles('Artwork');
+  const approvedDielines = getApplicableFiles('Dieline');
 
   const copyApprovedFiles = () => {
-    const categories = new Set([...(localJob.files || []), ...liveProductFiles].map(f => f.category));
-    const finalFiles = [];
-    
-    categories.forEach(cat => {
-      const jFile = (localJob.files || []).find(f => f.category === cat && f.status === "APPROVED" && f.url);
-      if (jFile) finalFiles.push(jFile);
-      else {
-        const pFile = liveProductFiles.find(f => f.category === cat && f.status === "APPROVED" && f.url);
-        if (pFile) finalFiles.push(pFile);
-      }
-    });
+    const finalFiles = [...approvedArtworks, ...approvedDielines].filter(f => f.url);
 
-    if (finalFiles.length === 0) return alert("No approved files found to share.");
-    const links = finalFiles.map(f => `${f.name} (${f.category} - ${f.version}): ${f.url}`).join("\n\n");
+    if (finalFiles.length === 0) return alert("No approved files found for this part to share.");
+    const links = finalFiles.map(f => {
+       const purposeStr = f.purpose ? `[${f.purpose.toUpperCase()}] ` : '';
+       return `${purposeStr}${f.name} (${f.category} - ${f.version}): ${f.url}`;
+    }).join("\n\n");
     const msg = `Approved Files for ${localJob.display_id}:\n\n${links}`;
     
     navigator.clipboard.writeText(msg);
@@ -382,14 +403,23 @@ export default function JobViewModal({ job, onClose }) {
       <div className="mb-4 border-2 border-black flex">
         <div className="flex-1 p-2">
           <div className="text-[10px] font-bold uppercase text-gray-600 tracking-wider mb-1">Master Files & Assets</div>
-          {!approvedArtwork ? (
+          {approvedArtworks.length === 0 ? (
             <div className="text-red-600 font-black text-xl uppercase tracking-widest mt-1">
               ⚠️ ARTWORK: NOT APPROVED (DO NOT START)
             </div>
           ) : (
             <div className="space-y-1 mt-2">
-              <div className="text-sm font-bold">ARTWORK: {approvedArtwork.name} <span className="text-xs bg-black text-white px-1 ml-1">{approvedArtwork.version}</span></div>
-              {approvedDieline && <div className="text-sm font-bold">DIELINE: {approvedDieline.name} <span className="text-xs bg-gray-200 px-1 ml-1 border border-black">{approvedDieline.version}</span></div>}
+              {/* ⭐️ ROUND 9.2: Print ALL scoped files with Purpose Labels */}
+              {approvedArtworks.map((art, i) => (
+                <div key={`art-${i}`} className="text-sm font-bold">
+                  ARTWORK {art.purpose ? `[${art.purpose.toUpperCase()}]` : ''}: {art.name} <span className="text-xs bg-black text-white px-1 ml-1">{art.version}</span>
+                </div>
+              ))}
+              {approvedDielines.map((die, i) => (
+                <div key={`die-${i}`} className="text-sm font-bold mt-1">
+                  DIELINE {die.purpose ? `[${die.purpose.toUpperCase()}]` : ''}: {die.name} <span className="text-xs bg-gray-200 px-1 ml-1 border border-black">{die.version}</span>
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -413,8 +443,23 @@ export default function JobViewModal({ job, onClose }) {
         </thead>
         <tbody>
           {preProdChecklist.map((row, i) => {
-             // Basic fallback calculating Total Required (Will be replaced by Step 2 Basis logic in parent)
-             const calculatedTotal = row.isDie ? 1 : (Number(row.qty_per_unit) || 1) * (localJob.quantity_target || 0);
+             // ⭐️ ROUND 9.1: BASIS LOGIC INJECTED
+             let calculatedTotal = 0;
+             if (row.isDie) {
+               calculatedTotal = 1;
+             } else {
+               const effBasis = row.basis || 'per_piece';
+               if (effBasis === 'fixed') {
+                 calculatedTotal = Number(row.qty_per_unit) || 1;
+               } else if (effBasis === 'per_step') {
+                 const sIdx = row.basis_step_index || 0;
+                 const stepQty = localJob.process_sequence?.[sIdx] ? (Number(localJob.process_sequence[sIdx].input_qty) || 0) : (localJob.quantity_target || 0);
+                 calculatedTotal = (Number(row.qty_per_unit) || 1) * stepQty;
+               } else {
+                 calculatedTotal = (Number(row.qty_per_unit) || 1) * (localJob.quantity_target || 0);
+               }
+             }
+
              let stockFlag = null;
              let displaySpec = row.material_name;
              let displaySize = row.size || "—";
@@ -438,13 +483,14 @@ export default function JobViewModal({ job, onClose }) {
                        stockFlag = <span className="ml-1 text-gray-500 text-[8px] font-bold">[OK - {targetPlace}]</span>;
                    }
 
-                   // ⭐️ ROUND 9.1: BUG 5 FIX - Format Spec Name Cleanly
+                   // ⭐️ ROUND 9.2: BUG 9 FIX - Board rows show mm, Paper shows GSM
                    const rawName = row.material_name.split('·')[0].trim();
-                   const gsmThick = row.category === 'board' ? `${row.thickness_mm || '?'} mm` : `${row.gsm || '?'} GSM`;
+                   const isBoard = row.category === 'board' || row.category === 'rigid';
+                   const gsmThick = isBoard ? `${row.thickness_mm || '?'} mm` : `${row.gsm || '?'} GSM`;
                    const brand = invItem.details?.Brand || invItem.details?.Mill;
                    
                    displaySpec = brand ? `${rawName} (${brand}) · ${gsmThick}` : `${rawName} · ${gsmThick}`;
-                   if (invItem.details?.Size) displaySize = invItem.details.Size;
+                   if (!row.size && invItem.details?.Size) displaySize = invItem.details.Size;
                 }
              }
 
@@ -456,7 +502,7 @@ export default function JobViewModal({ job, onClose }) {
                  </td>
                  <td className="border-r-2 border-black p-1.5 font-bold uppercase">{row.piece_purpose}</td>
                  <td className="border-r-2 border-black p-1.5 font-mono text-[10px]">{displaySize}</td>
-                 <td className="border-r-2 border-black p-1.5 text-center font-bold text-sm bg-gray-50">{row.isDie ? '—' : `${calculatedTotal.toLocaleString()} ${row.unit}`}</td>
+                 <td className="border-r-2 border-black p-1.5 text-center font-bold text-sm bg-gray-50">{row.isDie ? '—' : `${calculatedTotal.toLocaleString()} ${row.unit || 'pcs'}`}</td>
                  <td className="p-1.5 text-[9px]">{row.notes || '—'}</td>
                </tr>
              );
@@ -572,7 +618,7 @@ export default function JobViewModal({ job, onClose }) {
       </style>
 
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm print:hidden">
-        <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-5xl shadow-2xl overflow-hidden flex flex-col max-h-[95vh]">
+        <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-6xl shadow-2xl overflow-hidden flex flex-col max-h-[95vh]">
           
           <div className="bg-[#151724] p-6 border-b border-gray-800 shrink-0">
             <div className="flex justify-between items-start">
@@ -657,7 +703,22 @@ export default function JobViewModal({ job, onClose }) {
                     </thead>
                     <tbody className="divide-y divide-gray-800">
                       {preProdChecklist.map((row, i) => {
-                         const calculatedTotal = row.isDie ? 1 : (Number(row.qty_per_unit) || 1) * (localJob.quantity_target || 0);
+                         let calculatedTotal = 0;
+                         if (row.isDie) {
+                           calculatedTotal = 1;
+                         } else {
+                           const effBasis = row.basis || 'per_piece';
+                           if (effBasis === 'fixed') {
+                             calculatedTotal = Number(row.qty_per_unit) || 1;
+                           } else if (effBasis === 'per_step') {
+                             const sIdx = row.basis_step_index || 0;
+                             const stepQty = localJob.process_sequence?.[sIdx] ? (Number(localJob.process_sequence[sIdx].input_qty) || 0) : (localJob.quantity_target || 0);
+                             calculatedTotal = (Number(row.qty_per_unit) || 1) * stepQty;
+                           } else {
+                             calculatedTotal = (Number(row.qty_per_unit) || 1) * (localJob.quantity_target || 0);
+                           }
+                         }
+
                          let stockDisplay = <span className="text-gray-500">—</span>;
                          
                          if (!row.isDie) {
@@ -748,11 +809,13 @@ export default function JobViewModal({ job, onClose }) {
               </div>
               {files.length > 0 ? (
                 <div className="p-4 overflow-x-auto">
-                  <table className="w-full text-left">
+                  <table className="w-full text-left min-w-[800px]">
                     <thead>
                       <tr className="bg-gray-950 text-[10px] uppercase text-gray-500 border-b border-gray-800">
                         <th className="p-2 font-bold min-w-[150px]">File Name</th>
                         <th className="p-2 font-bold w-36">Category</th>
+                        <th className="p-2 font-bold w-32">Applies To</th>
+                        <th className="p-2 font-bold w-28">Purpose Label</th>
                         <th className="p-2 font-bold w-20">Version</th>
                         <th className="p-2 font-bold w-36">Status</th>
                         <th className="p-2 font-bold">Notes</th>
@@ -777,6 +840,17 @@ export default function JobViewModal({ job, onClose }) {
                                 <option value="Quality Reference">Quality Reference</option>
                                 <option value="Other">Other</option>
                               </select>
+                            </td>
+                            <td className="p-2">
+                              <select value={file.applies_to || "All Parts"} onChange={e => handleFileChange(file.id, 'applies_to', e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white">
+                                <option value="All Parts">All Parts</option>
+                                {localJob.product?.parts?.map((p, idx) => (
+                                  <option key={p.id || idx} value={p.id || p.part_name}>Part {String.fromCharCode(65 + idx)}: {p.part_name}</option>
+                                ))}
+                              </select>
+                            </td>
+                            <td className="p-2">
+                              <input type="text" placeholder="e.g. Inner" value={file.purpose || ""} onChange={e => handleFileChange(file.id, 'purpose', e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white" />
                             </td>
                             <td className="p-2">
                               <input type="text" placeholder="v1" value={file.version} onChange={e => handleFileChange(file.id, 'version', e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white" />
