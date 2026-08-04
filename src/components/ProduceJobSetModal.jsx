@@ -110,7 +110,6 @@ export default function ProduceJobSetModal({
           };
         });
 
-        // ⭐️ ROUND 9.1: BUG 2 FIX - Inject Basis Defaults into job payload
         const processedMaterialRows = (masterPart.materialRows || []).map(row => {
           const cat = row.category?.toLowerCase() || '';
           const isBoardOrPaper = cat === 'paper' || cat === 'board' || cat === 'rigid';
@@ -140,12 +139,25 @@ export default function ProduceJobSetModal({
           is_custom_override: pState.is_custom_override,
           quantity_target: pState.final_pcs,
           
+          // ⭐️ ROUND 9.4: Artwork Required flag for the job card
+          artwork_required: masterPart.artwork_required ?? true,
+
+          // ⭐️ ROUND 9.3 Item 3: Immutable Product Snapshot to prevent N/A if product is deleted
+          // ⭐️ ROUND 9.3 Item 3: Immutable Product Snapshot to prevent N/A if product is deleted
+          product_snapshot: {
+            id: activeProduceProduct.id,
+            name: activeProduceProduct.name,
+            sku: activeProduceProduct.sku || "",
+            category: activeProduceProduct.category || ""
+          },
+
           product: {
             id: activeProduceProduct.id, 
             name: activeProduceProduct.name, 
             sku: activeProduceProduct.sku || "",
             category: activeProduceProduct.category || "", 
-            materialRows: processedMaterialRows, // Updated payload mapping
+            artwork_required: masterPart.artwork_required ?? true,
+            materialRows: processedMaterialRows, 
             files: activeProduceProduct.files || [], 
             size: masterPart.size || "", 
             material: masterPart.paperType || masterPart.material || "", 
@@ -231,7 +243,13 @@ export default function ProduceJobSetModal({
                 return (
                 <div key={p.id} className="bg-gray-900 border border-gray-800 p-4 rounded-lg">
                   <div className="flex justify-between items-center mb-3">
-                    <span className="text-white font-bold text-sm">Part {String.fromCharCode(65 + pIdx)}: {p.part_name}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-white font-bold text-sm">Part {String.fromCharCode(65 + pIdx)}: {p.part_name}</span>
+                      {/* ⭐️ ROUND 9.4: Visual badge for unprinted parts */}
+                      {!masterPart.artwork_required && (
+                        <span className="bg-gray-800 text-gray-400 border border-gray-700 px-2 py-0.5 rounded text-[10px] font-bold uppercase">Plain / Unprinted</span>
+                      )}
+                    </div>
                     <button type="button" onClick={() => togglePartExpanded(pIdx)} className="text-xs text-gray-400 hover:text-white bg-gray-950 px-3 py-1 rounded border border-gray-700">
                       {p.expanded ? 'Hide Details & Checklists' : 'Review Pre-Production Details'}
                     </button>
@@ -239,7 +257,6 @@ export default function ProduceJobSetModal({
 
                   <div className="flex flex-wrap gap-4 items-end bg-gray-950 p-3 rounded border border-gray-800">
                     <div className="relative">
-                      {/* ⭐️ ROUND 9.1: BUG 3 FIX - Visual Dirty Indicator */}
                       <label className="block text-[10px] uppercase text-primary-400 font-bold mb-1">
                         Target Sets for Part
                         {p.dirtyFields?.part_sets && <span className="absolute -top-1 -right-2 w-2 h-2 bg-orange-500 rounded-full shadow-[0_0_4px_#f97316]" title="Manually edited (Locked)"></span>}
@@ -274,7 +291,6 @@ export default function ProduceJobSetModal({
                         <h4 className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">Pre-Production Checklist Preview (Location: {targetPlace})</h4>
                         <div className="space-y-1 text-xs">
                           {cuttingList.map((row, i) => {
-                            // ⭐️ ROUND 9.1: BUG 2 FIX - Apply Basis Logic to calculations and output correct Unit
                             const cat = row.category?.toLowerCase() || '';
                             const isBoardOrPaper = cat === 'paper' || cat === 'board' || cat === 'rigid';
                             const effBasis = row.basis || (isBoardOrPaper ? 'per_step' : 'per_piece');
@@ -350,7 +366,6 @@ export default function ProduceJobSetModal({
                             <span className="text-gray-500 font-bold w-4">{sIdx+1}.</span>
                             <span className="text-gray-300 w-48 truncate">{step.process_name}</span>
                             <div className="flex items-center gap-2">
-                              {/* ⭐️ ROUND 9.1: BUG 3 FIX - Visual Dirty Indicators */}
                               <div className="bg-gray-900 px-2 py-1 rounded border border-gray-700 text-gray-400 relative">
                                 In: <input type="number" value={step.input_qty} onChange={e => handleStepQtyChange(pIdx, sIdx, 'input_qty', e.target.value)} className="w-20 bg-transparent text-white font-mono outline-none" />
                                 {p.dirtyFields?.[`input_${sIdx}`] && <span className="absolute -top-1 -right-1 w-2 h-2 bg-orange-500 rounded-full shadow-[0_0_4px_#f97316]" title="Manually edited (Locked)"></span>}

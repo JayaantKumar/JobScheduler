@@ -1,6 +1,6 @@
 import { useState, useEffect, Fragment } from "react";
 import { createPortal } from "react-dom";
-import { collection, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, query, getDocs, where, writeBatch } from "firebase/firestore";
+import { collection, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, query, getDocs, where, writeBatch, deleteField } from "firebase/firestore";
 import { db } from "../firebase/config";
 
 export default function InventoryManagement() {
@@ -8,7 +8,6 @@ export default function InventoryManagement() {
   const [categories, setCategories] = useState([]);
   const [activeJobs, setActiveJobs] = useState([]);
   
-  // ⭐️ ROUND 9: Locations State
   const [locations, setLocations] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -22,13 +21,12 @@ export default function InventoryManagement() {
   const [isHistoryModalOpen, setHistoryModalOpen] = useState(false);
   const [activeItem, setActiveItem] = useState(null);
   
-  // Custom Alerts & Confirms replacing native browser popups
+  // Custom Alerts & Confirms
   const [errorMsg, setErrorMsg] = useState("");
   const [confirmConfig, setConfirmConfig] = useState(null); 
 
-  // --- ⭐️ ROUND 9: MIGRATION MODAL STATE ---
   const [isMigrateModalOpen, setMigrateModalOpen] = useState(false);
-  const [migrateLoc, setMigrateLoc] = useState("");
+  const [migrateLoc, setMigrateLoc] = useState(""); // ⭐️ Now stores Location ID
 
   // --- ITEM FORM STATES ---
   const [itemCatId, setItemCatId] = useState("");
@@ -45,17 +43,16 @@ export default function InventoryManagement() {
   const [transQty, setTransQty] = useState("");
   const [transNotes, setTransNotes] = useState("");
   
-  // ⭐️ ROUND 9: Location States for Transactions
-  const [transLoc, setTransLoc] = useState(""); // Used as TO for 'in', FROM for 'out', Target for 'adj', FROM for 'transfer'
-  const [transToLoc, setTransToLoc] = useState(""); // ONLY used as TO for 'transfer'
+  // ⭐️ ROUND 9.3: Now storing Location IDs instead of user-typed Codes
+  const [transLoc, setTransLoc] = useState(""); 
+  const [transToLoc, setTransToLoc] = useState(""); 
   
   const [supplier, setSupplier] = useState("");
   const [rate, setRate] = useState("");
   const [linkedJobId, setLinkedJobId] = useState("");
   const [freeTextPurpose, setFreeTextPurpose] = useState("");
   
-  // ⭐️ ROUND 9: Transfer Specific States
-  const [person, setPerson] = useState(""); // Sent By / Issued To
+  const [person, setPerson] = useState(""); 
   const [receivedBy, setReceivedBy] = useState(""); 
   const [vehicle, setVehicle] = useState("");
 
@@ -101,9 +98,11 @@ export default function InventoryManagement() {
   useEffect(() => {
     if (transType === 'out' && linkedJobId) {
       const job = activeJobs.find(j => j.id === linkedJobId);
-      const jobPlace = job?.process_sequence?.find(s => s.assigned_machine_place)?.assigned_machine_place;
-      if (jobPlace && locations.find(l => l.code === jobPlace)) {
-        setTransLoc(jobPlace);
+      const jobPlaceCode = job?.process_sequence?.find(s => s.assigned_machine_place)?.assigned_machine_place;
+      if (jobPlaceCode) {
+        // ⭐️ ROUND 9.3: Lookup ID from Code
+        const foundLoc = locations.find(l => l.code === jobPlaceCode);
+        if (foundLoc) setTransLoc(foundLoc.id);
       }
     }
   }, [linkedJobId, transType, activeJobs, locations]);
@@ -208,14 +207,13 @@ export default function InventoryManagement() {
     } catch (err) { setErrorMsg("Error preparing delete: " + err.message); }
   };
 
-  // --- ⭐️ ROUND 9: MIGRATION HANDLER ---
   const handleMigrateSubmit = async (e) => {
     e.preventDefault();
     if (!migrateLoc) return setErrorMsg("Please select a location.");
     
     try {
       const updateData = {
-        balances: { [migrateLoc]: activeItem.balance || 0 },
+        balances: { [migrateLoc]: activeItem.balance || 0 }, // migrateLoc is now ID
         location: null, 
         updated_at: serverTimestamp()
       };
@@ -254,7 +252,12 @@ export default function InventoryManagement() {
     if (transType === 'transfer' && !transToLoc) return setErrorMsg("Please select a destination location.");
     if (transType === 'transfer' && transLoc === transToLoc) return setErrorMsg("Source and Destination locations must be different.");
 
-    let locBalance = activeItem.balances?.[transLoc] || 0;
+    // ⭐️ ROUND 9.3: Resolve Source Location Display Name & Sum legacy balances
+    const sourceLocObj = locations.find(l => l.id === transLoc);
+    const sourceLocDisplay = sourceLocObj ? sourceLocObj.code : transLoc;
+    
+    // Fallback migration math: Combine ID balance and legacy CODE balance 
+    let locBalance = (activeItem.balances?.[transLoc] || 0) + (sourceLocObj && activeItem.balances?.[sourceLocObj.code] ? activeItem.balances[sourceLocObj.code] : 0);
     let newLocBalance = locBalance;
     let newTotalBalance = activeItem.balance || 0;
 
@@ -275,7 +278,7 @@ export default function InventoryManagement() {
       setConfirmConfig({
         isOpen: true,
         title: "Negative Location Balance",
-        message: `This action will drop the stock at ${transLoc} to ${newLocBalance} ${activeItem.unit}. Proceed anyway?`,
+        message: `This action will drop the stock at ${sourceLocDisplay} to ${newLocBalance} ${activeItem.unit}. Proceed anyway?`,
         confirmText: "Proceed",
         isDanger: false,
         onConfirm: () => {
@@ -296,14 +299,17 @@ export default function InventoryManagement() {
       }
 
       const generatedId = `TR-${new Date().toLocaleDateString('en-GB').replace(/\//g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
+      const destLocObj = locations.find(l => l.id === transToLoc);
+      const destLocDisplay = destLocObj ? destLocObj.code : transToLoc;
 
+      // ⭐️ ROUND 9.3: Keep ledger history readable by saving the display code, not the raw ID
       const transPayload = {
         itemId: activeItem.id,
         itemName: activeItem.name,
         type: transType,
         date: transDate,
         qty: transType === 'out' || (transType === 'adj' && adjDirection === 'deduct') ? -qtyNum : qtyNum,
-        location: transLoc, 
+        location: sourceLocDisplay, 
         previous_balance: locBalance,
         new_balance: newLocBalance,
         total_balance: newTotalBalance,
@@ -324,7 +330,7 @@ export default function InventoryManagement() {
       } else if (transType === 'transfer') {
         transPayload.qty = qtyNum; 
         transPayload.transfer_id = generatedId;
-        transPayload.toLocation = transToLoc;
+        transPayload.toLocation = destLocDisplay;
         transPayload.person = person; 
         transPayload.receivedBy = receivedBy;
         transPayload.vehicle = vehicle;
@@ -335,11 +341,22 @@ export default function InventoryManagement() {
       const itemUpdate = {
         balance: newTotalBalance,
         updated_at: serverTimestamp(),
-        [`balances.${transLoc}`]: newLocBalance
+        [`balances.${transLoc}`]: newLocBalance // ID Key
       };
 
+      // ⭐️ ROUND 9.3: Self-healing Migration - Clean up the old Code Key strictly via Field deletion
+      if (sourceLocObj && activeItem.balances?.[sourceLocObj.code] !== undefined) {
+        itemUpdate[`balances.${sourceLocObj.code}`] = deleteField();
+      }
+
       if (transType === 'transfer') {
-        itemUpdate[`balances.${transToLoc}`] = (activeItem.balances?.[transToLoc] || 0) + qtyNum;
+        let destLocBalance = (activeItem.balances?.[transToLoc] || 0) + (destLocObj && activeItem.balances?.[destLocObj.code] ? activeItem.balances[destLocObj.code] : 0);
+        itemUpdate[`balances.${transToLoc}`] = destLocBalance + qtyNum; // ID Key
+        
+        // Healing migration for destination
+        if (destLocObj && activeItem.balances?.[destLocObj.code] !== undefined) {
+          itemUpdate[`balances.${destLocObj.code}`] = deleteField();
+        }
       }
 
       await updateDoc(doc(db, "inventoryItems", activeItem.id), itemUpdate);
@@ -377,6 +394,11 @@ export default function InventoryManagement() {
 
   const inputClass = "w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2 text-sm text-white focus:outline-none focus:border-primary-500 placeholder-gray-600";
   const labelClass = "block text-xs font-semibold text-gray-400 mb-1.5";
+
+  // ⭐️ ROUND 9.3: Helper to sum both ID keys and legacy Code keys for UI presentation
+  const getDisplayStock = (item, loc) => {
+    return (item?.balances?.[loc.id] || 0) + (item?.balances?.[loc.code] || 0);
+  };
 
   const filteredItems = items.filter(item => {
     if (selectedCatFilter && item.categoryId !== selectedCatFilter) return false;
@@ -494,13 +516,20 @@ export default function InventoryManagement() {
                   const isLow = item.minStock > 0 && (item.balance || 0) <= item.minStock;
                   const needsMigration = (item.balance > 0) && (!item.balances || Object.keys(item.balances).length === 0);
                   
-                  const breakdown = Object.entries(item.balances || {})
-                    .filter(([, qty]) => qty !== 0)
-                    .map(([loc, qty]) => (
-                      <span key={loc} className="inline-block bg-gray-800 text-gray-300 px-2 py-0.5 rounded text-[10px] mr-1 mb-1 border border-gray-700">
-                        <span className="font-bold text-primary-400">{loc}:</span> {qty.toLocaleString()}
+                  // ⭐️ ROUND 9.3: Aggregate legacy and new ID keys purely for display
+                  const resolvedBalances = {};
+                  Object.entries(item.balances || {}).forEach(([key, qty]) => {
+                    if (qty === 0) return;
+                    const loc = locations.find(l => l.id === key) || locations.find(l => l.code === key);
+                    const disp = loc ? loc.code : key;
+                    resolvedBalances[disp] = (resolvedBalances[disp] || 0) + qty;
+                  });
+
+                  const breakdown = Object.entries(resolvedBalances).map(([locCode, qty]) => (
+                      <span key={locCode} className="inline-block bg-gray-800 text-gray-300 px-2 py-0.5 rounded text-[10px] mr-1 mb-1 border border-gray-700">
+                        <span className="font-bold text-primary-400">{locCode}:</span> {qty.toLocaleString()}
                       </span>
-                    ));
+                  ));
 
                   return (
                     <tr key={item.id} className="hover:bg-gray-800/30 transition-colors">
@@ -625,9 +654,6 @@ export default function InventoryManagement() {
         </div>
       )}
 
-      {/* ========================================== */}
-      {/* ⭐️ ROUND 9.2: MIGRATION MODAL WITH LOCATION WARNING / LINK */}
-      {/* ========================================== */}
       {isMigrateModalOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-orange-500/50 rounded-xl w-full max-w-md shadow-2xl overflow-hidden animate-fade-in">
@@ -659,7 +685,7 @@ export default function InventoryManagement() {
                 >
                   <option value="">{locations.filter(l => l.active).length === 0 ? "-- No Locations Available --" : "-- Select Master Location --"}</option>
                   {locations.filter(l => l.active).map(l => (
-                    <option key={l.id} value={l.code}>{l.name} ({l.code})</option>
+                    <option key={l.id} value={l.id}>{l.name} ({l.code})</option> // ⭐️ ID Value
                   ))}
                 </select>
               </div>
@@ -718,7 +744,7 @@ export default function InventoryManagement() {
                         <select required value={transLoc} onChange={e => setTransLoc(e.target.value)} className={inputClass}>
                           <option value="">-- Select Source --</option>
                           {locations.filter(l => l.active).map(l => (
-                             <option key={l.id} value={l.code}>{l.name} (Stk: {activeItem?.balances?.[l.code] || 0})</option>
+                             <option key={l.id} value={l.id}>{l.name} (Stk: {getDisplayStock(activeItem, l)})</option>
                           ))}
                         </select>
                       </div>
@@ -726,8 +752,8 @@ export default function InventoryManagement() {
                         <label className={labelClass}>To Location *</label>
                         <select required value={transToLoc} onChange={e => setTransToLoc(e.target.value)} className={inputClass}>
                           <option value="">-- Select Destination --</option>
-                          {locations.filter(l => l.active && l.code !== transLoc).map(l => (
-                             <option key={l.id} value={l.code}>{l.name} (Stk: {activeItem?.balances?.[l.code] || 0})</option>
+                          {locations.filter(l => l.active && l.id !== transLoc).map(l => (
+                             <option key={l.id} value={l.id}>{l.name} (Stk: {getDisplayStock(activeItem, l)})</option>
                           ))}
                         </select>
                       </div>
@@ -740,7 +766,7 @@ export default function InventoryManagement() {
                       <select required value={transLoc} onChange={e => setTransLoc(e.target.value)} className={inputClass}>
                         <option value="">-- Select Location --</option>
                         {locations.filter(l => l.active).map(l => (
-                           <option key={l.id} value={l.code}>{l.name} ({l.code}) — {transType !== 'in' ? `Stk: ${activeItem?.balances?.[l.code] || 0}` : ''}</option>
+                           <option key={l.id} value={l.id}>{l.name} ({l.code}) — {transType !== 'in' ? `Stk: ${getDisplayStock(activeItem, l)}` : ''}</option>
                         ))}
                       </select>
                     </div>

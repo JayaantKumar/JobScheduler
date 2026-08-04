@@ -86,6 +86,20 @@ export default function MasterData() {
   const handleSaveLoc = async (e) => {
     e.preventDefault();
     if (!locForm.name.trim() || !locForm.code.trim()) return;
+
+    // ⭐️ ROUND 9.3: Validate Location Code to prevent Firestore Path crashes
+    const forbiddenChars = /[~*/[\]]/;
+    if (forbiddenChars.test(locForm.code)) {
+      setConfirmConfig({
+        isOpen: true,
+        title: "Invalid Location Code",
+        message: "Location code cannot contain ~, *, /, [, or ] characters. These cause database routing errors. Please use a dash (-) instead of a slash.",
+        isAlertOnly: true,
+        onConfirm: () => setConfirmConfig(null)
+      });
+      return;
+    }
+
     setSavingLoc(true);
     try {
       // Force code to be uppercase to match exact machine Place strings (e.g. "OJ274")
@@ -643,6 +657,8 @@ export default function MasterData() {
                 <div>
                   <label className={labelClass}>Location Code *</label>
                   <input required type="text" value={locForm.code} onChange={e => setLocForm({...locForm, code: e.target.value.toUpperCase()})} className={`${inputClass} font-mono`} placeholder="e.g. P56, OJ274" />
+                  {/* Visual helper for users */}
+                  <p className="text-[10px] text-gray-500 mt-1">Cannot contain slashes (/) or brackets ([ ]).</p>
                 </div>
                 <div>
                   <label className={labelClass}>Location Name *</label>

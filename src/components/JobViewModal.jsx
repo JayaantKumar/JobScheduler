@@ -265,7 +265,8 @@ export default function JobViewModal({ job, onClose }) {
     const isOverdue = dueDateObj && dueDateObj < today;
     const isOnHold = currentStep?.status === 'on_hold';
 
-    let msg = `${localJob.customer} / ${localJob.product?.name || localJob.title} (${qty} pcs): `;
+    const prodName = localJob.product_snapshot?.name || localJob.product?.name || localJob.title;
+    let msg = `${localJob.customer} / ${prodName} (${qty} pcs): `;
     if (completedNames) msg += `${completedNames} complete, `;
 
     if (isOnHold) {
@@ -280,7 +281,6 @@ export default function JobViewModal({ job, onClose }) {
     alert("Client update copied to clipboard!\n\n" + msg);
   };
 
-  // ⭐️ ROUND 9.2: BUG 2 FIX - Strict Scoping and Deduplication for Artwork Printing
   const getApplicableFiles = (category) => {
     const jobFiles = (localJob.files || []).filter(f => f.category === category && f.status === 'APPROVED');
     const prodFiles = liveProductFiles.filter(f => f.category === category && f.status === 'APPROVED');
@@ -355,6 +355,11 @@ export default function JobViewModal({ job, onClose }) {
     return Math.floor(diff / (1000 * 60 * 60 * 24));
   };
 
+  // Fallback values using snapshot if product was deleted
+  const productName = localJob.product_snapshot?.name || localJob.product?.name || "N/A";
+  const productSku = localJob.product_snapshot?.sku || localJob.product?.sku || "N/A";
+  const isArtworkRequired = localJob.artwork_required ?? localJob.product?.artwork_required ?? true;
+
   const PrintView = (
     <div id="print-card" className="hidden print:block w-full bg-white text-black font-sans relative text-sm">
       
@@ -395,21 +400,26 @@ export default function JobViewModal({ job, onClose }) {
 
       <div className="flex justify-between items-center bg-gray-100 border-b-2 border-black py-1.5 px-2 mb-3 text-xs uppercase">
         <div><span className="text-gray-500 font-bold">Customer:</span> <span className="font-bold text-black ml-1">{localJob.customer}</span></div>
-        <div><span className="text-gray-500 font-bold">Product:</span> <span className="font-bold text-black ml-1">{localJob.product?.name || "N/A"}</span></div>
+        <div><span className="text-gray-500 font-bold">Product:</span> <span className="font-bold text-black ml-1">{productName}</span></div>
         <div><span className="text-gray-500 font-bold">Part:</span> <span className="font-bold text-black ml-1">{isMultiPart ? localJob.part_name : "Main"}</span></div>
-        <div><span className="text-gray-500 font-bold">SKU:</span> <span className="font-bold text-black ml-1">{localJob.product?.sku || "N/A"}</span></div>
+        <div><span className="text-gray-500 font-bold">SKU:</span> <span className="font-bold text-black ml-1">{productSku}</span></div>
       </div>
 
       <div className="mb-4 border-2 border-black flex">
         <div className="flex-1 p-2">
           <div className="text-[10px] font-bold uppercase text-gray-600 tracking-wider mb-1">Master Files & Assets</div>
-          {approvedArtworks.length === 0 ? (
+          
+          {/* ⭐️ ROUND 9.4: Check artwork_required flag before displaying warning */}
+          {!isArtworkRequired ? (
+            <div className="text-black font-black text-base uppercase tracking-wider mt-1 bg-gray-100 p-2 border border-black">
+              ✓ ARTWORK: NOT REQUIRED (PLAIN / UNPRINTED)
+            </div>
+          ) : approvedArtworks.length === 0 ? (
             <div className="text-red-600 font-black text-xl uppercase tracking-widest mt-1">
               ⚠️ ARTWORK: NOT APPROVED (DO NOT START)
             </div>
           ) : (
             <div className="space-y-1 mt-2">
-              {/* ⭐️ ROUND 9.2: Print ALL scoped files with Purpose Labels */}
               {approvedArtworks.map((art, i) => (
                 <div key={`art-${i}`} className="text-sm font-bold">
                   ARTWORK {art.purpose ? `[${art.purpose.toUpperCase()}]` : ''}: {art.name} <span className="text-xs bg-black text-white px-1 ml-1">{art.version}</span>
@@ -443,7 +453,6 @@ export default function JobViewModal({ job, onClose }) {
         </thead>
         <tbody>
           {preProdChecklist.map((row, i) => {
-             // ⭐️ ROUND 9.1: BASIS LOGIC INJECTED
              let calculatedTotal = 0;
              if (row.isDie) {
                calculatedTotal = 1;
@@ -483,7 +492,6 @@ export default function JobViewModal({ job, onClose }) {
                        stockFlag = <span className="ml-1 text-gray-500 text-[8px] font-bold">[OK - {targetPlace}]</span>;
                    }
 
-                   // ⭐️ ROUND 9.2: BUG 9 FIX - Board rows show mm, Paper shows GSM
                    const rawName = row.material_name.split('·')[0].trim();
                    const isBoard = row.category === 'board' || row.category === 'rigid';
                    const gsmThick = isBoard ? `${row.thickness_mm || '?'} mm` : `${row.gsm || '?'} GSM`;
@@ -632,8 +640,8 @@ export default function JobViewModal({ job, onClose }) {
                   </span>
                   {isMultiPart && <span className="bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wider ml-1">Part {localJob.part_index} of {localJob.parts_total || siblings.length}</span>}
                 </div>
-                <h2 className="text-2xl font-bold text-white">{localJob.title || localJob.product?.name || "Untitled Job"}</h2>
-                <p className="text-gray-400 text-sm mt-1">{localJob.customer || "No Customer"} | {localJob.product?.sku || "No SKU"} {isMultiPart ? `| ${localJob.part_name}` : ""}</p>
+                <h2 className="text-2xl font-bold text-white">{localJob.title || productName}</h2>
+                <p className="text-gray-400 text-sm mt-1">{localJob.customer || "No Customer"} | {productSku} {isMultiPart ? `| ${localJob.part_name}` : ""}</p>
               </div>
               
               <div className="flex gap-2">
@@ -664,7 +672,7 @@ export default function JobViewModal({ job, onClose }) {
               <div className="flex items-center gap-1 overflow-x-auto pb-2 custom-scrollbar">
                 {localJob.process_sequence?.map((step, idx) => {
                   const isCurrent = idx === currentActiveIdx;
-                  let colorClass = "bg-gray-800 text-gray-500 border-gray-700"; // pending
+                  let colorClass = "bg-gray-800 text-gray-500 border-gray-700"; 
                   let dot = "·";
                   if (step.status === 'completed') { colorClass = "bg-green-500/20 text-green-400 border-green-500/30"; dot = "✓"; }
                   else if (step.status === 'in_progress') { colorClass = "bg-blue-500/20 text-blue-400 border-blue-500/30"; dot = "▶"; }

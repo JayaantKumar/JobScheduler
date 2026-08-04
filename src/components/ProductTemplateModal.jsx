@@ -21,10 +21,12 @@ const defaultMaterialRow = () => ({
   notes: ""
 });
 
+// ⭐️ ROUND 9.4: Added artwork_required flag defaulting to true
 const defaultPart = (partName = "Main Product") => ({
   id: Date.now() + Math.random(),
   part_name: partName,
   qty_per_set: 1,
+  artwork_required: true, 
   materialRows: [defaultMaterialRow()],
   sequence: [defaultSequence()]
 });
@@ -80,6 +82,7 @@ export default function ProductTemplateModal({
             return {
               ...p,
               id: p.id || Date.now() + Math.random(),
+              artwork_required: p.artwork_required ?? true, // ⭐️ ROUND 9.4: Legacy products safely default to true
               materialRows: matRows,
               sequence: p.sequence?.length > 0 ? p.sequence : [defaultSequence()]
             };
@@ -89,6 +92,7 @@ export default function ProductTemplateModal({
             id: Date.now(),
             part_name: editingProduct.name || "Main Product",
             qty_per_set: 1,
+            artwork_required: editingProduct.artwork_required ?? true, // ⭐️ ROUND 9.4
             materialRows: [{
               id: Date.now() + Math.random(),
               material_name: editingProduct.paperType || editingProduct.material || "",
@@ -229,8 +233,8 @@ export default function ProductTemplateModal({
         rawFile: f, 
         name: f.name,
         category: "Artwork",
-        applies_to: "All Parts", // ⭐️ ROUND 9.2: Default scope
-        purpose: "",             // ⭐️ ROUND 9.2: Default purpose
+        applies_to: "All Parts", 
+        purpose: "",             
         version: "v1",
         status: "Draft",
         notes: "",
@@ -249,7 +253,6 @@ export default function ProductTemplateModal({
       const modifiedFile = updated.find(f => f.id === fileId);
       if (modifiedFile && modifiedFile.status === "APPROVED") {
         updated = updated.map(f => {
-          // ⭐️ ROUND 9.2: Supersede ONLY if Category + Applies To + Purpose match perfectly
           const fAppliesTo = f.applies_to || "All Parts";
           const modAppliesTo = modifiedFile.applies_to || "All Parts";
           const fPurpose = (f.purpose || "").toLowerCase().trim();
@@ -433,7 +436,6 @@ export default function ProductTemplateModal({
                     <tr className="bg-gray-950 text-[10px] uppercase text-gray-500 border-b border-gray-800">
                       <th className="p-2 font-bold min-w-[120px]">File Name</th>
                       <th className="p-2 font-bold w-28">Category</th>
-                      {/* ⭐️ ROUND 9.2: Added fields */}
                       <th className="p-2 font-bold w-32">Applies To</th>
                       <th className="p-2 font-bold w-28">Purpose Label</th>
                       <th className="p-2 font-bold w-16">Version</th>
@@ -463,7 +465,6 @@ export default function ProductTemplateModal({
                               <option value="Other">Other</option>
                             </select>
                           </td>
-                          {/* ⭐️ ROUND 9.2: Applies To Dropdown */}
                           <td className="p-2">
                             <select value={file.applies_to || "All Parts"} onChange={e => handleFileChange(file.id, 'applies_to', e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white">
                               <option value="All Parts">All Parts</option>
@@ -472,7 +473,6 @@ export default function ProductTemplateModal({
                               ))}
                             </select>
                           </td>
-                          {/* ⭐️ ROUND 9.2: Purpose Label */}
                           <td className="p-2">
                             <input type="text" placeholder="e.g. Outer surface" value={file.purpose || ""} onChange={e => handleFileChange(file.id, 'purpose', e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white" />
                           </td>
@@ -520,14 +520,31 @@ export default function ProductTemplateModal({
 
             {parts.map((part, pIndex) => (
               <div key={part.id} className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden shadow-lg">
-                <div className="bg-[#151724] border-b border-gray-800 p-4 flex justify-between items-center">
+                
+                {/* ⭐️ ROUND 9.4: Added Artwork Required Toggle beside the Part Name */}
+                <div className="bg-[#151724] border-b border-gray-800 p-4 flex justify-between items-center flex-wrap gap-4">
                   <div className="flex items-center gap-3">
                     <span className="bg-primary-500/20 text-primary-400 font-bold w-8 h-8 rounded flex items-center justify-center border border-primary-500/30">{String.fromCharCode(65 + pIndex)}</span>
                     <input required type="text" value={part.part_name} onChange={e => updatePartField(part.id, 'part_name', e.target.value)} className="bg-gray-950 border border-gray-800 rounded px-3 py-1 text-sm font-bold text-white focus:border-primary-500 outline-none" placeholder="Part Label (e.g. Lid)" />
                     <span className="text-xs text-gray-500 ml-2 font-bold uppercase">Mult per set:</span>
                     <input required type="number" min="1" value={part.qty_per_set} onChange={e => updatePartField(part.id, 'qty_per_set', e.target.value)} className="bg-gray-950 border border-gray-800 rounded px-2 py-1 text-sm text-center text-white w-12 outline-none" />
                   </div>
-                  {isMultiPart && <button type="button" onClick={() => handleRemovePart(part.id)} className="text-red-500 hover:text-red-400 text-xs font-bold uppercase">Remove Part</button>}
+                  
+                  <div className="flex items-center gap-4">
+                    <label className={`flex items-center gap-2 cursor-pointer px-3 py-1.5 rounded-lg border transition-colors ${part.artwork_required ? 'bg-primary-900/10 border-primary-500/30' : 'bg-gray-950 border-gray-800'}`}>
+                      <input 
+                        type="checkbox" 
+                        checked={part.artwork_required} 
+                        onChange={e => updatePartField(part.id, 'artwork_required', e.target.checked)} 
+                        className="w-4 h-4 rounded bg-gray-900 border-gray-700 text-primary-600 focus:ring-primary-500" 
+                      />
+                      <span className={`text-xs font-bold uppercase tracking-wider ${part.artwork_required ? 'text-primary-400' : 'text-gray-500'}`}>
+                        {part.artwork_required ? "🎨 Artwork Required" : "Plain / Unprinted"}
+                      </span>
+                    </label>
+
+                    {isMultiPart && <button type="button" onClick={() => handleRemovePart(part.id)} className="text-red-500 hover:text-red-400 text-xs font-bold uppercase">Remove Part</button>}
+                  </div>
                 </div>
 
                 <div className="p-4 space-y-4">
