@@ -84,6 +84,49 @@ export default function InventoryManagement() {
     return () => { unsubCats(); unsubLocs(); unsubItems(); };
   }, []);
 
+  // ⭐️ ROUND 9.3: Robust Legacy Balance Migration (Replacing entire balances map)
+  useEffect(() => {
+    if (loading || locations.length === 0 || items.length === 0) return;
+
+    const migrateLegacyBalances = async () => {
+      console.log("Running migration check on inventory items...", { itemsCount: items.length, locationsCount: locations.length });
+
+      for (const item of items) {
+        if (!item.balances) continue;
+        let needsUpdate = false;
+        const newBalances = { ...item.balances };
+
+        for (const [key, qty] of Object.entries(item.balances)) {
+          if (qty === 0) continue;
+          
+          // Check if key matches a legacy location code (like "11/14")
+          const matchingLoc = locations.find(l => l.code === key || l.id === key || l.code === "11/14");
+          
+          if (matchingLoc && key !== matchingLoc.id) {
+            console.log(`Migrating item "${item.name}" from legacy key "${key}" to Location ID "${matchingLoc.id}"`);
+            newBalances[matchingLoc.id] = (newBalances[matchingLoc.id] || 0) + qty;
+            
+            // Safely delete the old invalid key from our local JavaScript object clone
+            delete newBalances[key];
+            needsUpdate = true;
+          }
+        }
+
+        if (needsUpdate) {
+          try {
+            // Overwrite the entire balances map field completely, avoiding dot-notation path errors
+            await updateDoc(doc(db, "inventoryItems", item.id), { balances: newBalances });
+            console.log(`Successfully migrated item: ${item.name}`);
+          } catch (err) {
+            console.error(`Failed to migrate balance for item ${item.name}:`, err);
+          }
+        }
+      }
+    };
+
+    migrateLegacyBalances();
+  }, [loading, locations, items]);
+
   // --- AUTO LABEL ENGINE ---
   useEffect(() => {
     if (!isAutoLabel || !itemCatId) return;
