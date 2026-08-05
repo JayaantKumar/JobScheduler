@@ -68,7 +68,6 @@ export default function Jobs() {
 
   if (loading) return <div className="p-8 text-primary-500 animate-pulse font-medium">Loading Job Data...</div>;
 
-  // ⭐️ ROUND 9.2: BUG 3 FIX - Added On Hold Tab
   const tabs = ["All", "Pending", "In Progress", "On Hold", "Completed", "Overdue"];
 
   const getStepStatusUI = (job) => {
@@ -87,7 +86,6 @@ export default function Jobs() {
     const statusDate = currentStep.status_updated_at || currentStep.started_at || job.job_date;
     const diffDays = statusDate ? Math.floor((new Date() - new Date(statusDate)) / (1000 * 60 * 60 * 24)) : 0;
     
-    // ⭐️ ROUND 9.2: BUG 3 FIX - Display hold reason directly on the row
     if (currentStep.status === 'on_hold') {
       const reasonStr = currentStep.hold_reason ? ` - ${currentStep.hold_reason}` : '';
       return (
@@ -168,7 +166,7 @@ export default function Jobs() {
                     let setStatus = "pending";
                     if (isSetCompleted) setStatus = "completed";
                     else if (isSetOverdue) setStatus = "overdue";
-                    else if (group.some(isJobOnHold)) setStatus = "on_hold"; // ⭐️ Set-level on-hold state
+                    else if (group.some(isJobOnHold)) setStatus = "on_hold";
                     else if (group.some(isJobInProgress)) setStatus = "in_progress";
 
                     return (
@@ -180,7 +178,10 @@ export default function Jobs() {
                             </span>
                           </td>
                           <td className="py-4 px-6">
-                            <div className="font-bold text-white text-sm">{group[0].product?.name || "Multi-Part Set"}</div>
+                            {/* ⭐️ ROUND 9.5: Product Snapshot Fallback */}
+                            <div className="font-bold text-white text-sm">
+                              {group[0].product_snapshot?.name || group[0].product?.name || "Multi-Part Set"}
+                            </div>
                             <div className="text-xs text-gray-500 mt-0.5">{group[0].customer || "Unknown Customer"}</div>
                           </td>
                           <td className="py-4 px-6"></td>
@@ -211,7 +212,13 @@ export default function Jobs() {
                               </div>
                             </td>
                             <td className="py-3 px-6">
-                              <div className="font-bold text-gray-300 text-xs">Part {job.part_index}: {job.part_name || "Component"}</div>
+                              <div className="flex items-center gap-2">
+                                <div className="font-bold text-gray-300 text-xs">Part {job.part_index}: {job.part_name || "Component"}</div>
+                                {/* ⭐️ ROUND 9.5: Inline Badge for Unprinted Parts */}
+                                {job.artwork_required === false && (
+                                  <span className="bg-gray-800 text-gray-500 border border-gray-700 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase">Plain</span>
+                                )}
+                              </div>
                             </td>
                             <td className="py-3 px-6 text-gray-400 text-xs font-medium">
                               {job.quantity_target?.toLocaleString()} pcs
@@ -245,8 +252,19 @@ export default function Jobs() {
                         <span className="font-mono text-sm font-bold text-gray-200">{job.display_id || `JOB-${job.id.slice(0,6).toUpperCase()}`}</span>
                       </td>
                       <td className="py-4 px-6">
-                        <div className="font-bold text-white text-sm">{job.title || job.product?.name}</div>
-                        <div className="text-xs text-gray-500 mt-0.5">{job.product?.sku || "N/A"}</div>
+                        <div className="flex items-center gap-2">
+                          {/* ⭐️ ROUND 9.5: Product Snapshot Fallback */}
+                          <div className="font-bold text-white text-sm">
+                            {job.title || job.product_snapshot?.name || job.product?.name}
+                          </div>
+                          {/* ⭐️ ROUND 9.5: Inline Badge for Unprinted Parts */}
+                          {job.artwork_required === false && (
+                            <span className="bg-gray-800 text-gray-500 border border-gray-700 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase">Plain</span>
+                          )}
+                        </div>
+                        <div className="text-xs text-gray-500 mt-0.5">
+                          {job.product_snapshot?.sku || job.product?.sku || "N/A"}
+                        </div>
                       </td>
                       <td className="py-4 px-6 text-gray-300 text-sm">
                         {job.quantity_target?.toLocaleString() || 0} pcs

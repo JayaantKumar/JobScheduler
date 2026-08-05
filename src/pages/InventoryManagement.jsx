@@ -1,6 +1,6 @@
 import { useState, useEffect, Fragment } from "react";
 import { createPortal } from "react-dom";
-import { collection, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, query, getDocs, where, writeBatch, deleteField } from "firebase/firestore";
+import { collection, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, query, getDocs, where, writeBatch, deleteDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
 
 export default function InventoryManagement() {
@@ -26,7 +26,7 @@ export default function InventoryManagement() {
   const [confirmConfig, setConfirmConfig] = useState(null); 
 
   const [isMigrateModalOpen, setMigrateModalOpen] = useState(false);
-  const [migrateLoc, setMigrateLoc] = useState(""); // ⭐️ Now stores Location ID
+  const [migrateLoc, setMigrateLoc] = useState(""); 
 
   // --- ITEM FORM STATES ---
   const [itemCatId, setItemCatId] = useState("");
@@ -43,7 +43,6 @@ export default function InventoryManagement() {
   const [transQty, setTransQty] = useState("");
   const [transNotes, setTransNotes] = useState("");
   
-  // ⭐️ ROUND 9.3: Now storing Location IDs instead of user-typed Codes
   const [transLoc, setTransLoc] = useState(""); 
   const [transToLoc, setTransToLoc] = useState(""); 
   
@@ -77,7 +76,10 @@ export default function InventoryManagement() {
     const fetchJobs = async () => {
       const q = query(collection(db, "jobs"));
       const snap = await getDocs(q);
-      setActiveJobs(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(j => j.status !== "completed"));
+      const jobsList = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(j => j.status !== "completed");
+      // ⭐️ ROUND 9.5 ITEM 8: Sort jobs alphabetically by display_id to group sets
+      jobsList.sort((a, b) => (a.display_id || "").localeCompare(b.display_id || ""));
+      setActiveJobs(jobsList);
     };
     fetchJobs();
 
@@ -89,8 +91,6 @@ export default function InventoryManagement() {
     if (loading || locations.length === 0 || items.length === 0) return;
 
     const migrateLegacyBalances = async () => {
-      console.log("Running migration check on inventory items...", { itemsCount: items.length, locationsCount: locations.length });
-
       for (const item of items) {
         if (!item.balances) continue;
         let needsUpdate = false;
@@ -99,14 +99,10 @@ export default function InventoryManagement() {
         for (const [key, qty] of Object.entries(item.balances)) {
           if (qty === 0) continue;
           
-          // Check if key matches a legacy location code (like "11/14")
           const matchingLoc = locations.find(l => l.code === key || l.id === key || l.code === "11/14");
           
           if (matchingLoc && key !== matchingLoc.id) {
-            console.log(`Migrating item "${item.name}" from legacy key "${key}" to Location ID "${matchingLoc.id}"`);
             newBalances[matchingLoc.id] = (newBalances[matchingLoc.id] || 0) + qty;
-            
-            // Safely delete the old invalid key from our local JavaScript object clone
             delete newBalances[key];
             needsUpdate = true;
           }
@@ -114,9 +110,7 @@ export default function InventoryManagement() {
 
         if (needsUpdate) {
           try {
-            // Overwrite the entire balances map field completely, avoiding dot-notation path errors
             await updateDoc(doc(db, "inventoryItems", item.id), { balances: newBalances });
-            console.log(`Successfully migrated item: ${item.name}`);
           } catch (err) {
             console.error(`Failed to migrate balance for item ${item.name}:`, err);
           }
@@ -143,7 +137,6 @@ export default function InventoryManagement() {
       const job = activeJobs.find(j => j.id === linkedJobId);
       const jobPlaceCode = job?.process_sequence?.find(s => s.assigned_machine_place)?.assigned_machine_place;
       if (jobPlaceCode) {
-        // ⭐️ ROUND 9.3: Lookup ID from Code
         const foundLoc = locations.find(l => l.code === jobPlaceCode);
         if (foundLoc) setTransLoc(foundLoc.id);
       }
@@ -256,7 +249,7 @@ export default function InventoryManagement() {
     
     try {
       const updateData = {
-        balances: { [migrateLoc]: activeItem.balance || 0 }, // migrateLoc is now ID
+        balances: { [migrateLoc]: activeItem.balance || 0 },
         location: null, 
         updated_at: serverTimestamp()
       };
@@ -290,17 +283,19 @@ export default function InventoryManagement() {
     setErrorMsg("");
     const qtyNum = Number(transQty);
     
-    if (qtyNum <= 0) return setErrorMsg("Quantity must be greater than 0");
+    // ⭐️ ROUND 9.5 ITEM 8: Strict Manual Validation (HTML5 'required' removed from selects to prevent silent failures)
+    if (!transQty || qtyNum <= 0) return setErrorMsg("Quantity must be greater than 0.");
     if (!transLoc) return setErrorMsg(`Please select a ${transType === 'in' ? 'receiving' : 'source'} location.`);
-    if (transType === 'transfer' && !transToLoc) return setErrorMsg("Please select a destination location.");
+    if (transType === 'transfer' && !transToLoc) return setErrorMsg("Please select a destination location for the transfer.");
     if (transType === 'transfer' && transLoc === transToLoc) return setErrorMsg("Source and Destination locations must be different.");
 
-    // ⭐️ ROUND 9.3: Resolve Source Location Display Name & Sum legacy balances
     const sourceLocObj = locations.find(l => l.id === transLoc);
     const sourceLocDisplay = sourceLocObj ? sourceLocObj.code : transLoc;
     
-    // Fallback migration math: Combine ID balance and legacy CODE balance 
-    let locBalance = (activeItem.balances?.[transLoc] || 0) + (sourceLocObj && activeItem.balances?.[sourceLocObj.code] ? activeItem.balances[sourceLocObj.code] : 0);
+    // Construct entirely new balances object to avoid any dot notation weirdness
+    const updatedBalances = { ...(activeItem.balances || {}) };
+    
+    let locBalance = updatedBalances[transLoc] || 0;
     let newLocBalance = locBalance;
     let newTotalBalance = activeItem.balance || 0;
 
@@ -335,23 +330,30 @@ export default function InventoryManagement() {
 
     setProcessingTrans(true);
     try {
+      // ⭐️ ROUND 9.5 ITEM 1 & 3: ATOMIC BATCH FOR EVERYTHING
+      const batch = writeBatch(db);
+
       let linkedJobDisplay = "";
       if (linkedJobId) {
         const j = activeJobs.find(x => x.id === linkedJobId);
         linkedJobDisplay = j ? `${j.display_id || `JOB-${j.id.slice(0,6).toUpperCase()}`} (${j.part_name || 'Main'})` : "";
       }
 
-      const generatedId = `TR-${new Date().toLocaleDateString('en-GB').replace(/\//g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
-      const destLocObj = locations.find(l => l.id === transToLoc);
+      // ⭐️ ROUND 9.5 ITEM 5: Slip date exactly matches transaction string
+      const [yy, mm, dd] = transDate.split('-');
+      const generatedId = `TR-${dd}${mm}${yy}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+      const destLocObj = transToLoc ? locations.find(l => l.id === transToLoc) : null;
       const destLocDisplay = destLocObj ? destLocObj.code : transToLoc;
 
-      // ⭐️ ROUND 9.3: Keep ledger history readable by saving the display code, not the raw ID
+      // LEDGER ROW 1: (Source for out/adj/transfer, Dest for in)
+      const txRef1 = doc(collection(db, "inventoryTransactions"));
       const transPayload = {
         itemId: activeItem.id,
         itemName: activeItem.name,
-        type: transType,
+        type: transType === 'transfer' ? 'transfer_out' : transType, // ⭐️ ROUND 9.5 ITEM 4: Specific types
         date: transDate,
-        qty: transType === 'out' || (transType === 'adj' && adjDirection === 'deduct') ? -qtyNum : qtyNum,
+        qty: transType === 'out' || (transType === 'adj' && adjDirection === 'deduct') || transType === 'transfer' ? -qtyNum : qtyNum,
         location: sourceLocDisplay, 
         previous_balance: locBalance,
         new_balance: newLocBalance,
@@ -371,38 +373,57 @@ export default function InventoryManagement() {
       } else if (transType === 'adj') {
         transPayload.reason = adjReason;
       } else if (transType === 'transfer') {
-        transPayload.qty = qtyNum; 
-        transPayload.transfer_id = generatedId;
         transPayload.toLocation = destLocDisplay;
-        transPayload.person = person; 
+        transPayload.transfer_id = generatedId;
+        transPayload.person = person;
         transPayload.receivedBy = receivedBy;
         transPayload.vehicle = vehicle;
       }
 
-      await addDoc(collection(db, "inventoryTransactions"), transPayload);
-      
+      batch.set(txRef1, transPayload);
+
+      // Update Source Balance in Map
+      updatedBalances[transLoc] = newLocBalance;
+
+      // LEDGER ROW 2 & DEST BALANCE: (Only for transfers)
+      if (transType === 'transfer') {
+        const destLocBalance = updatedBalances[transToLoc] || 0;
+        updatedBalances[transToLoc] = destLocBalance + qtyNum;
+
+        const txRef2 = doc(collection(db, "inventoryTransactions"));
+        const transPayloadIn = {
+          itemId: activeItem.id,
+          itemName: activeItem.name,
+          type: 'transfer_in', // ⭐️ ROUND 9.5 ITEM 4
+          date: transDate,
+          qty: qtyNum,
+          location: destLocDisplay, 
+          fromLocation: sourceLocDisplay,
+          transfer_id: generatedId,
+          person: person,
+          receivedBy: receivedBy,
+          vehicle: vehicle,
+          previous_balance: destLocBalance,
+          new_balance: updatedBalances[transToLoc],
+          total_balance: newTotalBalance,
+          notes: transNotes,
+          created_at: serverTimestamp(),
+        };
+        batch.set(txRef2, transPayloadIn);
+      }
+
+      // Update Item Balances Map
       const itemUpdate = {
         balance: newTotalBalance,
-        updated_at: serverTimestamp(),
-        [`balances.${transLoc}`]: newLocBalance // ID Key
+        balances: updatedBalances,
+        updated_at: serverTimestamp()
       };
 
-      // ⭐️ ROUND 9.3: Self-healing Migration - Clean up the old Code Key strictly via Field deletion
-      if (sourceLocObj && activeItem.balances?.[sourceLocObj.code] !== undefined) {
-        itemUpdate[`balances.${sourceLocObj.code}`] = deleteField();
-      }
+      const itemRef = doc(db, "inventoryItems", activeItem.id);
+      batch.update(itemRef, itemUpdate);
 
-      if (transType === 'transfer') {
-        let destLocBalance = (activeItem.balances?.[transToLoc] || 0) + (destLocObj && activeItem.balances?.[destLocObj.code] ? activeItem.balances[destLocObj.code] : 0);
-        itemUpdate[`balances.${transToLoc}`] = destLocBalance + qtyNum; // ID Key
-        
-        // Healing migration for destination
-        if (destLocObj && activeItem.balances?.[destLocObj.code] !== undefined) {
-          itemUpdate[`balances.${destLocObj.code}`] = deleteField();
-        }
-      }
-
-      await updateDoc(doc(db, "inventoryItems", activeItem.id), itemUpdate);
+      // COMMIT BATCH ATOMICALLY
+      await batch.commit();
 
       setTransModalOpen(false);
     } catch (err) { setErrorMsg("Transaction failed: " + err.message); }
@@ -430,6 +451,16 @@ export default function InventoryManagement() {
     }
   };
 
+  // ⭐️ ROUND 9.5 ITEM 3 CLEANUP: Empower client to delete phantom rows directly from the UI
+  const deleteLedgerRow = async (entryId) => {
+    if (window.confirm("Delete this specific ledger entry permanently? (This DOES NOT reverse balances, it only purges the row).")) {
+       try {
+         await deleteDoc(doc(db, "inventoryTransactions", entryId));
+         setItemHistory(prev => prev.filter(r => r.id !== entryId));
+       } catch (err) { alert("Failed to delete row: " + err.message); }
+    }
+  };
+
   const handlePrintSlip = (entry) => {
     setPrintData({ item: activeItem, tx: entry });
     setTimeout(() => window.print(), 100);
@@ -438,7 +469,6 @@ export default function InventoryManagement() {
   const inputClass = "w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2 text-sm text-white focus:outline-none focus:border-primary-500 placeholder-gray-600";
   const labelClass = "block text-xs font-semibold text-gray-400 mb-1.5";
 
-  // ⭐️ ROUND 9.3: Helper to sum both ID keys and legacy Code keys for UI presentation
   const getDisplayStock = (item, loc) => {
     return (item?.balances?.[loc.id] || 0) + (item?.balances?.[loc.code] || 0);
   };
@@ -461,7 +491,7 @@ export default function InventoryManagement() {
         <div className="text-right flex flex-col justify-end">
           <div className="font-bold text-lg">{new Date(printData.tx.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</div>
           <div className="text-sm font-bold uppercase mt-2 border border-black px-2 py-1 inline-block">
-            {printData.tx.location} → {printData.tx.toLocation}
+            {printData.tx.type === 'transfer_in' ? `${printData.tx.fromLocation} → ${printData.tx.location}` : `${printData.tx.location} → ${printData.tx.toLocation}`}
           </div>
         </div>
       </div>
@@ -474,7 +504,7 @@ export default function InventoryManagement() {
             <div className="text-xs text-gray-500 mt-1 uppercase">Item ID: {printData.tx.itemId}</div>
           </div>
           <div className="text-right">
-            <div className="text-3xl font-black">{printData.tx.qty.toLocaleString()} <span className="text-lg">{printData.item.unit}</span></div>
+            <div className="text-3xl font-black">{Math.abs(printData.tx.qty).toLocaleString()} <span className="text-lg">{printData.item.unit}</span></div>
           </div>
         </div>
       </div>
@@ -491,12 +521,12 @@ export default function InventoryManagement() {
         <div className="text-center">
           <div className="border-b border-black mb-2 mx-12"></div>
           <div className="font-bold uppercase text-xs">Sent By: {printData.tx.person || "__________________"}</div>
-          <div className="text-[10px] text-gray-500">{printData.tx.location}</div>
+          <div className="text-[10px] text-gray-500">{printData.tx.type === 'transfer_in' ? printData.tx.fromLocation : printData.tx.location}</div>
         </div>
         <div className="text-center">
           <div className="border-b border-black mb-2 mx-12"></div>
           <div className="font-bold uppercase text-xs">Received By: {printData.tx.receivedBy || "__________________"}</div>
-          <div className="text-[10px] text-gray-500">{printData.tx.toLocation}</div>
+          <div className="text-[10px] text-gray-500">{printData.tx.type === 'transfer_in' ? printData.tx.location : printData.tx.toLocation}</div>
         </div>
       </div>
     </div>
@@ -559,7 +589,6 @@ export default function InventoryManagement() {
                   const isLow = item.minStock > 0 && (item.balance || 0) <= item.minStock;
                   const needsMigration = (item.balance > 0) && (!item.balances || Object.keys(item.balances).length === 0);
                   
-                  // ⭐️ ROUND 9.3: Aggregate legacy and new ID keys purely for display
                   const resolvedBalances = {};
                   Object.entries(item.balances || {}).forEach(([key, qty]) => {
                     if (qty === 0) return;
@@ -728,7 +757,7 @@ export default function InventoryManagement() {
                 >
                   <option value="">{locations.filter(l => l.active).length === 0 ? "-- No Locations Available --" : "-- Select Master Location --"}</option>
                   {locations.filter(l => l.active).map(l => (
-                    <option key={l.id} value={l.id}>{l.name} ({l.code})</option> // ⭐️ ID Value
+                    <option key={l.id} value={l.id}>{l.name} ({l.code})</option> 
                   ))}
                 </select>
               </div>
@@ -784,7 +813,7 @@ export default function InventoryManagement() {
                     <>
                       <div>
                         <label className={labelClass}>From Location *</label>
-                        <select required value={transLoc} onChange={e => setTransLoc(e.target.value)} className={inputClass}>
+                        <select value={transLoc} onChange={e => setTransLoc(e.target.value)} className={inputClass}>
                           <option value="">-- Select Source --</option>
                           {locations.filter(l => l.active).map(l => (
                              <option key={l.id} value={l.id}>{l.name} (Stk: {getDisplayStock(activeItem, l)})</option>
@@ -793,7 +822,7 @@ export default function InventoryManagement() {
                       </div>
                       <div>
                         <label className={labelClass}>To Location *</label>
-                        <select required value={transToLoc} onChange={e => setTransToLoc(e.target.value)} className={inputClass}>
+                        <select value={transToLoc} onChange={e => setTransToLoc(e.target.value)} className={inputClass}>
                           <option value="">-- Select Destination --</option>
                           {locations.filter(l => l.active && l.id !== transLoc).map(l => (
                              <option key={l.id} value={l.id}>{l.name} (Stk: {getDisplayStock(activeItem, l)})</option>
@@ -806,7 +835,7 @@ export default function InventoryManagement() {
                       <label className={labelClass}>
                         {transType === 'in' ? 'Receiving Location *' : transType === 'out' ? 'Source Location *' : 'Location Being Adjusted *'}
                       </label>
-                      <select required value={transLoc} onChange={e => setTransLoc(e.target.value)} className={inputClass}>
+                      <select value={transLoc} onChange={e => setTransLoc(e.target.value)} className={inputClass}>
                         <option value="">-- Select Location --</option>
                         {locations.filter(l => l.active).map(l => (
                            <option key={l.id} value={l.id}>{l.name} ({l.code}) — {transType !== 'in' ? `Stk: ${getDisplayStock(activeItem, l)}` : ''}</option>
@@ -821,7 +850,7 @@ export default function InventoryManagement() {
               <div className="grid grid-cols-2 gap-4 border-b border-gray-800 pb-6">
                 <div>
                   <label className={labelClass}>Transaction Date *</label>
-                  <input required type="date" value={transDate} onChange={e => setTransDate(e.target.value)} className={`${inputClass} [color-scheme:dark]`} />
+                  <input type="date" value={transDate} onChange={e => setTransDate(e.target.value)} className={`${inputClass} [color-scheme:dark]`} />
                 </div>
                 <div>
                   <label className={labelClass}>
@@ -835,7 +864,6 @@ export default function InventoryManagement() {
                       </div>
                     )}
                     <input 
-                      required 
                       type="number" 
                       step="any" 
                       min="0.001" 
@@ -942,6 +970,7 @@ export default function InventoryManagement() {
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="border-b border-gray-800 text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+                      <th className="py-3 px-4 w-12 text-center">Del</th>
                       <th className="py-3 px-4">Date</th>
                       <th className="py-3 px-4">Type</th>
                       <th className="py-3 px-4">Location</th>
@@ -953,20 +982,27 @@ export default function InventoryManagement() {
                   <tbody className="divide-y divide-gray-800/50">
                     {itemHistory.map(entry => (
                       <tr key={entry.id} className="hover:bg-gray-800/20 transition-colors">
+                        <td className="py-3 px-4 text-center">
+                          <button onClick={() => deleteLedgerRow(entry.id)} className="text-gray-600 hover:text-red-400 p-1 rounded transition-colors" title="Delete Ledger Entry">
+                            <svg className="w-4 h-4 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                          </button>
+                        </td>
                         <td className="py-3 px-4 text-xs text-gray-400 font-mono">{entry.date}</td>
                         <td className="py-3 px-4">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                            entry.type === 'in' ? 'bg-green-500/10 text-green-400' : 
-                            entry.type === 'out' ? 'bg-blue-500/10 text-blue-400' : 
+                            entry.type === 'in' || entry.type === 'transfer_in' ? 'bg-green-500/10 text-green-400' : 
+                            entry.type === 'out' || entry.type === 'transfer_out' ? 'bg-blue-500/10 text-blue-400' : 
                             entry.type === 'transfer' ? 'bg-purple-500/10 text-purple-400' :
                             'bg-yellow-500/10 text-yellow-400'
                           }`}>
-                            {entry.type === 'in' ? 'Stock In' : entry.type === 'out' ? 'Issue Out' : entry.type === 'transfer' ? 'Transfer' : 'Adjust'}
+                            {entry.type === 'in' ? 'Stock In' : entry.type === 'out' ? 'Issue Out' : entry.type === 'transfer_out' ? 'Transfer Out' : entry.type === 'transfer_in' ? 'Transfer In' : entry.type === 'transfer' ? 'Transfer (Legacy)' : 'Adjust'}
                           </span>
                         </td>
                         <td className="py-3 px-4 text-xs font-bold text-gray-300">
-                          {entry.type === 'transfer' ? (
-                            <span className="text-purple-400">{entry.location} → {entry.toLocation}</span>
+                          {entry.type === 'transfer' || entry.type === 'transfer_out' ? (
+                            <span className="text-blue-400">{entry.location} → {entry.toLocation}</span>
+                          ) : entry.type === 'transfer_in' ? (
+                            <span className="text-green-400">{entry.fromLocation} → {entry.location}</span>
                           ) : (
                             entry.location || "N/A"
                           )}
@@ -976,7 +1012,7 @@ export default function InventoryManagement() {
                           {entry.type === 'out' && entry.job_ref_id && <div className="font-bold text-primary-400 cursor-pointer">{entry.job_display}</div>}
                           {entry.type === 'out' && !entry.job_ref_id && <div className="font-medium">Purpose: {entry.purpose || "N/A"}</div>}
                           {entry.type === 'adj' && <div className="font-medium text-yellow-400">Reason: {entry.reason}</div>}
-                          {entry.type === 'transfer' && (
+                          {(entry.type === 'transfer' || entry.type === 'transfer_out' || entry.type === 'transfer_in') && (
                              <div className="flex gap-2 items-center">
                                <span className="font-mono text-gray-500 bg-gray-900 px-1.5 py-0.5 rounded">{entry.transfer_id}</span>
                                <button onClick={() => handlePrintSlip(entry)} className="text-[10px] bg-gray-800 hover:bg-gray-700 text-white px-2 py-1 rounded transition-colors uppercase font-bold tracking-wider">Print Slip</button>

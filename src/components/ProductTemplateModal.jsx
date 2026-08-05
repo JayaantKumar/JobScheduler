@@ -21,7 +21,6 @@ const defaultMaterialRow = () => ({
   notes: ""
 });
 
-// ⭐️ ROUND 9.4: Added artwork_required flag defaulting to true
 const defaultPart = (partName = "Main Product") => ({
   id: Date.now() + Math.random(),
   part_name: partName,
@@ -82,7 +81,7 @@ export default function ProductTemplateModal({
             return {
               ...p,
               id: p.id || Date.now() + Math.random(),
-              artwork_required: p.artwork_required ?? true, // ⭐️ ROUND 9.4: Legacy products safely default to true
+              artwork_required: p.artwork_required ?? true, 
               materialRows: matRows,
               sequence: p.sequence?.length > 0 ? p.sequence : [defaultSequence()]
             };
@@ -92,7 +91,7 @@ export default function ProductTemplateModal({
             id: Date.now(),
             part_name: editingProduct.name || "Main Product",
             qty_per_set: 1,
-            artwork_required: editingProduct.artwork_required ?? true, // ⭐️ ROUND 9.4
+            artwork_required: editingProduct.artwork_required ?? true,
             materialRows: [{
               id: Date.now() + Math.random(),
               material_name: editingProduct.paperType || editingProduct.material || "",
@@ -307,10 +306,13 @@ export default function ProductTemplateModal({
 
       const cleanParts = parts.map(part => ({
         ...part,
-        materialRows: part.materialRows.map(r => ({
-          ...r, 
-          gsm: r.category === 'board' ? "" : cleanGsm(r.gsm),
-          thickness_mm: r.category === 'paper' ? "" : r.thickness_mm
+        // ⭐️ ROUND 9.5 ITEM 7: Filter out empty material rows before saving to the database
+        materialRows: part.materialRows
+          .filter(r => r.material_name && r.material_name.trim() !== "")
+          .map(r => ({
+            ...r, 
+            gsm: r.category === 'board' ? "" : cleanGsm(r.gsm),
+            thickness_mm: r.category === 'paper' ? "" : r.thickness_mm
         })),
         sequence: part.sequence.filter(s => s.process_name.trim() !== "").map((s, idx) => ({ ...s, step_order: idx + 1 }))
       }));
@@ -521,7 +523,6 @@ export default function ProductTemplateModal({
             {parts.map((part, pIndex) => (
               <div key={part.id} className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden shadow-lg">
                 
-                {/* ⭐️ ROUND 9.4: Added Artwork Required Toggle beside the Part Name */}
                 <div className="bg-[#151724] border-b border-gray-800 p-4 flex justify-between items-center flex-wrap gap-4">
                   <div className="flex items-center gap-3">
                     <span className="bg-primary-500/20 text-primary-400 font-bold w-8 h-8 rounded flex items-center justify-center border border-primary-500/30">{String.fromCharCode(65 + pIndex)}</span>

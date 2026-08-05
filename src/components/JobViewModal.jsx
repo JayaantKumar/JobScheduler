@@ -20,6 +20,7 @@ export default function JobViewModal({ job, onClose }) {
   const [updating, setUpdating] = useState(false);
   const [inventoryItems, setInventoryItems] = useState([]);
   const [dies, setDies] = useState([]);
+  const [locations, setLocations] = useState([]); // ⭐️ ROUND 9.5 ITEM 2: Need locations to resolve IDs
 
   const [liveProductFiles, setLiveProductFiles] = useState([]);
   const [files, setFiles] = useState(job.files || []); 
@@ -31,9 +32,11 @@ export default function JobViewModal({ job, onClose }) {
       try {
         const invSnap = await getDocs(collection(db, "inventoryItems"));
         const dieSnap = await getDocs(collection(db, "dies"));
+        const locSnap = await getDocs(collection(db, "locations")); // ⭐️ Fetch Locs
         if (isMounted) {
           setInventoryItems(invSnap.docs.map(d => ({id: d.id, ...d.data()})));
           setDies(dieSnap.docs.map(d => ({id: d.id, ...d.data()})));
+          setLocations(locSnap.docs.map(d => ({id: d.id, ...d.data()})));
         }
       } catch (err) { console.error("Failed to fetch dependencies", err); }
     };
@@ -332,9 +335,12 @@ export default function JobViewModal({ job, onClose }) {
   const routeText = placeChain?.length > 0 ? `Route: ${placeChain.join(" → ")}` : "Route: Unassigned";
   const targetPlace = localJob.process_sequence?.find(s => s.assigned_machine_place && s.assigned_machine_place.trim() !== "")?.assigned_machine_place || "Unassigned";
 
+  // ⭐️ ROUND 9.5 ITEM 7: Filter out rows with empty material names
   let preProdChecklist = localJob.product?.materialRows?.length > 0 
     ? [...localJob.product.materialRows]
     : [{ id: 'legacy-1', material_name: localJob.product?.material || "N/A", piece_purpose: localJob.part_name || "Main", size: localJob.specifications?.size_after_cut || localJob.product?.size || "N/A", qty_per_unit: 1, unit: "pcs", gsm: localJob.product?.gsm || "", notes: `Raw: ${localJob.specifications?.size_before_cut || localJob.product?.sheet_size || "N/A"}` }];
+
+  preProdChecklist = preProdChecklist.filter(row => row.isDie || (row.material_name && row.material_name.trim() !== ""));
 
   const activeDieIds = new Set();
   localJob.process_sequence?.forEach(step => {
@@ -355,7 +361,6 @@ export default function JobViewModal({ job, onClose }) {
     return Math.floor(diff / (1000 * 60 * 60 * 24));
   };
 
-  // Fallback values using snapshot if product was deleted
   const productName = localJob.product_snapshot?.name || localJob.product?.name || "N/A";
   const productSku = localJob.product_snapshot?.sku || localJob.product?.sku || "N/A";
   const isArtworkRequired = localJob.artwork_required ?? localJob.product?.artwork_required ?? true;
@@ -363,38 +368,39 @@ export default function JobViewModal({ job, onClose }) {
   const PrintView = (
     <div id="print-card" className="hidden print:block w-full bg-white text-black font-sans relative text-sm">
       
-      <div className="flex justify-between items-start border-b-2 border-black pb-3 mb-3">
-        <div className="flex-1">
+      {/* ⭐️ ROUND 9.5 ITEM 8: Fixed widths to prevent awkward text wrapping on header */}
+      <div className="flex justify-between items-start border-b-2 border-black pb-3 mb-3 gap-4">
+        <div className="w-[45%] shrink-0">
           {isMultiPart ? (
             <>
-              <h1 className="text-4xl font-black uppercase tracking-tighter mb-1">{localJob.set_code?.includes('-') ? `SET-${localJob.set_code}` : localJob.set_code}</h1>
+              <h1 className="text-3xl font-black uppercase tracking-tighter mb-1 whitespace-nowrap">{localJob.set_code?.includes('-') ? `SET-${localJob.set_code}` : localJob.set_code}</h1>
               <div className="border border-black px-2 py-0.5 inline-block text-xs font-bold uppercase tracking-wider mb-1">PART {localJob.part_index} OF {localJob.parts_total || siblings.length} — {localJob.part_name}</div>
               <div className="flex items-center gap-2">
-                <div className="text-xs font-bold font-mono text-gray-700">{localJob.display_id}</div>
-                <div className="text-[10px] font-bold text-gray-800 uppercase border border-gray-400 inline-block px-1.5 py-0.5">{routeText}</div>
+                <div className="text-xs font-bold font-mono text-gray-700 whitespace-nowrap">{localJob.display_id}</div>
+                <div className="text-[10px] font-bold text-gray-800 uppercase border border-gray-400 inline-block px-1.5 py-0.5 whitespace-nowrap">{routeText}</div>
               </div>
             </>
           ) : (
             <>
-              <h1 className="text-3xl font-black uppercase tracking-tight mb-1">FACTORY JOB CARD</h1>
+              <h1 className="text-3xl font-black uppercase tracking-tight mb-1 whitespace-nowrap">FACTORY JOB CARD</h1>
               <div className="flex items-center gap-2">
-                <div className="text-xs font-bold font-mono text-gray-700">{localJob.display_id || `JOB-${localJob.id.slice(0, 8).toUpperCase()}`}</div>
-                <div className="text-[10px] font-bold text-gray-800 uppercase border border-gray-400 inline-block px-1.5 py-0.5">{routeText}</div>
+                <div className="text-xs font-bold font-mono text-gray-700 whitespace-nowrap">{localJob.display_id || `JOB-${localJob.id.slice(0, 8).toUpperCase()}`}</div>
+                <div className="text-[10px] font-bold text-gray-800 uppercase border border-gray-400 inline-block px-1.5 py-0.5 whitespace-nowrap">{routeText}</div>
               </div>
             </>
           )}
         </div>
         
-        <div className="flex-1 flex flex-col items-center justify-center border-x-2 border-black px-4 mx-4">
+        <div className="flex-1 flex flex-col items-center justify-center border-x-2 border-black px-2">
           <span className="text-[10px] font-bold uppercase text-gray-600 tracking-wider">Target Quantity</span>
-          <span className="text-3xl font-black">{localJob.quantity_target?.toLocaleString()} pcs</span>
+          <span className="text-3xl font-black whitespace-nowrap">{localJob.quantity_target?.toLocaleString()} pcs</span>
           {isMultiPart && <span className="text-[10px] font-bold mt-0.5 text-gray-600 tracking-wide">{renderQtyMath()}</span>}
         </div>
 
-        <div className="flex-1 text-right text-xs flex flex-col justify-center space-y-1">
-          <div><span className="text-gray-500 uppercase">Job Date:</span> <span className="font-bold">{jobDate}</span></div>
-          <div><span className="text-gray-500 uppercase">Due Date:</span> <span className="font-bold">{dueDate}</span></div>
-          <div><span className="text-gray-500 uppercase">Priority:</span> <span className="font-bold uppercase border border-black px-1.5 py-0.5 ml-1">{localJob.priority}</span></div>
+        <div className="w-[30%] shrink-0 text-right text-xs flex flex-col justify-center space-y-1">
+          <div className="whitespace-nowrap"><span className="text-gray-500 uppercase">Job Date:</span> <span className="font-bold">{jobDate}</span></div>
+          <div className="whitespace-nowrap"><span className="text-gray-500 uppercase">Due Date:</span> <span className="font-bold">{dueDate}</span></div>
+          <div className="whitespace-nowrap"><span className="text-gray-500 uppercase">Priority:</span> <span className="font-bold uppercase border border-black px-1.5 py-0.5 ml-1">{localJob.priority}</span></div>
         </div>
       </div>
 
@@ -409,9 +415,8 @@ export default function JobViewModal({ job, onClose }) {
         <div className="flex-1 p-2">
           <div className="text-[10px] font-bold uppercase text-gray-600 tracking-wider mb-1">Master Files & Assets</div>
           
-          {/* ⭐️ ROUND 9.4: Check artwork_required flag before displaying warning */}
           {!isArtworkRequired ? (
-            <div className="text-black font-black text-base uppercase tracking-wider mt-1 bg-gray-100 p-2 border border-black">
+            <div className="text-black font-black text-base uppercase tracking-wider mt-1 bg-gray-100 p-2 border border-black inline-block">
               ✓ ARTWORK: NOT REQUIRED (PLAIN / UNPRINTED)
             </div>
           ) : approvedArtworks.length === 0 ? (
@@ -433,7 +438,7 @@ export default function JobViewModal({ job, onClose }) {
             </div>
           )}
         </div>
-        <div className="w-24 border-l-2 border-black flex flex-col items-center justify-center p-1 bg-gray-50">
+        <div className="w-24 border-l-2 border-black flex flex-col items-center justify-center p-1 bg-gray-50 shrink-0">
           <img src={`https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent('Job-' + localJob.display_id)}&margin=0`} alt="Job QR" className="w-16 h-16" />
           <span className="text-[7px] uppercase font-bold mt-1 text-center leading-tight">Scan for Files<br/>& Updates</span>
         </div>
@@ -481,12 +486,23 @@ export default function JobViewModal({ job, onClose }) {
                 
                 if (invItem) {
                    const totalBal = Number(invItem.balance || 0);
-                   const localBal = Number(invItem.balances?.[targetPlace] || 0);
+                   
+                   // ⭐️ ROUND 9.5 ITEM 2: Map the step's 'targetPlace' code (e.g., P56) to its document ID for balance checking
+                   const resolvedTargetLoc = locations.find(l => l.code === targetPlace);
+                   const targetLocId = resolvedTargetLoc ? resolvedTargetLoc.id : targetPlace; 
+                   const localBal = Number(invItem.balances?.[targetLocId] || invItem.balances?.[targetPlace] || 0);
                    
                    if (calculatedTotal > totalBal) {
                        stockFlag = <span className="ml-1 bg-red-600 text-white px-1.5 py-0.5 rounded text-[8px] font-black tracking-wider">SHORT {calculatedTotal - totalBal}</span>;
                    } else if (calculatedTotal > localBal) {
-                       const holding = Object.entries(invItem.balances || {}).filter(([, q]) => q > 0).map(([l]) => `${l}`).join(', ');
+                       // ⭐️ ROUND 9.5 ITEM 2: Reverse-map holding IDs back to readable codes
+                       const holding = Object.entries(invItem.balances || {})
+                           .filter(([, q]) => q > 0)
+                           .map(([locKey]) => {
+                               const matchedLoc = locations.find(l => l.id === locKey || l.code === locKey);
+                               return matchedLoc ? matchedLoc.code : locKey;
+                           })
+                           .join(', ');
                        stockFlag = <span className="ml-1 bg-purple-200 border border-purple-800 text-purple-900 px-1.5 py-0.5 rounded text-[8px] font-black tracking-wider uppercase">TRANSFER TO {targetPlace} (FROM {holding || 'UNASSIGNED'})</span>;
                    } else {
                        stockFlag = <span className="ml-1 text-gray-500 text-[8px] font-bold">[OK - {targetPlace}]</span>;
@@ -549,6 +565,11 @@ export default function JobViewModal({ job, onClose }) {
             const prevPlace = prevStep?.assigned_machine_place;
             const currPlace = step.assigned_machine_place;
             const isTransfer = prevPlace && currPlace && prevPlace !== currPlace;
+            
+            // ⭐️ ROUND 9.5 ITEM 6: Validation logic for quantity chain breaks
+            const expectedFromPrev = prevStep ? (prevStep.output_qty ?? localJob.quantity_target) : null;
+            const currentIn = step.input_qty ?? localJob.quantity_target;
+            const isChainBreak = prevStep && expectedFromPrev !== currentIn;
 
             return (
               <Fragment key={idx}>
@@ -556,6 +577,13 @@ export default function JobViewModal({ job, onClose }) {
                   <tr className="bg-gray-200 border-b border-black">
                     <td colSpan="8" className="p-1.5 text-center text-[10px] font-black uppercase tracking-widest text-black">
                       → SEND OUT: {prevPlace} → {currPlace}
+                    </td>
+                  </tr>
+                )}
+                {isChainBreak && (
+                  <tr className="bg-red-100 border-b border-black print:table-row">
+                    <td colSpan="8" className="p-1 text-center text-[10px] font-black uppercase tracking-widest text-red-700">
+                      ⚠️ WARNING: Step {idx} expected {expectedFromPrev?.toLocaleString()} out, but Step {idx+1} is receiving {currentIn?.toLocaleString()} in.
                     </td>
                   </tr>
                 )}
@@ -600,7 +628,7 @@ export default function JobViewModal({ job, onClose }) {
             {!isMultiPart && <div className="text-[9px] text-gray-500 italic">Single job card. No siblings.</div>}
           </div>
         </div>
-        <div className="w-64 p-2 flex flex-col">
+        <div className="w-64 p-2 flex flex-col shrink-0">
           <div className="text-[10px] font-bold uppercase mb-4 text-center">Supervisor Sign / Date</div>
           <div className="mt-auto border-b border-black w-full"></div>
         </div>
@@ -737,7 +765,11 @@ export default function JobViewModal({ job, onClose }) {
                             
                             if (invItem) {
                                const totalBal = Number(invItem.balance || 0);
-                               const localBal = Number(invItem.balances?.[targetPlace] || 0);
+                               
+                               // ⭐️ ROUND 9.5 ITEM 2: UI Resolution for Document IDs vs Code Keys
+                               const resolvedTargetLoc = locations.find(l => l.code === targetPlace);
+                               const targetLocId = resolvedTargetLoc ? resolvedTargetLoc.id : targetPlace; 
+                               const localBal = Number(invItem.balances?.[targetLocId] || invItem.balances?.[targetPlace] || 0);
                                
                                if (calculatedTotal > totalBal) {
                                    stockDisplay = (
@@ -747,7 +779,13 @@ export default function JobViewModal({ job, onClose }) {
                                      </div>
                                    );
                                } else if (calculatedTotal > localBal) {
-                                   const holding = Object.entries(invItem.balances || {}).filter(([, q]) => q > 0).map(([l]) => `${l}`).join(', ');
+                                   const holding = Object.entries(invItem.balances || {})
+                                     .filter(([, q]) => q > 0)
+                                     .map(([locKey]) => {
+                                        const matchedLoc = locations.find(l => l.id === locKey || l.code === locKey);
+                                        return matchedLoc ? matchedLoc.code : locKey;
+                                     }).join(', ');
+
                                    stockDisplay = (
                                      <div className="flex flex-col items-center gap-1 text-center">
                                        <span className="px-2 py-0.5 rounded font-bold uppercase bg-purple-500/20 text-purple-400 text-[9px] leading-tight border border-purple-500/30 shadow-lg shadow-purple-900/20">TRANSFER REQ</span>
@@ -903,12 +941,24 @@ export default function JobViewModal({ job, onClose }) {
                   const currPlace = step.assigned_machine_place;
                   const isTransfer = prevPlace && currPlace && prevPlace !== currPlace;
 
+                  // ⭐️ ROUND 9.5 ITEM 6: Validation logic for quantity chain breaks on UI
+                  const expectedFromPrev = prevStep ? (prevStep.output_qty ?? localJob.quantity_target) : null;
+                  const currentIn = step.input_qty ?? localJob.quantity_target;
+                  const isChainBreak = prevStep && expectedFromPrev !== currentIn;
+
                   return (
                     <Fragment key={idx}>
                       {isTransfer && (
                         <div className="flex items-center justify-center my-1.5">
                           <div className="bg-gray-800 border border-gray-700 text-gray-300 text-[10px] font-bold uppercase tracking-widest px-4 py-1.5 rounded-full shadow-lg">
                             → SEND OUT: {prevPlace} → {currPlace}
+                          </div>
+                        </div>
+                      )}
+                      {isChainBreak && (
+                        <div className="flex items-center justify-center my-1.5">
+                          <div className="bg-red-900/30 border border-red-500/50 text-red-400 text-[10px] font-bold uppercase tracking-widest px-4 py-1.5 rounded shadow-lg">
+                            ⚠️ QTY MISMATCH: Received {currentIn?.toLocaleString()} (Expected {expectedFromPrev?.toLocaleString()})
                           </div>
                         </div>
                       )}

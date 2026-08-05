@@ -22,6 +22,7 @@ export default function ProduceJobSetModal({
   dbProcesses,
   inventoryItems,
   dies,
+  locations, // ⭐️ ROUND 9.5 ITEM 2: Added locations prop to resolve IDs
   onSuccess
 }) {
   const [producing, setProducing] = useState(false);
@@ -110,16 +111,19 @@ export default function ProduceJobSetModal({
           };
         });
 
-        const processedMaterialRows = (masterPart.materialRows || []).map(row => {
-          const cat = row.category?.toLowerCase() || '';
-          const isBoardOrPaper = cat === 'paper' || cat === 'board' || cat === 'rigid';
-          return {
-            ...row,
-            basis: row.basis || (isBoardOrPaper ? 'per_step' : 'per_piece'),
-            basis_step_index: row.basis_step_index || 0,
-            unit: row.unit || (isBoardOrPaper ? 'sheets' : 'pcs')
-          };
-        });
+        // ⭐️ ROUND 9.5 ITEM 7: Filter out rows with empty material names before committing
+        const processedMaterialRows = (masterPart.materialRows || [])
+          .filter(row => row.isDie || (row.material_name && row.material_name.trim() !== ""))
+          .map(row => {
+            const cat = row.category?.toLowerCase() || '';
+            const isBoardOrPaper = cat === 'paper' || cat === 'board' || cat === 'rigid';
+            return {
+              ...row,
+              basis: row.basis || (isBoardOrPaper ? 'per_step' : 'per_piece'),
+              basis_step_index: row.basis_step_index || 0,
+              unit: row.unit || (isBoardOrPaper ? 'sheets' : 'pcs')
+            };
+          });
 
         const newJobPayload = {
           title: `${activeProduceProduct.name} - ${masterPart.part_name || "Part"}`,
@@ -139,11 +143,8 @@ export default function ProduceJobSetModal({
           is_custom_override: pState.is_custom_override,
           quantity_target: pState.final_pcs,
           
-          // ⭐️ ROUND 9.4: Artwork Required flag for the job card
           artwork_required: masterPart.artwork_required ?? true,
 
-          // ⭐️ ROUND 9.3 Item 3: Immutable Product Snapshot to prevent N/A if product is deleted
-          // ⭐️ ROUND 9.3 Item 3: Immutable Product Snapshot to prevent N/A if product is deleted
           product_snapshot: {
             id: activeProduceProduct.id,
             name: activeProduceProduct.name,
@@ -226,7 +227,9 @@ export default function ProduceJobSetModal({
             <div className="space-y-4">
               {produceParts.map((p, pIdx) => {
                 const masterPart = activeProduceProduct.parts.find(mp => mp.id === p.id) || activeProduceProduct.parts[pIdx];
-                const cuttingList = masterPart.materialRows || [];
+                
+                // ⭐️ ROUND 9.5 ITEM 7: Filter out rows with empty material names on UI preview
+                const cuttingList = (masterPart.materialRows || []).filter(row => row.isDie || (row.material_name && row.material_name.trim() !== ""));
                 
                 const firstStepWithMachine = p.sequence?.find(step => step.assigned_machine);
                 const assignedMach = firstStepWithMachine ? machines?.find(m => m.id === firstStepWithMachine.assigned_machine) : null;
@@ -245,7 +248,6 @@ export default function ProduceJobSetModal({
                   <div className="flex justify-between items-center mb-3">
                     <div className="flex items-center gap-2">
                       <span className="text-white font-bold text-sm">Part {String.fromCharCode(65 + pIdx)}: {p.part_name}</span>
-                      {/* ⭐️ ROUND 9.4: Visual badge for unprinted parts */}
                       {!masterPart.artwork_required && (
                         <span className="bg-gray-800 text-gray-400 border border-gray-700 px-2 py-0.5 rounded text-[10px] font-bold uppercase">Plain / Unprinted</span>
                       )}
@@ -316,14 +318,31 @@ export default function ProduceJobSetModal({
                             if (invItem) {
                               const totalBal = Number(invItem.balance ?? invItem.qty ?? 0);
                               const localBalances = invItem.balances || {};
-                              const localBal = targetPlace !== "Unassigned" && localBalances[targetPlace] !== undefined 
-                                ? Number(localBalances[targetPlace]) 
+                              
+                              // ⭐️ ROUND 9.5 ITEM 2: Map the target code to ID for UI preview balance check
+                              const resolvedTargetLoc = locations?.find(l => l.code === targetPlace);
+                              const targetLocId = resolvedTargetLoc ? resolvedTargetLoc.id : targetPlace; 
+                              
+                              const localBal = targetPlace !== "Unassigned" 
+                                ? Number(localBalances[targetLocId] || localBalances[targetPlace] || 0) 
                                 : totalBal;
 
                               if (req > totalBal) {
                                 stockDisplay = <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-red-500/20 text-red-400">SHORT {req - totalBal}</span>;
                               } else if (req > localBal) {
-                                stockDisplay = <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-purple-500/20 text-purple-400 border border-purple-500/30">TRANSFER REQ ({targetPlace})</span>;
+                                // ⭐️ ROUND 9.5 ITEM 2: Reverse-map holding IDs back to readable codes
+                                const holding = Object.entries(localBalances)
+                                     .filter(([, q]) => q > 0)
+                                     .map(([locKey]) => {
+                                        const matchedLoc = locations?.find(l => l.id === locKey || l.code === locKey);
+                                        return matchedLoc ? matchedLoc.code : locKey;
+                                     }).join(', ');
+                                stockDisplay = (
+                                   <div className="flex flex-col items-end gap-1">
+                                     <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-purple-500/20 text-purple-400 border border-purple-500/30">TRANSFER REQ ({targetPlace})</span>
+                                     <span className="text-[8px] text-gray-500">From: {holding || 'Unassigned'}</span>
+                                   </div>
+                                );
                               } else {
                                 stockDisplay = <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-green-500/10 text-green-400">OK ({localBal} at {targetPlace})</span>;
                               }
