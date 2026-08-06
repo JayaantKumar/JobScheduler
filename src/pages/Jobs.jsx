@@ -36,7 +36,6 @@ export default function Jobs() {
     groupedJobs.push(group);
   });
 
-  // ⭐️ ROUND 9.2: BUG 3 FIX - Accurate Job State Checking
   const isJobOnHold = (job) => {
     const activeStep = job.process_sequence?.find(s => s.status !== 'completed');
     return activeStep?.status === 'on_hold';
@@ -59,7 +58,6 @@ export default function Jobs() {
     if (activeTab === "Completed") return allCompleted;
     if (activeTab === "Overdue") return hasOverdue;
     if (activeTab === "On Hold") return hasOnHold;
-    // ⭐️ ROUND 9.2: BUG 3 FIX - Exclude held jobs from In Progress
     if (activeTab === "In Progress") return hasInProgress && !hasOnHold; 
     if (activeTab === "Pending") return hasPending && !allCompleted && !hasOnHold && !hasInProgress;
 
@@ -86,12 +84,13 @@ export default function Jobs() {
     const statusDate = currentStep.status_updated_at || currentStep.started_at || job.job_date;
     const diffDays = statusDate ? Math.floor((new Date() - new Date(statusDate)) / (1000 * 60 * 60 * 24)) : 0;
     
+    // ⭐️ ROUND 9.6: Changed to >= 0 so Day 0 child cards display correctly
     if (currentStep.status === 'on_hold') {
       const reasonStr = currentStep.hold_reason ? ` - ${currentStep.hold_reason}` : '';
       return (
         <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded border text-[9px] font-bold tracking-wider bg-orange-500/10 text-orange-400 border-orange-500/30">
           <span className="uppercase">⏸ ON HOLD{reasonStr}</span>
-          {diffDays > 0 && <span className="ml-1 border-l border-orange-500/50 pl-1.5 opacity-80">{diffDays}d</span>}
+          {diffDays >= 0 && <span className="ml-1 border-l border-orange-500/50 pl-1.5 opacity-80">{diffDays}d</span>}
         </div>
       );
     }
@@ -104,7 +103,7 @@ export default function Jobs() {
     return (
       <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded border text-[9px] font-bold tracking-wider ${colorClass}`}>
         <span className="uppercase">{currentIdx + 1}/{seq.length} · {currentStep.process_name}</span>
-        {diffDays > 0 && (
+        {diffDays >= 0 && (
            <span className="ml-1 border-l border-current pl-1.5 opacity-80">{diffDays}d</span>
         )}
       </div>
@@ -178,7 +177,6 @@ export default function Jobs() {
                             </span>
                           </td>
                           <td className="py-4 px-6">
-                            {/* ⭐️ ROUND 9.5: Product Snapshot Fallback */}
                             <div className="font-bold text-white text-sm">
                               {group[0].product_snapshot?.name || group[0].product?.name || "Multi-Part Set"}
                             </div>
@@ -214,7 +212,6 @@ export default function Jobs() {
                             <td className="py-3 px-6">
                               <div className="flex items-center gap-2">
                                 <div className="font-bold text-gray-300 text-xs">Part {job.part_index}: {job.part_name || "Component"}</div>
-                                {/* ⭐️ ROUND 9.5: Inline Badge for Unprinted Parts */}
                                 {job.artwork_required === false && (
                                   <span className="bg-gray-800 text-gray-500 border border-gray-700 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase">Plain</span>
                                 )}
@@ -253,11 +250,9 @@ export default function Jobs() {
                       </td>
                       <td className="py-4 px-6">
                         <div className="flex items-center gap-2">
-                          {/* ⭐️ ROUND 9.5: Product Snapshot Fallback */}
                           <div className="font-bold text-white text-sm">
                             {job.title || job.product_snapshot?.name || job.product?.name}
                           </div>
-                          {/* ⭐️ ROUND 9.5: Inline Badge for Unprinted Parts */}
                           {job.artwork_required === false && (
                             <span className="bg-gray-800 text-gray-500 border border-gray-700 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase">Plain</span>
                           )}
@@ -298,6 +293,24 @@ export default function Jobs() {
         setViewingJob(null);
         window.dispatchEvent(new Event("focus")); 
       }} />}
+
+      {/* ⭐️ ROUND 9.6: Print fixes to unhide app shell when no modal is active */}
+      {!viewingJob && (
+        <style type="text/css" media="print">
+          {`
+            #root { display: block !important; }
+            .print\\:hidden { display: block !important; }
+            body, html { background-color: white !important; color: black !important; }
+            * { color: black !important; }
+            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+            th, td { border-bottom: 1px solid #ccc !important; padding: 12px 8px !important; text-align: left; }
+            th { background-color: #f3f4f6 !important; font-weight: bold; }
+            button { display: none !important; }
+            .bg-gray-900, .bg-gray-950, .bg-\\[\\#151724\\] { background-color: transparent !important; border: none !important; }
+            .border-gray-800, .border-gray-700 { border-color: #ccc !important; }
+          `}
+        </style>
+      )}
     </div>
   );
 }

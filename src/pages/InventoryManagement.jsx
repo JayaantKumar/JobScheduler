@@ -7,6 +7,7 @@ export default function InventoryManagement() {
   const [items, setItems] = useState([]);
   const [categories, setCategories] = useState([]);
   const [activeJobs, setActiveJobs] = useState([]);
+  const [allTransactions, setAllTransactions] = useState([]); // ⭐️ ROUND 9.6: Loaded for Reconciliation
   
   const [locations, setLocations] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -72,21 +73,31 @@ export default function InventoryManagement() {
       setItems(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       setLoading(false);
     });
+    const unsubTxs = onSnapshot(collection(db, "inventoryTransactions"), snap => {
+      setAllTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
 
     const fetchJobs = async () => {
       const q = query(collection(db, "jobs"));
       const snap = await getDocs(q);
       const jobsList = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(j => j.status !== "completed");
-      // ⭐️ ROUND 9.5 ITEM 8: Sort jobs alphabetically by display_id to group sets
-      jobsList.sort((a, b) => (a.display_id || "").localeCompare(b.display_id || ""));
+      
+      // ⭐️ ROUND 9.6 ITEM 4: Perfect Set Sorting for Issue Out Dropdown
+      jobsList.sort((a, b) => {
+        if (a.set_code && b.set_code) {
+          const setCmp = a.set_code.localeCompare(b.set_code);
+          if (setCmp !== 0) return setCmp;
+          return (a.part_index || 0) - (b.part_index || 0);
+        }
+        return (a.display_id || "").localeCompare(b.display_id || "");
+      });
       setActiveJobs(jobsList);
     };
     fetchJobs();
 
-    return () => { unsubCats(); unsubLocs(); unsubItems(); };
+    return () => { unsubCats(); unsubLocs(); unsubItems(); unsubTxs(); };
   }, []);
 
-  // ⭐️ ROUND 9.3: Robust Legacy Balance Migration (Replacing entire balances map)
   useEffect(() => {
     if (loading || locations.length === 0 || items.length === 0) return;
 
@@ -283,16 +294,19 @@ export default function InventoryManagement() {
     setErrorMsg("");
     const qtyNum = Number(transQty);
     
-    // ⭐️ ROUND 9.5 ITEM 8: Strict Manual Validation (HTML5 'required' removed from selects to prevent silent failures)
     if (!transQty || qtyNum <= 0) return setErrorMsg("Quantity must be greater than 0.");
     if (!transLoc) return setErrorMsg(`Please select a ${transType === 'in' ? 'receiving' : 'source'} location.`);
-    if (transType === 'transfer' && !transToLoc) return setErrorMsg("Please select a destination location for the transfer.");
+    
+    // ⭐️ ROUND 9.6 ITEM 4: Strict validation + native alert for empty destinations
+    if (transType === 'transfer' && !transToLoc) {
+      alert("Validation Error: Please select a destination location for the transfer.");
+      return setErrorMsg("Please select a destination location for the transfer.");
+    }
     if (transType === 'transfer' && transLoc === transToLoc) return setErrorMsg("Source and Destination locations must be different.");
 
     const sourceLocObj = locations.find(l => l.id === transLoc);
     const sourceLocDisplay = sourceLocObj ? sourceLocObj.code : transLoc;
     
-    // Construct entirely new balances object to avoid any dot notation weirdness
     const updatedBalances = { ...(activeItem.balances || {}) };
     
     let locBalance = updatedBalances[transLoc] || 0;
@@ -330,7 +344,6 @@ export default function InventoryManagement() {
 
     setProcessingTrans(true);
     try {
-      // ⭐️ ROUND 9.5 ITEM 1 & 3: ATOMIC BATCH FOR EVERYTHING
       const batch = writeBatch(db);
 
       let linkedJobDisplay = "";
@@ -339,19 +352,18 @@ export default function InventoryManagement() {
         linkedJobDisplay = j ? `${j.display_id || `JOB-${j.id.slice(0,6).toUpperCase()}`} (${j.part_name || 'Main'})` : "";
       }
 
-      // ⭐️ ROUND 9.5 ITEM 5: Slip date exactly matches transaction string
       const [yy, mm, dd] = transDate.split('-');
       const generatedId = `TR-${dd}${mm}${yy}-${Math.floor(1000 + Math.random() * 9000)}`;
 
       const destLocObj = transToLoc ? locations.find(l => l.id === transToLoc) : null;
       const destLocDisplay = destLocObj ? destLocObj.code : transToLoc;
 
-      // LEDGER ROW 1: (Source for out/adj/transfer, Dest for in)
+      // LEDGER ROW 1
       const txRef1 = doc(collection(db, "inventoryTransactions"));
       const transPayload = {
         itemId: activeItem.id,
         itemName: activeItem.name,
-        type: transType === 'transfer' ? 'transfer_out' : transType, // ⭐️ ROUND 9.5 ITEM 4: Specific types
+        type: transType === 'transfer' ? 'transfer_out' : transType,
         date: transDate,
         qty: transType === 'out' || (transType === 'adj' && adjDirection === 'deduct') || transType === 'transfer' ? -qtyNum : qtyNum,
         location: sourceLocDisplay, 
@@ -381,11 +393,9 @@ export default function InventoryManagement() {
       }
 
       batch.set(txRef1, transPayload);
-
-      // Update Source Balance in Map
       updatedBalances[transLoc] = newLocBalance;
 
-      // LEDGER ROW 2 & DEST BALANCE: (Only for transfers)
+      // LEDGER ROW 2 (Transfers Only)
       if (transType === 'transfer') {
         const destLocBalance = updatedBalances[transToLoc] || 0;
         updatedBalances[transToLoc] = destLocBalance + qtyNum;
@@ -394,7 +404,7 @@ export default function InventoryManagement() {
         const transPayloadIn = {
           itemId: activeItem.id,
           itemName: activeItem.name,
-          type: 'transfer_in', // ⭐️ ROUND 9.5 ITEM 4
+          type: 'transfer_in',
           date: transDate,
           qty: qtyNum,
           location: destLocDisplay, 
@@ -412,17 +422,18 @@ export default function InventoryManagement() {
         batch.set(txRef2, transPayloadIn);
       }
 
-      // Update Item Balances Map
+      // ⭐️ ROUND 9.6 ITEM 2 BLOCKER FIX: Atomic Map Creation
+      // Using merge: true prevents silent failures if the 'balances' map doesn't exist yet on the item.
       const itemUpdate = {
         balance: newTotalBalance,
         balances: updatedBalances,
         updated_at: serverTimestamp()
       };
-
+      
       const itemRef = doc(db, "inventoryItems", activeItem.id);
-      batch.update(itemRef, itemUpdate);
+      batch.set(itemRef, itemUpdate, { merge: true });
 
-      // COMMIT BATCH ATOMICALLY
+      // ALL OR NOTHING COMMIT
       await batch.commit();
 
       setTransModalOpen(false);
@@ -451,7 +462,6 @@ export default function InventoryManagement() {
     }
   };
 
-  // ⭐️ ROUND 9.5 ITEM 3 CLEANUP: Empower client to delete phantom rows directly from the UI
   const deleteLedgerRow = async (entryId) => {
     if (window.confirm("Delete this specific ledger entry permanently? (This DOES NOT reverse balances, it only purges the row).")) {
        try {
@@ -597,6 +607,28 @@ export default function InventoryManagement() {
                     resolvedBalances[disp] = (resolvedBalances[disp] || 0) + qty;
                   });
 
+                  // ⭐️ ROUND 9.6 ITEM 3: Reconciliation Engine
+                  const itemTxs = allTransactions.filter(tx => tx.itemId === item.id);
+                  const ledgerSumsByCode = {};
+                  itemTxs.forEach(tx => {
+                    if (tx.qty && tx.location) {
+                      const code = tx.location;
+                      ledgerSumsByCode[code] = (ledgerSumsByCode[code] || 0) + Number(tx.qty);
+                    }
+                  });
+
+                  const mismatchList = [];
+                  Object.entries(resolvedBalances).forEach(([locCode, storedQty]) => {
+                      const ledgerQty = ledgerSumsByCode[locCode] || 0;
+                      if (ledgerQty !== storedQty) mismatchList.push(`${locCode}: Ledger(${ledgerQty}) vs Stored(${storedQty})`);
+                  });
+                  Object.entries(ledgerSumsByCode).forEach(([locCode, ledgerQty]) => {
+                      const storedQty = resolvedBalances[locCode] || 0;
+                      if (ledgerQty !== storedQty && !mismatchList.some(m => m.startsWith(locCode))) {
+                         mismatchList.push(`${locCode}: Ledger(${ledgerQty}) vs Stored(${storedQty})`);
+                      }
+                  });
+
                   const breakdown = Object.entries(resolvedBalances).map(([locCode, qty]) => (
                       <span key={locCode} className="inline-block bg-gray-800 text-gray-300 px-2 py-0.5 rounded text-[10px] mr-1 mb-1 border border-gray-700">
                         <span className="font-bold text-primary-400">{locCode}:</span> {qty.toLocaleString()}
@@ -613,7 +645,15 @@ export default function InventoryManagement() {
                         {needsMigration ? (
                           <span className="text-orange-400 text-xs font-bold bg-orange-500/10 px-2 py-1 rounded">⚠️ Legacy Data</span>
                         ) : breakdown.length > 0 ? (
-                          <div className="flex flex-wrap">{breakdown}</div>
+                          <div className="flex flex-col gap-1">
+                            <div className="flex flex-wrap">{breakdown}</div>
+                            {/* ⭐️ ROUND 9.6: Render Reconciliation Warning */}
+                            {mismatchList.length > 0 && (
+                              <div className="text-[10px] font-bold text-red-400 bg-red-950/40 border border-red-900/50 p-1.5 rounded w-fit">
+                                ⚠️ RECONCILIATION MISMATCH: {mismatchList.join(', ')}
+                              </div>
+                            )}
+                          </div>
                         ) : (
                           <span className="text-gray-600 text-xs font-mono">0 in all locations</span>
                         )}
