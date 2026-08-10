@@ -11,8 +11,9 @@ import MasterData from "../pages/MasterData";
 import ProductManagement from "../pages/ProductManagement";
 import ProcessManagement from "../pages/ProcessManagement";
 import InventoryManagement from "../pages/InventoryManagement";
-import OperationsBoard from "../components/OperationsBoard"; // ⭐️ ADDED IMPORT
-import Settings from "../pages/Settings"; // ⭐️ ADDED IMPORT
+import OperationsBoard from "../components/OperationsBoard";
+import Settings from "../pages/Settings"; 
+import PrintJobCard from "../pages/PrintJobCard";
 
 const ProtectedRoute = ({ children, requiredRole }) => {
   const { user, role } = useAuth();
@@ -39,6 +40,13 @@ export const AppRouter = () => {
         <Route path="/login" element={<Login />} />
         <Route path="/unauthorized" element={<Unauthorized />} />
         
+        {/* ⭐️ PRINT ROUTE MOVED HERE: Outside the dashboard so it has no sidebar! */}
+        <Route path="/print/:jobId" element={
+          <ProtectedRoute requiredRole="admin">
+            <PrintJobCard />
+          </ProtectedRoute>
+        } />
+        
         <Route path="/dashboard" element={
           <ProtectedRoute requiredRole="admin">
             <AdminLayout />
@@ -52,8 +60,6 @@ export const AppRouter = () => {
           <Route path="jobs" element={<Jobs />} />
           <Route path="product-management" element={<ProductManagement />} />
           <Route path="inventory-management" element={<InventoryManagement />} />
-          
-          {/* ⭐️ ADDED NEW OPERATIONS BOARD ROUTE */}
           <Route path="operations-board" element={<OperationsBoard />} />
           <Route path="settings" element={<Settings />} />
         </Route>

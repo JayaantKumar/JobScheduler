@@ -18,7 +18,7 @@ export default function ProduceJobSetModal({
   updatePartCustomPcs,
   handleStepQtyChange,
   togglePartExpanded,
-  updatePartNotes, // ⭐️ ROUND 10 ITEM B1: New prop for notes
+  updatePartNotes, 
   machines,
   dbProcesses,
   inventoryItems,
@@ -36,6 +36,16 @@ export default function ProduceJobSetModal({
     if (producing) return; 
     if (!produceQty || !produceDate) return alert("Please enter sets quantity and due date.");
     
+    // ⭐️ ROUND 11 FIX (ITEM 4): Strict Zero-Quantity Blocker
+    const zeroQtyParts = produceParts.filter(p => !p.final_pcs || p.final_pcs <= 0);
+    if (zeroQtyParts.length > 0) {
+      const affectedNames = zeroQtyParts.map((p, i) => {
+        const mp = activeProduceProduct.parts.find(master => master.id === p.id) || activeProduceProduct.parts[i];
+        return mp?.part_name || `Part ${i+1}`;
+      }).join(", ");
+      return alert(`Cannot generate jobs with zero quantity. Please check Target Sets or Custom Overrides for: ${affectedNames}`);
+    }
+
     setProducing(true);
     
     await new Promise(resolve => setTimeout(resolve, 50)); 
@@ -176,7 +186,6 @@ export default function ProduceJobSetModal({
           status: "pending", 
           process_sequence: final_process_sequence, 
           
-          // ⭐️ ROUND 10 ITEM B1: Store custom notes or leave totally blank
           notes: pState.notes || "",
           
           activity_log: [{
@@ -284,11 +293,12 @@ export default function ProduceJobSetModal({
                       </div>
                       <div className="ml-auto text-right">
                         <span className="text-[10px] text-gray-500 uppercase font-bold block">Calculated Blanks</span>
-                        <span className="text-xl font-black text-white">{p.final_pcs === "" ? "—" : `${p.final_pcs.toLocaleString()} pcs`}</span>
+                        <span className={`text-xl font-black ${!p.final_pcs || p.final_pcs <= 0 ? 'text-red-500' : 'text-white'}`}>
+                          {p.final_pcs === "" ? "—" : `${p.final_pcs.toLocaleString()} pcs`}
+                        </span>
                       </div>
                     </div>
                     
-                    {/* ⭐️ ROUND 10 ITEM B1: Special Instructions per Part */}
                     <div className="border-t border-gray-800/50 pt-3 mt-1">
                       <label className="block text-[10px] uppercase text-gray-500 font-bold mb-1.5">Special Instructions / Notes (Optional)</label>
                       <input 

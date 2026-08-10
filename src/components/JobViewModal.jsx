@@ -97,29 +97,9 @@ export default function JobViewModal({ job, onClose }) {
   if (!localJob) return null;
 
   // ⭐️ ROUND 10 ITEM B2: Print Counter Logic
-  const handlePrint = async () => {
-    try {
-      const newCount = (localJob.print_count || 0) + 1;
-      await updateDoc(doc(db, "jobs", localJob.id), { print_count: newCount });
-      setLocalJob(prev => ({...prev, print_count: newCount}));
-
-      const originalTitle = document.title;
-      const dateStr = new Date().toLocaleDateString('en-GB').replace(/\//g, '-');
-      const safeJobId = (localJob.display_id || 'JOB').replace(/[^a-zA-Z0-9_-]/g, '_');
-      const safePart = (localJob.part_name || 'Main').replace(/[^a-zA-Z0-9_-]/g, '_');
-      
-      document.title = `${safeJobId}_${safePart}_${dateStr}`;
-      
-      const afterPrint = () => {
-        document.title = originalTitle;
-        window.removeEventListener('afterprint', afterPrint);
-      };
-      
-      window.addEventListener('afterprint', afterPrint);
-      setTimeout(() => window.print(), 100); // Slight delay to ensure state updates visually before print spooler runs
-    } catch (err) {
-      showToast("Error updating print counter: " + err.message, "error");
-    }
+  const handlePrint = () => {
+    // Open the dedicated standalone print route in a new tab!
+    window.open(`/print/${job.id}`, '_blank');
   };
 
   const updateStepStatus = async (idx, newStatus, extraStepData = {}, extraJobData = {}) => {

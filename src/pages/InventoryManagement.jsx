@@ -12,24 +12,26 @@ export default function InventoryManagement() {
   const [locations, setLocations] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Search & Filter
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCatFilter, setSelectedCatFilter] = useState("");
 
-  // Modals & Inline UI States
   const [isItemModalOpen, setItemModalOpen] = useState(false);
   const [isTransModalOpen, setTransModalOpen] = useState(false);
   const [isHistoryModalOpen, setHistoryModalOpen] = useState(false);
   const [activeItem, setActiveItem] = useState(null);
   
-  // Custom Alerts & Confirms
   const [errorMsg, setErrorMsg] = useState("");
   const [confirmConfig, setConfirmConfig] = useState(null); 
-
   const [isMigrateModalOpen, setMigrateModalOpen] = useState(false);
   const [migrateLoc, setMigrateLoc] = useState(""); 
 
-  // --- ITEM FORM STATES ---
+  // ⭐️ ROUND 11 FIX: Added Global Toast Notification State
+  const [toast, setToast] = useState({ show: false, msg: "", type: "info" });
+  const showToast = (msg, type = "info") => {
+    setToast({ show: true, msg, type });
+    setTimeout(() => setToast({ show: false, msg: "", type: "info" }), 4000);
+  };
+
   const [itemCatId, setItemCatId] = useState("");
   const [itemName, setItemName] = useState("");
   const [isAutoLabel, setIsAutoLabel] = useState(true);
@@ -38,12 +40,10 @@ export default function InventoryManagement() {
   const [itemDetails, setItemDetails] = useState({});
   const [savingItem, setSavingItem] = useState(false);
 
-  // --- TRANSACTION FORM STATES ---
   const [transType, setTransType] = useState("in"); 
   const [transDate, setTransDate] = useState(new Date().toISOString().split('T')[0]);
   const [transQty, setTransQty] = useState("");
   const [transNotes, setTransNotes] = useState("");
-  
   const [transLoc, setTransLoc] = useState(""); 
   const [transToLoc, setTransToLoc] = useState(""); 
   
@@ -51,21 +51,17 @@ export default function InventoryManagement() {
   const [rate, setRate] = useState("");
   const [linkedJobId, setLinkedJobId] = useState("");
   const [freeTextPurpose, setFreeTextPurpose] = useState("");
-  
   const [person, setPerson] = useState(""); 
   const [receivedBy, setReceivedBy] = useState(""); 
   const [vehicle, setVehicle] = useState("");
-
   const [adjReason, setAdjReason] = useState("Physical Count");
   const [adjDirection, setAdjDirection] = useState("deduct"); 
   const [processingTrans, setProcessingTrans] = useState(false);
 
-  // --- HISTORY & PRINTING STATES ---
   const [itemHistory, setItemHistory] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [printData, setPrintData] = useState(null);
 
-  // --- DATA SYNC ---
   useEffect(() => {
     const unsubCats = onSnapshot(collection(db, "materialCategories"), snap => setCategories(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubLocs = onSnapshot(collection(db, "locations"), snap => setLocations(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
@@ -81,15 +77,6 @@ export default function InventoryManagement() {
       const q = query(collection(db, "jobs"));
       const snap = await getDocs(q);
       const jobsList = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(j => j.status !== "completed");
-      
-      jobsList.sort((a, b) => {
-        if (a.set_code && b.set_code) {
-          const setCmp = a.set_code.localeCompare(b.set_code);
-          if (setCmp !== 0) return setCmp;
-          return (a.part_index || 0) - (b.part_index || 0);
-        }
-        return (a.display_id || "").localeCompare(b.display_id || "");
-      });
       setActiveJobs(jobsList);
     };
     fetchJobs();
@@ -97,41 +84,6 @@ export default function InventoryManagement() {
     return () => { unsubCats(); unsubLocs(); unsubItems(); unsubTxs(); };
   }, []);
 
-  useEffect(() => {
-    if (loading || locations.length === 0 || items.length === 0) return;
-
-    const migrateLegacyBalances = async () => {
-      for (const item of items) {
-        if (!item.balances) continue;
-        let needsUpdate = false;
-        const newBalances = { ...item.balances };
-
-        for (const [key, qty] of Object.entries(item.balances)) {
-          if (qty === 0) continue;
-          
-          const matchingLoc = locations.find(l => l.code === key || l.id === key || l.code === "11/14");
-          
-          if (matchingLoc && key !== matchingLoc.id) {
-            newBalances[matchingLoc.id] = (newBalances[matchingLoc.id] || 0) + qty;
-            delete newBalances[key];
-            needsUpdate = true;
-          }
-        }
-
-        if (needsUpdate) {
-          try {
-            await updateDoc(doc(db, "inventoryItems", item.id), { balances: newBalances });
-          } catch (err) {
-            console.error(`Failed to migrate balance for item ${item.name}:`, err);
-          }
-        }
-      }
-    };
-
-    migrateLegacyBalances();
-  }, [loading, locations, items]);
-
-  // --- AUTO LABEL ENGINE ---
   useEffect(() => {
     if (!isAutoLabel || !itemCatId) return;
     const cat = categories.find(c => c.id === itemCatId);
@@ -141,7 +93,6 @@ export default function InventoryManagement() {
     setItemName(generated);
   }, [itemDetails, itemCatId, isAutoLabel, categories]);
 
-  // --- JOB LOCATION AUTO-DETECT ---
   useEffect(() => {
     if (transType === 'out' && linkedJobId) {
       const job = activeJobs.find(j => j.id === linkedJobId);
@@ -153,25 +104,14 @@ export default function InventoryManagement() {
     }
   }, [linkedJobId, transType, activeJobs, locations]);
 
-  // --- ITEM HANDLERS ---
   const openItemModal = (item = null) => {
     setErrorMsg("");
     if (item) {
-      setActiveItem(item);
-      setItemCatId(item.categoryId);
-      setItemName(item.name);
-      setIsAutoLabel(false);
-      setItemUnit(item.unit || "sheets");
-      setMinStock(item.minStock || "");
-      setItemDetails(item.details || {});
+      setActiveItem(item); setItemCatId(item.categoryId); setItemName(item.name); setIsAutoLabel(false);
+      setItemUnit(item.unit || "sheets"); setMinStock(item.minStock || ""); setItemDetails(item.details || {});
     } else {
-      setActiveItem(null);
-      setItemCatId("");
-      setItemName("");
-      setIsAutoLabel(true);
-      setItemUnit("sheets");
-      setMinStock("");
-      setItemDetails({});
+      setActiveItem(null); setItemCatId(""); setItemName(""); setIsAutoLabel(true);
+      setItemUnit("sheets"); setMinStock(""); setItemDetails({});
     }
     setItemModalOpen(true);
   };
@@ -189,31 +129,17 @@ export default function InventoryManagement() {
 
   const saveItem = async (e) => {
     e.preventDefault();
-    setErrorMsg("");
-    setSavingItem(true);
+    setErrorMsg(""); setSavingItem(true);
     const payload = {
-      categoryId: itemCatId,
-      categoryName: categories.find(c => c.id === itemCatId)?.name || "",
-      name: itemName,
-      unit: itemUnit,
-      minStock: Number(minStock) || 0,
-      details: itemDetails,
-      isActive: true,
-      updated_at: serverTimestamp()
+      categoryId: itemCatId, categoryName: categories.find(c => c.id === itemCatId)?.name || "",
+      name: itemName, unit: itemUnit, minStock: Number(minStock) || 0, details: itemDetails,
+      isActive: true, updated_at: serverTimestamp()
     };
-
     try {
-      if (activeItem) {
-        await updateDoc(doc(db, "inventoryItems", activeItem.id), payload);
-      } else {
-        await addDoc(collection(db, "inventoryItems"), {
-          ...payload,
-          balance: 0, 
-          balances: {}, 
-          created_at: serverTimestamp()
-        });
-      }
+      if (activeItem) await updateDoc(doc(db, "inventoryItems", activeItem.id), payload);
+      else await addDoc(collection(db, "inventoryItems"), { ...payload, balance: 0, balances: {}, created_at: serverTimestamp() });
       setItemModalOpen(false);
+      showToast("Item saved successfully!", "success");
     } catch (err) { setErrorMsg("Failed to save item: " + err.message); }
     finally { setSavingItem(false); }
   };
@@ -222,29 +148,22 @@ export default function InventoryManagement() {
     try {
       const q = query(collection(db, "inventoryTransactions"), where("itemId", "==", item.id));
       const snap = await getDocs(q);
-      const txCount = snap.size;
-
       setConfirmConfig({
-        isOpen: true,
-        title: "Delete Inventory Item",
-        message: `Delete ${item.name}? Total Balance ${item.balance || 0} ${item.unit} and ${txCount} ledger entries will be permanently removed.`,
-        confirmText: "Permanently Delete",
-        isDanger: true,
+        isOpen: true, title: "Delete Inventory Item",
+        message: `Delete ${item.name}? Total Balance ${item.balance || 0} ${item.unit} and ${snap.size} ledger entries will be removed.`,
+        confirmText: "Permanently Delete", isDanger: true,
         onConfirm: async () => {
-          setConfirmConfig(null);
-          setLoading(true);
+          setConfirmConfig(null); setLoading(true);
           try {
             const batch = writeBatch(db);
             batch.delete(doc(db, "inventoryItems", item.id));
             snap.docs.forEach(d => {
               const txData = d.data();
-              if (txData.job_ref_id) {
-                batch.update(d.ref, { itemId: "DELETED", itemName: `${txData.itemName} (item deleted)` });
-              } else {
-                batch.delete(d.ref);
-              }
+              if (txData.job_ref_id) batch.update(d.ref, { itemId: "DELETED", itemName: `${txData.itemName} (item deleted)` });
+              else batch.delete(d.ref);
             });
             await batch.commit();
+            showToast("Item deleted.", "success");
           } catch(e) { setErrorMsg("Failed to delete: " + e.message); }
           finally { setLoading(false); }
         },
@@ -256,28 +175,21 @@ export default function InventoryManagement() {
   const handleMigrateSubmit = async (e) => {
     e.preventDefault();
     if (!migrateLoc) return setErrorMsg("Please select a location.");
-    
     try {
-      const updateData = {
-        balances: { [migrateLoc]: activeItem.balance || 0 },
-        location: null, 
-        updated_at: serverTimestamp()
-      };
+      const updateData = { balances: { [migrateLoc]: activeItem.balance || 0 }, location: null, updated_at: serverTimestamp() };
       await updateDoc(doc(db, "inventoryItems", activeItem.id), updateData);
-      setMigrateModalOpen(false);
-      setActiveItem(null);
-    } catch (err) {
-      setErrorMsg("Migration failed: " + err.message);
-    }
+      setMigrateModalOpen(false); setActiveItem(null);
+      showToast("Legacy stock migrated.", "success");
+    } catch (err) { setErrorMsg("Migration failed: " + err.message); }
   };
 
-  // ⭐️ ROUND 9.7 ITEM 3: Fix False Positives on Legacy Migration
+  // ⭐️ ROUND 11 FIX (ITEM 3): Reconciliation Generator
   const resolveLegacyMismatch = async (item, resolvedBalances, ledgerSumsByCode) => {
     setConfirmConfig({
       isOpen: true,
-      title: "Generate Opening Balances",
-      message: `This will write ledger entries for migrated stock so the ledger matches the stored balance. Proceed?`,
-      confirmText: "Generate Rows",
+      title: "Reconcile Ledger Balance",
+      message: `This will write adjustment ledger entries so the ledger mathematically matches the stored physical stock. Proceed?`,
+      confirmText: "Generate Adjustments",
       isDanger: false,
       onConfirm: async () => {
         setConfirmConfig(null);
@@ -288,97 +200,86 @@ export default function InventoryManagement() {
   
           Object.entries(resolvedBalances).forEach(([locCode, storedQty]) => {
             const ledgerQty = ledgerSumsByCode[locCode] || 0;
-            if (ledgerQty === 0 && storedQty > 0) {
+            const variance = storedQty - ledgerQty;
+            
+            if (variance !== 0) {
               const txRef = doc(collection(db, "inventoryTransactions"));
               batch.set(txRef, {
-                itemId: item.id,
-                itemName: item.name,
-                type: 'in',
-                supplier: 'Legacy System',
-                date: dateStr,
-                qty: storedQty,
-                location: locCode,
-                previous_balance: 0,
-                new_balance: storedQty,
-                total_balance: item.balance,
-                notes: "Opening Balance (Legacy Migration)",
+                itemId: item.id, itemName: item.name,
+                type: variance > 0 ? 'in' : 'out', // Use 'in' or 'out' so it calculates properly
+                supplier: 'System Reconciliation',
+                date: dateStr, qty: Math.abs(variance), location: locCode,
+                previous_balance: ledgerQty, new_balance: storedQty, total_balance: item.balance,
+                notes: `Auto-reconciliation adjustment. Variance: ${variance > 0 ? '+' : ''}${variance}`,
                 created_at: serverTimestamp(),
               });
               operations++;
             }
           });
-          if(operations > 0) await batch.commit();
+          
+          if(operations > 0) {
+            await batch.commit();
+            showToast(`Successfully reconciled ${operations} location discrepancies.`, "success");
+          } else {
+            showToast("No divergence found to reconcile.", "info");
+          }
         } catch (err) {
-          alert("Failed to generate opening balances: " + err.message);
+          showToast("Failed to generate balances: " + err.message, "error");
         }
       },
       onCancel: () => setConfirmConfig(null)
     });
   };
 
-  // --- TRANSACTION HANDLERS ---
   const openTransModal = (item, type = "in") => {
-    setErrorMsg("");
-    setActiveItem(item);
-    setTransType(type);
-    setTransDate(new Date().toISOString().split('T')[0]);
-    setTransQty("");
-    setTransNotes("");
-    
-    setTransLoc("");
-    setTransToLoc("");
-    
-    setAdjDirection("deduct");
+    setErrorMsg(""); setActiveItem(item); setTransType(type);
+    setTransDate(new Date().toISOString().split('T')[0]); setTransQty(""); setTransNotes("");
+    setTransLoc(""); setTransToLoc(""); setAdjDirection("deduct");
     setSupplier(""); setRate(""); setLinkedJobId(""); setFreeTextPurpose(""); setPerson(""); setReceivedBy(""); setVehicle(""); setAdjReason("Physical Count");
-    
     setTransModalOpen(true);
   };
 
+  // ⭐️ ROUND 11 FIX (ITEM 1): Bulletproof Atomic Transfer & Legacy Key Normalization
   const processTransactionSubmit = async (isConfirmedNegative = false) => {
     setErrorMsg("");
     const qtyNum = Number(transQty);
     
     if (!transQty || qtyNum <= 0) return setErrorMsg("Quantity must be greater than 0.");
     if (!transLoc) return setErrorMsg(`Please select a ${transType === 'in' ? 'receiving' : 'source'} location.`);
-    
-    if (transType === 'transfer' && !transToLoc) {
-      return setErrorMsg("Please select a destination location for the transfer.");
-    }
+    if (transType === 'transfer' && !transToLoc) return setErrorMsg("Please select a destination location for the transfer.");
     if (transType === 'transfer' && transLoc === transToLoc) return setErrorMsg("Source and Destination locations must be different.");
 
     const sourceLocObj = locations.find(l => l.id === transLoc);
     const sourceLocDisplay = sourceLocObj ? sourceLocObj.code : transLoc;
     
-    const updatedBalances = { ...(activeItem.balances || {}) };
+    // 🔥 Normalizer: Convert any legacy code keys in the database into clean location IDs before math
+    const normalizedBalances = {};
+    Object.entries(activeItem.balances || {}).forEach(([k, v]) => {
+      const matchedLoc = locations.find(l => l.code === k || l.id === k);
+      const resolvedId = matchedLoc ? matchedLoc.id : k;
+      normalizedBalances[resolvedId] = (normalizedBalances[resolvedId] || 0) + v;
+    });
     
-    let locBalance = updatedBalances[transLoc] || 0;
+    let locBalance = normalizedBalances[transLoc] || 0;
     let newLocBalance = locBalance;
     let newTotalBalance = activeItem.balance || 0;
 
     if (transType === 'in') {
-      newLocBalance += qtyNum;
-      newTotalBalance += qtyNum;
+      newLocBalance += qtyNum; newTotalBalance += qtyNum;
     } else if (transType === 'out' || (transType === 'adj' && adjDirection === 'deduct')) {
-      newLocBalance -= qtyNum;
-      newTotalBalance -= qtyNum;
+      newLocBalance -= qtyNum; newTotalBalance -= qtyNum;
     } else if (transType === 'adj' && adjDirection === 'add') {
-      newLocBalance += qtyNum;
-      newTotalBalance += qtyNum;
+      newLocBalance += qtyNum; newTotalBalance += qtyNum;
     } else if (transType === 'transfer') {
       newLocBalance -= qtyNum; 
     }
 
     if (newLocBalance < 0 && !isConfirmedNegative && (transType === 'out' || transType === 'transfer' || (transType === 'adj' && adjDirection === 'deduct'))) {
       setConfirmConfig({
-        isOpen: true,
-        title: "Negative Location Balance",
+        isOpen: true, title: "Negative Location Balance",
         message: `This action will drop the stock at ${sourceLocDisplay} to ${newLocBalance} ${activeItem.unit}. Proceed anyway?`,
-        confirmText: "Proceed",
-        isDanger: false,
-        onConfirm: () => {
-          setConfirmConfig(null);
-          processTransactionSubmit(true); 
-        },
+        confirmText: "Proceed", isDanger: false,
+        onConfirm: () => { setConfirmConfig(null); processTransactionSubmit(true); },
         onCancel: () => setConfirmConfig(null)
       });
       return;
@@ -403,82 +304,51 @@ export default function InventoryManagement() {
       // LEDGER ROW 1
       const txRef1 = doc(collection(db, "inventoryTransactions"));
       const transPayload = {
-        itemId: activeItem.id,
-        itemName: activeItem.name,
+        itemId: activeItem.id, itemName: activeItem.name,
         type: transType === 'transfer' ? 'transfer_out' : transType,
         date: transDate,
         qty: transType === 'out' || (transType === 'adj' && adjDirection === 'deduct') || transType === 'transfer' ? -qtyNum : qtyNum,
         location: sourceLocDisplay, 
-        previous_balance: locBalance,
-        new_balance: newLocBalance,
-        total_balance: newTotalBalance,
-        notes: transNotes,
-        created_at: serverTimestamp(),
+        previous_balance: locBalance, new_balance: newLocBalance, total_balance: newTotalBalance,
+        notes: transNotes, created_at: serverTimestamp(),
       };
 
-      if (transType === 'in') {
-        transPayload.supplier = supplier;
-        transPayload.rate = rate;
-      } else if (transType === 'out') {
-        transPayload.job_ref_id = linkedJobId;
-        transPayload.job_display = linkedJobDisplay;
-        transPayload.purpose = freeTextPurpose;
-        transPayload.person = person; 
-      } else if (transType === 'adj') {
-        transPayload.reason = adjReason;
-      } else if (transType === 'transfer') {
-        transPayload.toLocation = destLocDisplay;
-        transPayload.transfer_id = generatedId;
-        transPayload.person = person;
-        transPayload.receivedBy = receivedBy;
-        transPayload.vehicle = vehicle;
-      }
+      if (transType === 'in') { transPayload.supplier = supplier; transPayload.rate = rate; } 
+      else if (transType === 'out') { transPayload.job_ref_id = linkedJobId; transPayload.job_display = linkedJobDisplay; transPayload.purpose = freeTextPurpose; transPayload.person = person; } 
+      else if (transType === 'adj') { transPayload.reason = adjReason; } 
+      else if (transType === 'transfer') { transPayload.toLocation = destLocDisplay; transPayload.transfer_id = generatedId; transPayload.person = person; transPayload.receivedBy = receivedBy; transPayload.vehicle = vehicle; }
 
       batch.set(txRef1, transPayload);
-      updatedBalances[transLoc] = newLocBalance;
+      normalizedBalances[transLoc] = newLocBalance;
 
       // LEDGER ROW 2 (Transfers Only)
       if (transType === 'transfer') {
-        const destLocBalance = updatedBalances[transToLoc] || 0;
-        updatedBalances[transToLoc] = destLocBalance + qtyNum;
+        const destLocBalance = normalizedBalances[transToLoc] || 0;
+        normalizedBalances[transToLoc] = destLocBalance + qtyNum;
 
         const txRef2 = doc(collection(db, "inventoryTransactions"));
         const transPayloadIn = {
-          itemId: activeItem.id,
-          itemName: activeItem.name,
-          type: 'transfer_in',
-          date: transDate,
-          qty: qtyNum,
-          location: destLocDisplay, 
-          fromLocation: sourceLocDisplay,
-          transfer_id: generatedId,
-          person: person,
-          receivedBy: receivedBy,
-          vehicle: vehicle,
-          previous_balance: destLocBalance,
-          new_balance: updatedBalances[transToLoc],
-          total_balance: newTotalBalance,
-          notes: transNotes,
-          created_at: serverTimestamp(),
+          itemId: activeItem.id, itemName: activeItem.name,
+          type: 'transfer_in', date: transDate, qty: qtyNum,
+          location: destLocDisplay, fromLocation: sourceLocDisplay, transfer_id: generatedId,
+          person: person, receivedBy: receivedBy, vehicle: vehicle,
+          previous_balance: destLocBalance, new_balance: normalizedBalances[transToLoc], total_balance: newTotalBalance,
+          notes: transNotes, created_at: serverTimestamp(),
         };
         batch.set(txRef2, transPayloadIn);
       }
 
-      // ⭐️ ROUND 9.7 ITEM 1: Atomic batch mapping logic strictly retained here.
-      const itemUpdate = {
-        balance: newTotalBalance,
-        balances: updatedBalances,
-        updated_at: serverTimestamp()
-      };
-      
       const itemRef = doc(db, "inventoryItems", activeItem.id);
-      batch.set(itemRef, itemUpdate, { merge: true });
+      batch.set(itemRef, { balance: newTotalBalance, balances: normalizedBalances, updated_at: serverTimestamp() }, { merge: true });
 
       await batch.commit();
-
       setTransModalOpen(false);
-    } catch (err) { setErrorMsg("Transaction failed: " + err.message); }
-    finally { setProcessingTrans(false); }
+      showToast("Transaction successfully recorded.", "success");
+    } catch (err) { 
+      setErrorMsg("Transaction failed: " + err.message); 
+    } finally { 
+      setProcessingTrans(false); 
+    }
   };
 
   const executeTransaction = (e) => {
@@ -487,35 +357,28 @@ export default function InventoryManagement() {
   };
 
   const viewHistory = async (item) => {
-    setActiveItem(item);
-    setHistoryModalOpen(true);
-    setLoadingHistory(true);
+    setActiveItem(item); setHistoryModalOpen(true); setLoadingHistory(true);
     try {
       const q = query(collection(db, "inventoryTransactions"), where("itemId", "==", item.id));
       const snap = await getDocs(q);
       const allHist = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.created_at?.toMillis() - a.created_at?.toMillis());
       setItemHistory(allHist);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoadingHistory(false);
-    }
+    } catch (err) { console.error(err); } 
+    finally { setLoadingHistory(false); }
   };
 
-  // ⭐️ ROUND 9.7 ITEM 4: Purged native alert/confirm here
   const deleteLedgerRow = (entryId) => {
     setConfirmConfig({
-      isOpen: true,
-      title: "Delete Ledger Entry",
+      isOpen: true, title: "Delete Ledger Entry",
       message: "Delete this specific ledger entry permanently? (This DOES NOT reverse balances, it only purges the row).",
-      confirmText: "Delete Row",
-      isDanger: true,
+      confirmText: "Delete Row", isDanger: true,
       onConfirm: async () => {
         setConfirmConfig(null);
         try {
           await deleteDoc(doc(db, "inventoryTransactions", entryId));
           setItemHistory(prev => prev.filter(r => r.id !== entryId));
-        } catch (err) { setErrorMsg("Failed to delete row: " + err.message); }
+          showToast("Ledger entry deleted.", "success");
+        } catch (err) { showToast("Failed to delete row: " + err.message, "error"); }
       },
       onCancel: () => setConfirmConfig(null)
     });
@@ -555,7 +418,6 @@ export default function InventoryManagement() {
           </div>
         </div>
       </div>
-
       <div className="mb-8 border-2 border-black">
         <div className="bg-gray-100 font-bold uppercase text-xs p-2 border-b-2 border-black">Item Details</div>
         <div className="p-4 flex justify-between items-center">
@@ -568,7 +430,6 @@ export default function InventoryManagement() {
           </div>
         </div>
       </div>
-
       <div className="grid grid-cols-2 gap-8 mb-8 text-sm">
         <div className="border border-black p-4">
           <div className="font-bold uppercase text-xs mb-2">Transport / Notes</div>
@@ -576,7 +437,6 @@ export default function InventoryManagement() {
           <div className="mt-2 text-gray-600">Notes: {printData.tx.notes || "None"}</div>
         </div>
       </div>
-
       <div className="grid grid-cols-2 gap-8 mt-24">
         <div className="text-center">
           <div className="border-b border-black mb-2 mx-12"></div>
@@ -595,6 +455,12 @@ export default function InventoryManagement() {
   return (
     <div className="max-w-[1600px] mx-auto p-6 h-full flex flex-col relative">
       
+      {toast.show && (
+        <div className={`fixed top-6 right-6 px-6 py-4 rounded-xl shadow-2xl z-[100] font-bold animate-fade-in flex items-center gap-3 text-white ${toast.type === 'error' ? 'bg-red-600 border border-red-500' : toast.type === 'success' ? 'bg-green-600 border border-green-500' : 'bg-gray-800 border border-gray-700'}`}>
+          {toast.msg}
+        </div>
+      )}
+
       {confirmConfig && confirmConfig.isOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
           <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-md shadow-2xl overflow-hidden animate-fade-in">
@@ -701,12 +567,9 @@ export default function InventoryManagement() {
                                 <div className="text-[10px] font-bold text-red-400 bg-red-950/40 border border-red-900/50 p-1.5 rounded w-fit">
                                   ⚠️ RECONCILIATION MISMATCH: {mismatchList.join(', ')}
                                 </div>
-                                {/* ⭐️ ROUND 9.7 ITEM 3: Fast resolver for legacy opening balances */}
-                                {mismatchList.some(m => m.includes('Ledger(0)')) && (
-                                   <button onClick={() => resolveLegacyMismatch(item, resolvedBalances, ledgerSumsByCode)} className="text-[9px] font-bold bg-gray-800 border border-gray-700 text-gray-300 px-2 py-1 rounded hover:text-white hover:bg-gray-700 transition-colors shadow-lg">
-                                     Fix: Generate Opening Balance
-                                   </button>
-                                )}
+                                <button onClick={() => resolveLegacyMismatch(item, resolvedBalances, ledgerSumsByCode)} className="text-[9px] font-bold bg-gray-800 border border-gray-700 text-gray-300 px-2 py-1 rounded hover:text-white hover:bg-gray-700 transition-colors shadow-lg">
+                                  Fix: Generate Opening Balance
+                                </button>
                               </div>
                             )}
                           </div>
@@ -835,9 +698,6 @@ export default function InventoryManagement() {
                 <div className="bg-orange-500/10 border border-orange-500/40 p-4 rounded-lg mb-6 text-orange-300 text-xs space-y-2">
                   <div className="font-bold uppercase tracking-wider">⚠️ No Locations Defined</div>
                   <p>You must configure at least one active storage location before legacy items can be migrated.</p>
-                  <div>
-                    Please navigate to <span className="font-bold underline text-white">Master Data → Storage Locations</span> to add locations.
-                  </div>
                 </div>
               ) : null}
 
@@ -860,13 +720,7 @@ export default function InventoryManagement() {
               
               <div className="flex justify-end gap-3">
                 <button onClick={() => setMigrateModalOpen(false)} className="px-5 py-2 text-gray-400 hover:text-white bg-gray-800 rounded-lg">Cancel</button>
-                <button 
-                  onClick={handleMigrateSubmit} 
-                  disabled={locations.filter(l => l.active).length === 0} 
-                  className="bg-orange-600 hover:bg-orange-500 disabled:opacity-40 text-white px-6 py-2 rounded-lg font-bold transition-colors shadow-lg"
-                >
-                  Migrate Stock
-                </button>
+                <button onClick={handleMigrateSubmit} disabled={locations.filter(l => l.active).length === 0} className="bg-orange-600 hover:bg-orange-500 disabled:opacity-40 text-white px-6 py-2 rounded-lg font-bold transition-colors shadow-lg">Migrate Stock</button>
               </div>
             </div>
           </div>
@@ -959,15 +813,7 @@ export default function InventoryManagement() {
                         <button type="button" onClick={() => setAdjDirection('deduct')} className={`px-3 py-1 rounded text-xs font-bold uppercase transition-colors ${adjDirection === 'deduct' ? 'bg-red-600 text-white' : 'text-gray-500 hover:text-white'}`}>Deduct</button>
                       </div>
                     )}
-                    <input 
-                      type="number" 
-                      step="any" 
-                      min="0.001" 
-                      value={transQty} 
-                      onChange={e => setTransQty(e.target.value)} 
-                      className={`${inputClass} text-lg font-bold flex-1 ${transType === 'in' || (transType === 'adj' && adjDirection === 'add') ? 'text-green-400 focus:border-green-500' : transType === 'out' || (transType === 'adj' && adjDirection === 'deduct') ? 'text-red-400 focus:border-red-500' : 'text-purple-400 focus:border-purple-500'}`} 
-                      placeholder="e.g. 500" 
-                    />
+                    <input type="number" step="any" min="0.001" value={transQty} onChange={e => setTransQty(e.target.value)} className={`${inputClass} text-lg font-bold flex-1 ${transType === 'in' || (transType === 'adj' && adjDirection === 'add') ? 'text-green-400 focus:border-green-500' : transType === 'out' || (transType === 'adj' && adjDirection === 'deduct') ? 'text-red-400 focus:border-red-500' : 'text-purple-400 focus:border-purple-500'}`} placeholder="e.g. 500" />
                   </div>
                 </div>
               </div>
@@ -991,7 +837,6 @@ export default function InventoryManagement() {
                         </option>
                       ))}
                     </select>
-                    {linkedJobId && transLoc && <div className="text-[10px] text-green-400 mt-1 italic">Location automatically set based on job route.</div>}
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div><label className={labelClass}>Purpose (If not linked)</label><input type="text" value={freeTextPurpose} onChange={e => setFreeTextPurpose(e.target.value)} className={inputClass} placeholder="e.g. R&D Prototype" disabled={linkedJobId !== ""} /></div>
