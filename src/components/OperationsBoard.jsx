@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
-import { collection, query, where, getDocs } from "firebase/firestore";
+// Change this line at the top:
+import { collection, query, where, getDocs, doc, updateDoc, increment } from "firebase/firestore";
 import { db } from "../firebase/config";
 import JobViewModal from "./JobViewModal"; // ⭐️ IMPORTED JOB VIEW MODAL
 
@@ -195,7 +196,7 @@ export default function OperationsBoard() {
                 <th className="p-4 font-bold">Status</th>
                 <th className="p-4 font-bold text-center">Days at Step</th>
                 <th className="p-4 font-bold">Due Date</th>
-                <th className="p-4 font-bold text-right">Actions</th> {/* ⭐️ ADDED ACTIONS HEADER */}
+                <th className="p-4 font-bold text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800/50">
@@ -241,16 +242,28 @@ export default function OperationsBoard() {
                     </div>
                   </td>
                   
-                  {/* ⭐️ DIRECT ACTION BUTTONS (PRINT & VIEW) */}
                   <td className="p-4 text-right" onClick={(e) => e.stopPropagation()}>
                     <div className="flex justify-end gap-2">
-                      <button 
-                        onClick={() => window.open(`/print/${job.id}`, '_blank')}
-                        className="bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white px-3 py-1.5 rounded text-xs font-bold transition-colors flex items-center gap-1 border border-gray-700 shadow-md"
-                        title="Print Job Card"
-                      >
-                        🖨️ Print
-                      </button>
+                     <button 
+  onClick={(e) => {
+    e.stopPropagation();
+    
+    // 1. Instantly open the tab (Synchronous, keeps user gesture)
+    const newTab = window.open(`/print/${job.id}`, '_blank');
+    
+    // 2. Fallback if Brave/Safari strictly blocks it
+    if (!newTab || newTab.closed || typeof newTab.closed === 'undefined') {
+      window.location.href = `/print/${job.id}`;
+    }
+
+    // 3. Fire the database increment in the background (No awaiting)
+    updateDoc(doc(db, "jobs", job.id), { print_count: increment(1) }).catch(err => console.error(err));
+  }}
+  className="bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white px-3 py-1.5 rounded text-xs font-bold transition-colors flex items-center gap-1 border border-gray-700 shadow-md"
+  title="Print Job Card"
+>
+  🖨️ Print
+</button>
                     </div>
                   </td>
                 </tr>

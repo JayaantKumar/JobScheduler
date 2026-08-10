@@ -1,5 +1,5 @@
 import { useState, useEffect, Fragment } from "react";
-import { collection, query, where, doc, updateDoc, onSnapshot } from "firebase/firestore";
+import { collection, query, where, doc, updateDoc, onSnapshot, increment } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage } from "../firebase/config";
 
@@ -98,8 +98,16 @@ export default function JobViewModal({ job, onClose }) {
 
   // ⭐️ ROUND 10 ITEM B2: Print Counter Logic
   const handlePrint = () => {
-    // Open the dedicated standalone print route in a new tab!
-    window.open(`/print/${job.id}`, '_blank');
+    // 1. Instantly open the tab
+    const newTab = window.open(`/print/${job.id}`, '_blank');
+    
+    // 2. Fallback if blocked
+    if (!newTab || newTab.closed || typeof newTab.closed === 'undefined') {
+      window.location.href = `/print/${job.id}`;
+    }
+
+    // 3. Fire database increment
+    updateDoc(doc(db, "jobs", job.id), { print_count: increment(1) }).catch(err => console.error(err));
   };
 
   const updateStepStatus = async (idx, newStatus, extraStepData = {}, extraJobData = {}) => {
