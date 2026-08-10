@@ -1,10 +1,14 @@
 import { useState, useEffect, useMemo } from "react";
 import { collection, query, where, getDocs } from "firebase/firestore";
 import { db } from "../firebase/config";
+import JobViewModal from "./JobViewModal"; // ⭐️ IMPORTED JOB VIEW MODAL
 
 export default function OperationsBoard() {
   const [loading, setLoading] = useState(true);
   const [rawJobs, setRawJobs] = useState([]);
+  
+  // Modal State for Viewing/Editing a Job
+  const [selectedJob, setSelectedJob] = useState(null);
   
   // Filters
   const [filterCustomer, setFilterCustomer] = useState("");
@@ -78,17 +82,11 @@ export default function OperationsBoard() {
       };
     });
 
-    // ⭐️ ROUND 9.1: BUG 4 FIX - Multi-level sort for the Operations Board
     return jobs.sort((a, b) => {
-      // 1. Sort by most stuck first
       if (b.daysAtStep !== a.daysAtStep) return b.daysAtStep - a.daysAtStep;
-      
-      // 2. Group by set code if days are identical
       if (a.set_code && b.set_code && a.set_code !== b.set_code) {
         return a.set_code.localeCompare(b.set_code);
       }
-      
-      // 3. Strict Numeric sort for parts within the same set
       return Number(a.part_index || 0) - Number(b.part_index || 0);
     });
   }, [rawJobs]);
@@ -135,7 +133,7 @@ export default function OperationsBoard() {
   }
 
   return (
-    <div className="flex flex-col h-full bg-[#0a0f1a] p-4 md:p-6 overflow-hidden">
+    <div className="flex flex-col h-full bg-[#0a0f1a] p-4 md:p-6 overflow-hidden relative">
       
       {/* Header & Control Bar */}
       <div className="bg-[#151724] border border-gray-800 rounded-xl p-5 shadow-lg shrink-0 mb-6 flex flex-col xl:flex-row gap-4 xl:items-center justify-between">
@@ -197,11 +195,16 @@ export default function OperationsBoard() {
                 <th className="p-4 font-bold">Status</th>
                 <th className="p-4 font-bold text-center">Days at Step</th>
                 <th className="p-4 font-bold">Due Date</th>
+                <th className="p-4 font-bold text-right">Actions</th> {/* ⭐️ ADDED ACTIONS HEADER */}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800/50">
               {filteredJobs.length > 0 ? filteredJobs.map(job => (
-                <tr key={job.id} className="hover:bg-gray-800/30 transition-colors group">
+                <tr 
+                  key={job.id} 
+                  onClick={() => setSelectedJob(job)} 
+                  className="hover:bg-gray-800/40 transition-colors cursor-pointer group"
+                >
                   <td className="p-4">
                     <div className="font-bold text-white text-sm">{job.set_code?.includes('-') ? `SET-${job.set_code}` : job.set_code}</div>
                     <div className="text-[10px] text-gray-500 font-mono mt-0.5">{job.display_id}</div>
@@ -237,10 +240,23 @@ export default function OperationsBoard() {
                       {job.deadline ? new Date(job.deadline).toLocaleDateString("en-GB", { day: 'numeric', month: 'short', year: 'numeric' }) : 'N/A'}
                     </div>
                   </td>
+                  
+                  {/* ⭐️ DIRECT ACTION BUTTONS (PRINT & VIEW) */}
+                  <td className="p-4 text-right" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex justify-end gap-2">
+                      <button 
+                        onClick={() => window.open(`/print/${job.id}`, '_blank')}
+                        className="bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white px-3 py-1.5 rounded text-xs font-bold transition-colors flex items-center gap-1 border border-gray-700 shadow-md"
+                        title="Print Job Card"
+                      >
+                        🖨️ Print
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               )) : (
                 <tr>
-                  <td colSpan="8" className="p-8 text-center text-gray-500 text-sm">
+                  <td colSpan="9" className="p-8 text-center text-gray-500 text-sm">
                     No active jobs match your filters.
                   </td>
                 </tr>
@@ -249,6 +265,11 @@ export default function OperationsBoard() {
           </table>
         </div>
       </div>
+
+      {/* ⭐️ JOB VIEW MODAL POPUP */}
+      {selectedJob && (
+        <JobViewModal job={selectedJob} onClose={() => setSelectedJob(null)} />
+      )}
     </div>
   );
 }
