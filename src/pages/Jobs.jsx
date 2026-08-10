@@ -1,22 +1,38 @@
 import { useState, Fragment } from "react";
 import { useJobs } from "../hooks/useJobs";
+import { useCustomers } from "../hooks/useCustomers";
 import JobViewModal from "../components/JobViewModal";
 import { doc, deleteDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
 
 export default function Jobs() {
   const { jobs, loading } = useJobs();
+  const { customers } = useCustomers();
+  
   const [activeTab, setActiveTab] = useState("All");
+  const [selectedCustomerFilter, setSelectedCustomerFilter] = useState(""); // ⭐️ ROUND 9.8: Customer Filter
+  const [searchQuery, setSearchQuery] = useState(""); // ⭐️ ROUND 9.8: Search Query (ID, Set Code, Product, SKU, PO)
   const [viewingJob, setViewingJob] = useState(null);
+  const [confirmConfig, setConfirmConfig] = useState(null); // ⭐️ ROUND 9.7: Inline Confirm
 
-  const handleDelete = async (id) => {
-    if (window.confirm("Are you sure you want to delete this job card?")) {
-      try {
-        await deleteDoc(doc(db, "jobs", id));
-      } catch (error) {
-        alert("Failed to delete: " + error.message);
-      }
-    }
+  // ⭐️ ROUND 9.7 ITEM 4: Replaced native window.confirm and alert
+  const handleDelete = (id) => {
+    setConfirmConfig({
+      isOpen: true,
+      title: "Delete Job Card",
+      message: "Are you sure you want to delete this job card? This action cannot be undone.",
+      confirmText: "Delete Job",
+      isDanger: true,
+      onConfirm: async () => {
+        setConfirmConfig(null);
+        try {
+          await deleteDoc(doc(db, "jobs", id));
+        } catch (error) {
+          alert("Failed to delete: " + error.message);
+        }
+      },
+      onCancel: () => setConfirmConfig(null)
+    });
   };
 
   const groupedJobs = [];
@@ -46,7 +62,30 @@ export default function Jobs() {
     return activeStep?.status === 'in_progress' || activeStep?.status === 'scheduled';
   };
 
+  // ⭐️ ROUND 9.8: Combined Tabs + Customer Filter + Advanced Search
   const filteredGroups = groupedJobs.filter(group => {
+    // 1. Search Query Filter (Matches Job ID, Set Code, Product Name, SKU, Customer PO)
+    if (searchQuery.trim() !== "") {
+      const q = searchQuery.toLowerCase().trim();
+      const matchesAnyJob = group.some(j => {
+        const displayId = (j.display_id || "").toLowerCase();
+        const setId = (j.set_code || "").toLowerCase();
+        const prodName = (j.title || j.product_snapshot?.name || j.product?.name || "").toLowerCase();
+        const sku = (j.product_snapshot?.sku || j.product?.sku || "").toLowerCase();
+        const customerPo = (j.customer_po || j.po_number || "").toLowerCase(); // Future-proof PO field support
+        
+        return displayId.includes(q) || setId.includes(q) || prodName.includes(q) || sku.includes(q) || customerPo.includes(q);
+      });
+      if (!matchesAnyJob) return false;
+    }
+
+    // 2. Customer Filter
+    if (selectedCustomerFilter) {
+      const matchesCustomer = group.some(j => j.customer === selectedCustomerFilter || j.customerId === selectedCustomerFilter);
+      if (!matchesCustomer) return false;
+    }
+
+    // 3. Status Tab Filter
     if (activeTab === "All") return true;
 
     const hasPending = group.some(j => j.status === "pending");
@@ -84,7 +123,6 @@ export default function Jobs() {
     const statusDate = currentStep.status_updated_at || currentStep.started_at || job.job_date;
     const diffDays = statusDate ? Math.floor((new Date() - new Date(statusDate)) / (1000 * 60 * 60 * 24)) : 0;
     
-    // ⭐️ ROUND 9.6: Changed to >= 0 so Day 0 child cards display correctly
     if (currentStep.status === 'on_hold') {
       const reasonStr = currentStep.hold_reason ? ` - ${currentStep.hold_reason}` : '';
       return (
@@ -112,11 +150,52 @@ export default function Jobs() {
 
   return (
     <div className="max-w-[1600px] mx-auto p-4 sm:p-6 h-full flex flex-col">
+      
+      {/* Inline Confirmation Modal */}
+      {confirmConfig && confirmConfig.isOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
+          <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-md shadow-2xl overflow-hidden animate-fade-in">
+            <div className="p-6">
+              <h3 className="text-xl font-bold text-white mb-2">{confirmConfig.title}</h3>
+              <p className="text-sm text-gray-300 leading-relaxed mb-8">{confirmConfig.message}</p>
+              <div className="flex justify-end gap-3">
+                <button onClick={confirmConfig.onCancel} className="px-5 py-2.5 text-gray-400 hover:text-white transition-colors font-medium bg-gray-800 rounded-lg">Cancel</button>
+                <button onClick={confirmConfig.onConfirm} className={`px-6 py-2.5 rounded-lg font-bold text-white transition-colors shadow-lg ${confirmConfig.isDanger ? 'bg-red-600 hover:bg-red-500' : 'bg-primary-600 hover:bg-primary-500'}`}>
+                  {confirmConfig.confirmText || "Confirm"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 sm:mb-8">
         <div>
           <h2 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">Job Management</h2>
           <p className="text-sm sm:text-base text-gray-400 mt-1">View, print, and manage all active factory job cards and linked sets.</p>
         </div>
+      </div>
+
+      {/* Filters Bar: Customer Dropdown + Advanced Search Box */}
+      <div className="flex flex-col sm:flex-row gap-4 mb-6">
+        <select
+          value={selectedCustomerFilter}
+          onChange={(e) => setSelectedCustomerFilter(e.target.value)}
+          className="w-full sm:w-64 bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary-500"
+        >
+          <option value="">All Customers</option>
+          {customers.map(c => (
+            <option key={c.id} value={c.name}>{c.name}</option>
+          ))}
+        </select>
+
+        <input 
+          type="text" 
+          placeholder="Search by Job ID, Set Code (SET-...), Product, SKU or PO..." 
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="flex-1 max-w-lg bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary-500"
+        />
       </div>
 
       <div className="flex items-center gap-6 border-b border-gray-800 mb-6 overflow-x-auto no-scrollbar">
@@ -151,7 +230,7 @@ export default function Jobs() {
             <tbody className="divide-y divide-gray-800">
               
               {filteredGroups.length === 0 ? (
-                <tr><td colSpan="6" className="py-12 text-center text-gray-500">No jobs found in this category.</td></tr>
+                <tr><td colSpan="6" className="py-12 text-center text-gray-500">No jobs found matching your filters.</td></tr>
               ) : (
                 filteredGroups.map((group) => {
                   const isSet = group.length > 1 || (group[0].parts_total > 1 && group[0].set_code);
@@ -294,7 +373,6 @@ export default function Jobs() {
         window.dispatchEvent(new Event("focus")); 
       }} />}
 
-      {/* ⭐️ ROUND 9.6: Print fixes to unhide app shell when no modal is active */}
       {!viewingJob && (
         <style type="text/css" media="print">
           {`

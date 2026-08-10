@@ -1,6 +1,6 @@
 import { useState, useEffect, Fragment } from "react";
-import { createPortal } from "react-dom";
-import { collection, query, where, getDocs, doc, getDoc, updateDoc } from "firebase/firestore";
+import {  } from "react-dom";
+import { collection, query, where, doc, updateDoc, onSnapshot } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage } from "../firebase/config";
 
@@ -26,7 +26,13 @@ export default function JobViewModal({ job, onClose }) {
   const [files, setFiles] = useState(job.files || []); 
   const [savingFiles, setSavingFiles] = useState(false);
 
-  // ⭐️ ROUND 9.6 ITEM 1 BLOCKER: Dynamic Print Node for strict unmounting
+  // Inline Toast State replacing native alert()
+  const [toast, setToast] = useState({ show: false, msg: "", type: "info" });
+  const showToast = (msg, type = "info") => {
+    setToast({ show: true, msg, type });
+    setTimeout(() => setToast({ show: false, msg: "", type: "info" }), 4000);
+  };
+
   const [printNode] = useState(() => document.createElement('div'));
 
   useEffect(() => {
@@ -38,76 +44,76 @@ export default function JobViewModal({ job, onClose }) {
     };
   }, [printNode]);
 
+  // 1. Live Global Dependencies
   useEffect(() => {
-    let isMounted = true;
-    const fetchDependencies = async () => {
-      try {
-        const invSnap = await getDocs(collection(db, "inventoryItems"));
-        const dieSnap = await getDocs(collection(db, "dies"));
-        const locSnap = await getDocs(collection(db, "locations"));
-        if (isMounted) {
-          setInventoryItems(invSnap.docs.map(d => ({id: d.id, ...d.data()})));
-          setDies(dieSnap.docs.map(d => ({id: d.id, ...d.data()})));
-          setLocations(locSnap.docs.map(d => ({id: d.id, ...d.data()})));
-        }
-      } catch (err) { console.error("Failed to fetch dependencies", err); }
+    const unsubInv = onSnapshot(collection(db, "inventoryItems"), (snap) => {
+      setInventoryItems(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (err) => console.error("Inventory listener error:", err));
+
+    const unsubDies = onSnapshot(collection(db, "dies"), (snap) => {
+      setDies(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (err) => console.error("Dies listener error:", err));
+
+    const unsubLocs = onSnapshot(collection(db, "locations"), (snap) => {
+      setLocations(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (err) => console.error("Locations listener error:", err));
+
+    return () => {
+      unsubInv();
+      unsubDies();
+      unsubLocs();
     };
-    fetchDependencies();
-    return () => { isMounted = false; };
   }, []);
 
+  // 2. Live Product Files Sync
   useEffect(() => {
-    let isMounted = true;
-    setLiveProductFiles([]); 
-    
-    if (!localJob?.product?.id) return;
-    
-    const fetchLiveProduct = async () => {
-      try {
-        const pDoc = await getDoc(doc(db, "products", localJob.product.id));
-        if (pDoc.exists() && isMounted) {
-          setLiveProductFiles(pDoc.data().files || []);
-        }
-      } catch (error) { console.error("Failed to fetch live product files:", error); }
-    };
-    fetchLiveProduct();
-    return () => { isMounted = false; };
-  }, [localJob?.product?.id, localJob?.id]);
-
-  useEffect(() => {
-    let isMounted = true;
-    if (localJob?.set_code) {
-      const fetchSiblings = async () => {
-        try {
-          const q = query(collection(db, "jobs"), where("set_code", "==", localJob.set_code));
-          const snap = await getDocs(q);
-          if (isMounted) {
-            const sibs = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-              .sort((a, b) => Number(a.part_index || 0) - Number(b.part_index || 0));
-            setSiblings(sibs);
-          }
-        } catch (error) { console.error("Failed to fetch sibling cards:", error); }
-      };
-      fetchSiblings();
+    if (!localJob?.product?.id) {
+      setLiveProductFiles([]);
+      return;
     }
-    return () => { isMounted = false; };
+    
+    const unsubProduct = onSnapshot(doc(db, "products", localJob.product.id), (pDoc) => {
+      if (pDoc.exists()) {
+        setLiveProductFiles(pDoc.data().files || []);
+      } else {
+        setLiveProductFiles([]);
+      }
+    }, (err) => console.error("Live product listener error:", err));
+
+    return () => unsubProduct();
+  }, [localJob?.product?.id]);
+
+  // 3. Live Sibling Job Sync
+  useEffect(() => {
+    if (!localJob?.set_code) return;
+
+    const q = query(collection(db, "jobs"), where("set_code", "==", localJob.set_code));
+    
+    const unsubSiblings = onSnapshot(q, (snap) => {
+      const sibs = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => Number(a.part_index || 0) - Number(b.part_index || 0));
+      setSiblings(sibs);
+    }, (err) => console.error("Siblings listener error:", err));
+
+    return () => unsubSiblings();
   }, [localJob?.set_code]);
 
+  // 4. Live Issued Materials Ledger Sync
   useEffect(() => {
-    let isMounted = true;
     if (!localJob?.id) return;
-    const fetchMaterials = async () => {
-      try {
-        const q = query(collection(db, "inventoryTransactions"), where("job_ref_id", "==", localJob.id), where("type", "==", "out"));
-        const snap = await getDocs(q);
-        if (isMounted) {
-          const materials = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-          setIssuedMaterials(materials);
-        }
-      } catch (err) { console.error("Failed to fetch issued materials:", err); }
-    };
-    fetchMaterials();
-    return () => { isMounted = false; };
+
+    const q = query(
+      collection(db, "inventoryTransactions"), 
+      where("job_ref_id", "==", localJob.id), 
+      where("type", "==", "out")
+    );
+    
+    const unsubMaterials = onSnapshot(q, (snap) => {
+      const materials = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setIssuedMaterials(materials);
+    }, (err) => console.error("Materials listener error:", err));
+
+    return () => unsubMaterials();
   }, [localJob?.id]);
 
   if (!localJob) return null;
@@ -119,8 +125,14 @@ export default function JobViewModal({ job, onClose }) {
     const safePart = (localJob.part_name || 'Main').replace(/[^a-zA-Z0-9_-]/g, '_');
     
     document.title = `${safeJobId}_${safePart}_${dateStr}`;
+    
+    const afterPrint = () => {
+      document.title = originalTitle;
+      window.removeEventListener('afterprint', afterPrint);
+    };
+    
+    window.addEventListener('afterprint', afterPrint);
     window.print();
-    document.title = originalTitle;
   };
 
   const updateStepStatus = async (idx, newStatus, extraData = {}) => {
@@ -173,7 +185,7 @@ export default function JobViewModal({ job, onClose }) {
       setHoldReason("");
       setHoldNote("");
     } catch (error) { 
-      alert("Error updating step status: " + error.message); 
+      showToast("Error updating step status: " + error.message, "error"); 
     } finally { 
       setUpdating(false); 
     }
@@ -189,8 +201,11 @@ export default function JobViewModal({ job, onClose }) {
   const handleFileSelect = (e) => {
     const selected = Array.from(e.target.files);
     const validFiles = [];
+    
     selected.forEach(f => {
-      if (f.size > 25 * 1024 * 1024) return alert(`File ${f.name} exceeds the 25MB limit.`);
+      if (f.size > 25 * 1024 * 1024) {
+        return showToast(`File ${f.name} exceeds the 25MB limit.`, "error");
+      }
       validFiles.push({
         id: Date.now() + Math.random(),
         rawFile: f, 
@@ -258,9 +273,9 @@ export default function JobViewModal({ job, onClose }) {
       await updateDoc(doc(db, "jobs", localJob.id), { files: processedFiles });
       setLocalJob(prev => ({ ...prev, files: processedFiles }));
       setFiles(processedFiles);
-      alert("Job files saved successfully!");
+      showToast("Job files saved successfully!", "success");
     } catch (error) { 
-      alert("Error saving files: " + error.message); 
+      showToast("Error saving files: " + error.message, "error"); 
     } finally { 
       setSavingFiles(false); 
     }
@@ -293,7 +308,7 @@ export default function JobViewModal({ job, onClose }) {
     }
 
     navigator.clipboard.writeText(msg);
-    alert("Client update copied to clipboard!\n\n" + msg);
+    showToast("Client update copied to clipboard!", "success");
   };
 
   const getApplicableFiles = (category) => {
@@ -319,7 +334,8 @@ export default function JobViewModal({ job, onClose }) {
   const copyApprovedFiles = () => {
     const finalFiles = [...approvedArtworks, ...approvedDielines].filter(f => f.url);
 
-    if (finalFiles.length === 0) return alert("No approved files found for this part to share.");
+    if (finalFiles.length === 0) return showToast("No approved files found for this part to share.", "error");
+    
     const links = finalFiles.map(f => {
        const purposeStr = f.purpose ? `[${f.purpose.toUpperCase()}] ` : '';
        return `${purposeStr}${f.name} (${f.category} - ${f.version}): ${f.url}`;
@@ -327,7 +343,7 @@ export default function JobViewModal({ job, onClose }) {
     const msg = `Approved Files for ${localJob.display_id}:\n\n${links}`;
     
     navigator.clipboard.writeText(msg);
-    alert("File share links copied to clipboard!");
+    showToast("File share links copied to clipboard!", "success");
   };
 
   const totalSteps = localJob.process_sequence?.length || 0;
@@ -379,7 +395,6 @@ export default function JobViewModal({ job, onClose }) {
   const PrintView = (
     <div id="print-card" className="hidden print:block w-full bg-white text-black font-sans relative text-sm">
       
-      {/* ⭐️ ROUND 9.6 ITEM 4: Optimized Grid Columns & Font Sizes for Long IDs */}
       <div className="flex justify-between items-start border-b-2 border-black pb-3 mb-3 gap-2">
         <div className="w-[55%] shrink-0">
           {isMultiPart ? (
@@ -660,6 +675,15 @@ export default function JobViewModal({ job, onClose }) {
           h1, h2, h3 { page-break-after: avoid !important; }
         `}
       </style>
+
+      {/* Global Inline Toast Notification */}
+      {toast.show && (
+        <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] px-6 py-3 rounded-full shadow-2xl font-bold text-sm flex items-center gap-2 animate-fade-in ${
+          toast.type === "error" ? "bg-red-600 text-white border border-red-500" : "bg-gray-800 text-white border border-gray-700"
+        }`}>
+          {toast.type === "error" ? "⚠️" : "✓"} {toast.msg}
+        </div>
+      )}
 
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm print:hidden">
         <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-6xl shadow-2xl overflow-hidden flex flex-col max-h-[95vh]">
@@ -1083,7 +1107,6 @@ export default function JobViewModal({ job, onClose }) {
         </div>
       </div>
       
-      {createPortal(PrintView, printNode)}
     </>
   );
 }

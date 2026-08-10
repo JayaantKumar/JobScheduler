@@ -23,8 +23,10 @@ export default function ProductManagement() {
   const produceMath = useProduceMath();
 
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedCustomerFilter, setSelectedCustomerFilter] = useState(""); // ⭐️ ROUND 9.8: Customer Filter State
   const [toastMessage, setToastMessage] = useState("");
   const [showToast, setShowToast] = useState(false);
+  const [confirmConfig, setConfirmConfig] = useState(null); // ⭐️ ROUND 9.7: Inline Confirm State
 
   const [isTemplateModalOpen, setTemplateModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
@@ -42,9 +44,7 @@ export default function ProductManagement() {
     return () => unsub();
   }, []);
 
-  // ⭐️ ROUND 7.1: Fetch Inventory Items for the Stock Picker and Shortage Logic
   useEffect(() => {
-    // Note: Assuming your collection is named 'inventoryItems' or 'inventory'
     const unsub = onSnapshot(collection(db, "inventoryItems"), (snapshot) => {
       const items = [];
       snapshot.forEach(doc => items.push({ id: doc.id, ...doc.data() }));
@@ -59,15 +59,25 @@ export default function ProductManagement() {
     setTimeout(() => setShowToast(false), 3000);
   };
 
-  const handleDelete = async (id) => {
-    if (window.confirm("Are you sure you want to delete this product template?")) {
-      try {
-        await deleteDoc(doc(db, "products", id));
-        triggerToast("Product deleted successfully.");
-      } catch (error) {
-        alert("Failed to delete: " + error.message);
-      }
-    }
+  // ⭐️ ROUND 9.7 ITEM 4: Replaced native window.confirm() and alert()
+  const handleDelete = (id) => {
+    setConfirmConfig({
+      isOpen: true,
+      title: "Delete Product Template",
+      message: "Are you sure you want to delete this product? This action cannot be undone.",
+      confirmText: "Delete Product",
+      isDanger: true,
+      onConfirm: async () => {
+        setConfirmConfig(null);
+        try {
+          await deleteDoc(doc(db, "products", id));
+          triggerToast("Product deleted successfully.");
+        } catch (error) {
+          triggerToast("Failed to delete: " + error.message);
+        }
+      },
+      onCancel: () => setConfirmConfig(null)
+    });
   };
 
   const openTemplateModal = (prod = null) => {
@@ -75,22 +85,51 @@ export default function ProductManagement() {
     setTemplateModalOpen(true);
   };
 
-  const filteredProducts = products.filter(p => 
-    p.name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    p.customerName?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // ⭐️ ROUND 9.8 ITEM 1: Combined Free-text Search + Customer Filter
+  const filteredProducts = products.filter(p => {
+    const matchesSearch = p.name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                          p.customerName?.toLowerCase().includes(searchQuery.toLowerCase());
+    
+    const matchesCustomer = selectedCustomerFilter 
+      ? (p.customerId === selectedCustomerFilter || p.customerName === selectedCustomerFilter) 
+      : true;
+
+    return matchesSearch && matchesCustomer;
+  });
+
+  const selectedCustomerObj = customers.find(c => c.id === selectedCustomerFilter);
+  const activeCustomerLabel = selectedCustomerObj ? selectedCustomerObj.name : (selectedCustomerFilter || "All Customers");
 
   if (prodLoading) return <div className="p-8 text-primary-500 animate-pulse font-medium">Loading Products...</div>;
 
   return (
     <div className="max-w-[1600px] mx-auto p-6 h-full flex flex-col relative">
       
+      {/* Global Toast */}
       {showToast && (
         <div className="fixed top-6 right-6 bg-green-600/90 backdrop-blur-sm border border-green-500 text-white px-6 py-4 rounded-xl shadow-2xl z-[100] font-bold animate-fade-in flex items-center gap-3">
           <svg className="w-6 h-6 text-green-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" />
           </svg>
           {toastMessage}
+        </div>
+      )}
+
+      {/* Inline Confirmation Modal */}
+      {confirmConfig && confirmConfig.isOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
+          <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-md shadow-2xl overflow-hidden animate-fade-in">
+            <div className="p-6">
+              <h3 className="text-xl font-bold text-white mb-2">{confirmConfig.title}</h3>
+              <p className="text-sm text-gray-300 leading-relaxed mb-8">{confirmConfig.message}</p>
+              <div className="flex justify-end gap-3">
+                <button onClick={confirmConfig.onCancel} className="px-5 py-2.5 text-gray-400 hover:text-white transition-colors font-medium bg-gray-800 rounded-lg">Cancel</button>
+                <button onClick={confirmConfig.onConfirm} className={`px-6 py-2.5 rounded-lg font-bold text-white transition-colors shadow-lg ${confirmConfig.isDanger ? 'bg-red-600 hover:bg-red-500' : 'bg-primary-600 hover:bg-primary-500'}`}>
+                  {confirmConfig.confirmText || "Confirm"}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -104,14 +143,31 @@ export default function ProductManagement() {
         </button>
       </div>
 
-      <div className="mb-6 relative w-full max-w-md">
+      <div className="flex flex-col sm:flex-row gap-4 mb-3">
+        {/* ⭐️ ROUND 9.8 ITEM 1: Customer Dropdown */}
+        <select
+          value={selectedCustomerFilter}
+          onChange={(e) => setSelectedCustomerFilter(e.target.value)}
+          className="w-full sm:w-64 bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary-500"
+        >
+          <option value="">All Customers</option>
+          {customers.map(c => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </select>
+        
         <input 
           type="text" 
-          placeholder="Search products or customers..." 
+          placeholder="Search products or SKU..." 
           value={searchQuery} 
           onChange={(e) => setSearchQuery(e.target.value)} 
-          className="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary-500" 
+          className="flex-1 max-w-md bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary-500" 
         />
+      </div>
+
+      {/* ⭐️ ROUND 9.8 ITEM 1: Dynamic Visible Product Count */}
+      <div className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4 px-1">
+        {filteredProducts.length} Products · {activeCustomerLabel}
       </div>
 
       <ProductTable 

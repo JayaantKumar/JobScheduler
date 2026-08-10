@@ -7,7 +7,7 @@ export default function InventoryManagement() {
   const [items, setItems] = useState([]);
   const [categories, setCategories] = useState([]);
   const [activeJobs, setActiveJobs] = useState([]);
-  const [allTransactions, setAllTransactions] = useState([]); // ⭐️ ROUND 9.6: Loaded for Reconciliation
+  const [allTransactions, setAllTransactions] = useState([]); 
   
   const [locations, setLocations] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -82,7 +82,6 @@ export default function InventoryManagement() {
       const snap = await getDocs(q);
       const jobsList = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(j => j.status !== "completed");
       
-      // ⭐️ ROUND 9.6 ITEM 4: Perfect Set Sorting for Issue Out Dropdown
       jobsList.sort((a, b) => {
         if (a.set_code && b.set_code) {
           const setCmp = a.set_code.localeCompare(b.set_code);
@@ -272,6 +271,51 @@ export default function InventoryManagement() {
     }
   };
 
+  // ⭐️ ROUND 9.7 ITEM 3: Fix False Positives on Legacy Migration
+  const resolveLegacyMismatch = async (item, resolvedBalances, ledgerSumsByCode) => {
+    setConfirmConfig({
+      isOpen: true,
+      title: "Generate Opening Balances",
+      message: `This will write ledger entries for migrated stock so the ledger matches the stored balance. Proceed?`,
+      confirmText: "Generate Rows",
+      isDanger: false,
+      onConfirm: async () => {
+        setConfirmConfig(null);
+        try {
+          const batch = writeBatch(db);
+          const dateStr = new Date().toISOString().split('T')[0];
+          let operations = 0;
+  
+          Object.entries(resolvedBalances).forEach(([locCode, storedQty]) => {
+            const ledgerQty = ledgerSumsByCode[locCode] || 0;
+            if (ledgerQty === 0 && storedQty > 0) {
+              const txRef = doc(collection(db, "inventoryTransactions"));
+              batch.set(txRef, {
+                itemId: item.id,
+                itemName: item.name,
+                type: 'in',
+                supplier: 'Legacy System',
+                date: dateStr,
+                qty: storedQty,
+                location: locCode,
+                previous_balance: 0,
+                new_balance: storedQty,
+                total_balance: item.balance,
+                notes: "Opening Balance (Legacy Migration)",
+                created_at: serverTimestamp(),
+              });
+              operations++;
+            }
+          });
+          if(operations > 0) await batch.commit();
+        } catch (err) {
+          alert("Failed to generate opening balances: " + err.message);
+        }
+      },
+      onCancel: () => setConfirmConfig(null)
+    });
+  };
+
   // --- TRANSACTION HANDLERS ---
   const openTransModal = (item, type = "in") => {
     setErrorMsg("");
@@ -297,9 +341,7 @@ export default function InventoryManagement() {
     if (!transQty || qtyNum <= 0) return setErrorMsg("Quantity must be greater than 0.");
     if (!transLoc) return setErrorMsg(`Please select a ${transType === 'in' ? 'receiving' : 'source'} location.`);
     
-    // ⭐️ ROUND 9.6 ITEM 4: Strict validation + native alert for empty destinations
     if (transType === 'transfer' && !transToLoc) {
-      alert("Validation Error: Please select a destination location for the transfer.");
       return setErrorMsg("Please select a destination location for the transfer.");
     }
     if (transType === 'transfer' && transLoc === transToLoc) return setErrorMsg("Source and Destination locations must be different.");
@@ -422,8 +464,7 @@ export default function InventoryManagement() {
         batch.set(txRef2, transPayloadIn);
       }
 
-      // ⭐️ ROUND 9.6 ITEM 2 BLOCKER FIX: Atomic Map Creation
-      // Using merge: true prevents silent failures if the 'balances' map doesn't exist yet on the item.
+      // ⭐️ ROUND 9.7 ITEM 1: Atomic batch mapping logic strictly retained here.
       const itemUpdate = {
         balance: newTotalBalance,
         balances: updatedBalances,
@@ -433,7 +474,6 @@ export default function InventoryManagement() {
       const itemRef = doc(db, "inventoryItems", activeItem.id);
       batch.set(itemRef, itemUpdate, { merge: true });
 
-      // ALL OR NOTHING COMMIT
       await batch.commit();
 
       setTransModalOpen(false);
@@ -462,13 +502,23 @@ export default function InventoryManagement() {
     }
   };
 
-  const deleteLedgerRow = async (entryId) => {
-    if (window.confirm("Delete this specific ledger entry permanently? (This DOES NOT reverse balances, it only purges the row).")) {
-       try {
-         await deleteDoc(doc(db, "inventoryTransactions", entryId));
-         setItemHistory(prev => prev.filter(r => r.id !== entryId));
-       } catch (err) { alert("Failed to delete row: " + err.message); }
-    }
+  // ⭐️ ROUND 9.7 ITEM 4: Purged native alert/confirm here
+  const deleteLedgerRow = (entryId) => {
+    setConfirmConfig({
+      isOpen: true,
+      title: "Delete Ledger Entry",
+      message: "Delete this specific ledger entry permanently? (This DOES NOT reverse balances, it only purges the row).",
+      confirmText: "Delete Row",
+      isDanger: true,
+      onConfirm: async () => {
+        setConfirmConfig(null);
+        try {
+          await deleteDoc(doc(db, "inventoryTransactions", entryId));
+          setItemHistory(prev => prev.filter(r => r.id !== entryId));
+        } catch (err) { setErrorMsg("Failed to delete row: " + err.message); }
+      },
+      onCancel: () => setConfirmConfig(null)
+    });
   };
 
   const handlePrintSlip = (entry) => {
@@ -607,7 +657,6 @@ export default function InventoryManagement() {
                     resolvedBalances[disp] = (resolvedBalances[disp] || 0) + qty;
                   });
 
-                  // ⭐️ ROUND 9.6 ITEM 3: Reconciliation Engine
                   const itemTxs = allTransactions.filter(tx => tx.itemId === item.id);
                   const ledgerSumsByCode = {};
                   itemTxs.forEach(tx => {
@@ -647,10 +696,17 @@ export default function InventoryManagement() {
                         ) : breakdown.length > 0 ? (
                           <div className="flex flex-col gap-1">
                             <div className="flex flex-wrap">{breakdown}</div>
-                            {/* ⭐️ ROUND 9.6: Render Reconciliation Warning */}
                             {mismatchList.length > 0 && (
-                              <div className="text-[10px] font-bold text-red-400 bg-red-950/40 border border-red-900/50 p-1.5 rounded w-fit">
-                                ⚠️ RECONCILIATION MISMATCH: {mismatchList.join(', ')}
+                              <div className="mt-1 flex flex-col gap-1 items-start">
+                                <div className="text-[10px] font-bold text-red-400 bg-red-950/40 border border-red-900/50 p-1.5 rounded w-fit">
+                                  ⚠️ RECONCILIATION MISMATCH: {mismatchList.join(', ')}
+                                </div>
+                                {/* ⭐️ ROUND 9.7 ITEM 3: Fast resolver for legacy opening balances */}
+                                {mismatchList.some(m => m.includes('Ledger(0)')) && (
+                                   <button onClick={() => resolveLegacyMismatch(item, resolvedBalances, ledgerSumsByCode)} className="text-[9px] font-bold bg-gray-800 border border-gray-700 text-gray-300 px-2 py-1 rounded hover:text-white hover:bg-gray-700 transition-colors shadow-lg">
+                                     Fix: Generate Opening Balance
+                                   </button>
+                                )}
                               </div>
                             )}
                           </div>
