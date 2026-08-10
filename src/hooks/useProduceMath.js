@@ -17,26 +17,26 @@ export function useProduceMath() {
        const mult = Number(p.qty_per_set) || 1;
        const computedPcs = sets === "" ? "" : sets * mult;
 
-       // If part sets is dirty, keep existing part_sets and final_pcs
        const partSets = dirty.part_sets && existing.part_sets !== undefined ? existing.part_sets : sets;
        const finalPcs = dirty.custom_override || dirty.part_sets ? (existing.final_pcs ?? computedPcs) : computedPcs;
 
        return {
-          id: existing.id || p.id || `part-${pIdx}`, // ⭐️ Crucial for stable React keys
+          id: existing.id || p.id || `part-${pIdx}`, 
           part_name: p.part_name,
           part_sets: partSets,
           original_multiplier: mult,
           active_multiplier: existing.active_multiplier !== undefined ? existing.active_multiplier : mult,
           is_custom_override: existing.is_custom_override || false,
           final_pcs: finalPcs,
-          expanded: existing.expanded !== undefined ? existing.expanded : false, // ⭐️ Explicit preservation
+          notes: existing.notes !== undefined ? existing.notes : "", // ⭐️ ROUND 10 ITEM B1: Preserve Notes
+          expanded: existing.expanded !== undefined ? existing.expanded : false, 
           dirtyFields: dirty,
           sequence: (p.sequence || []).map((s, sIdx) => {
              const existingStep = existing.sequence?.[sIdx] || {};
              const stepDirty = dirty;
              return {
                ...s,
-               id: existingStep.id || s.id || `step-${sIdx}`, // ⭐️ Stable sequence keys
+               id: existingStep.id || s.id || `step-${sIdx}`, 
                input_qty: stepDirty[`input_${sIdx}`] && existingStep.input_qty !== undefined ? existingStep.input_qty : finalPcs,
                output_qty: stepDirty[`output_${sIdx}`] && existingStep.output_qty !== undefined ? existingStep.output_qty : finalPcs
              };
@@ -71,7 +71,7 @@ export function useProduceMath() {
   const updatePartSets = (pIdx, newSets) => {
     setProduceParts(prev => {
       const copy = [...prev];
-      const pCopy = { ...copy[pIdx] }; // ⭐️ Fix React mutability bug
+      const pCopy = { ...copy[pIdx] }; 
       const count = newSets === "" ? "" : Number(newSets);
       pCopy.part_sets = count;
       pCopy.dirtyFields = { ...(pCopy.dirtyFields || {}), part_sets: true };
@@ -95,7 +95,7 @@ export function useProduceMath() {
   const updatePartMultiplier = (pIdx, newMult) => {
     setProduceParts(prev => {
        const copy = [...prev];
-       const pCopy = { ...copy[pIdx] }; // ⭐️ Fix React mutability bug
+       const pCopy = { ...copy[pIdx] }; 
        const mult = newMult === "" ? "" : Number(newMult);
        pCopy.active_multiplier = mult;
        if (!pCopy.is_custom_override) {
@@ -117,7 +117,7 @@ export function useProduceMath() {
   const toggleCustomOverride = (pIdx, checked) => {
     setProduceParts(prev => {
        const copy = [...prev];
-       const pCopy = { ...copy[pIdx] }; // ⭐️ Fix React mutability bug
+       const pCopy = { ...copy[pIdx] }; 
        pCopy.is_custom_override = checked;
        pCopy.dirtyFields = { ...(pCopy.dirtyFields || {}), custom_override: checked };
        if (!checked) {
@@ -132,7 +132,7 @@ export function useProduceMath() {
   const updatePartCustomPcs = (pIdx, newPcs) => {
     setProduceParts(prev => {
        const copy = [...prev];
-       const pCopy = { ...copy[pIdx] }; // ⭐️ Fix React mutability bug
+       const pCopy = { ...copy[pIdx] }; 
        pCopy.final_pcs = newPcs === "" ? "" : Number(newPcs);
        pCopy.dirtyFields = { ...(pCopy.dirtyFields || {}), custom_override: true };
        pCopy.sequence = pCopy.sequence.map((s, sIdx) => {
@@ -155,7 +155,6 @@ export function useProduceMath() {
         const seqCopy = [...pCopy.sequence];
         const num = val === "" ? "" : Number(val);
         
-        // Mark specific step field as dirty/locked
         pCopy.dirtyFields = { ...(pCopy.dirtyFields || {}), [`${field === 'input_qty' ? 'input' : 'output'}_${sIdx}`]: true };
         
         seqCopy[sIdx] = {...seqCopy[sIdx], [field]: num};
@@ -175,10 +174,21 @@ export function useProduceMath() {
     });
   };
 
+  // ⭐️ ROUND 10 ITEM B1: Update Special Instructions
+  const updatePartNotes = (pIdx, val) => {
+    setProduceParts(prev => {
+        const copy = [...prev];
+        const pCopy = { ...copy[pIdx] };
+        pCopy.notes = val;
+        copy[pIdx] = pCopy;
+        return copy;
+    });
+  };
+
   const togglePartExpanded = (pIdx) => {
     setProduceParts(prev => { 
         const copy = [...prev]; 
-        const pCopy = { ...copy[pIdx] }; // ⭐️ Fix React mutability bug causing the UI sync drop
+        const pCopy = { ...copy[pIdx] }; 
         pCopy.expanded = !pCopy.expanded; 
         copy[pIdx] = pCopy;
         return copy; 
@@ -200,6 +210,7 @@ export function useProduceMath() {
     toggleCustomOverride,
     updatePartCustomPcs,
     handleStepQtyChange,
+    updatePartNotes, // ⭐️ Expose the notes updater to the modal
     togglePartExpanded
   };
 }

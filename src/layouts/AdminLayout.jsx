@@ -127,6 +127,14 @@ export default function AdminLayout() {
           >
             Product Management
           </NavLink>
+
+          <NavLink
+            to="/dashboard/settings"
+            onClick={handleNavClick}
+            className={navLinkClasses}
+          >
+            Settings
+          </NavLink>
         </nav>
 
         {/* Action Footer (Toggle removed completely) */}

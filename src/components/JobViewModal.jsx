@@ -1,5 +1,4 @@
 import { useState, useEffect, Fragment } from "react";
-import {  } from "react-dom";
 import { collection, query, where, doc, updateDoc, onSnapshot } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage } from "../firebase/config";
@@ -21,12 +20,12 @@ export default function JobViewModal({ job, onClose }) {
   const [inventoryItems, setInventoryItems] = useState([]);
   const [dies, setDies] = useState([]);
   const [locations, setLocations] = useState([]);
+  const [companyLogo, setCompanyLogo] = useState(""); // ⭐️ ROUND 10 ITEM A1: Global Settings Logo
 
   const [liveProductFiles, setLiveProductFiles] = useState([]);
   const [files, setFiles] = useState(job.files || []); 
   const [savingFiles, setSavingFiles] = useState(false);
 
-  // Inline Toast State replacing native alert()
   const [toast, setToast] = useState({ show: false, msg: "", type: "info" });
   const showToast = (msg, type = "info") => {
     setToast({ show: true, msg, type });
@@ -44,25 +43,20 @@ export default function JobViewModal({ job, onClose }) {
     };
   }, [printNode]);
 
-  // 1. Live Global Dependencies
+  // 1. Live Global Dependencies & Settings
   useEffect(() => {
-    const unsubInv = onSnapshot(collection(db, "inventoryItems"), (snap) => {
-      setInventoryItems(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (err) => console.error("Inventory listener error:", err));
+    const unsubInv = onSnapshot(collection(db, "inventoryItems"), (snap) => setInventoryItems(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsubDies = onSnapshot(collection(db, "dies"), (snap) => setDies(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsubLocs = onSnapshot(collection(db, "locations"), (snap) => setLocations(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    
+    // ⭐️ ROUND 10 ITEM A1: Fetch the global logo
+    const unsubSettings = onSnapshot(doc(db, "settings", "global"), (docSnap) => {
+      if (docSnap.exists() && docSnap.data().companyLogo) {
+        setCompanyLogo(docSnap.data().companyLogo);
+      }
+    });
 
-    const unsubDies = onSnapshot(collection(db, "dies"), (snap) => {
-      setDies(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (err) => console.error("Dies listener error:", err));
-
-    const unsubLocs = onSnapshot(collection(db, "locations"), (snap) => {
-      setLocations(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (err) => console.error("Locations listener error:", err));
-
-    return () => {
-      unsubInv();
-      unsubDies();
-      unsubLocs();
-    };
+    return () => { unsubInv(); unsubDies(); unsubLocs(); unsubSettings(); };
   }, []);
 
   // 2. Live Product Files Sync
@@ -71,71 +65,64 @@ export default function JobViewModal({ job, onClose }) {
       setLiveProductFiles([]);
       return;
     }
-    
     const unsubProduct = onSnapshot(doc(db, "products", localJob.product.id), (pDoc) => {
-      if (pDoc.exists()) {
-        setLiveProductFiles(pDoc.data().files || []);
-      } else {
-        setLiveProductFiles([]);
-      }
-    }, (err) => console.error("Live product listener error:", err));
-
+      if (pDoc.exists()) setLiveProductFiles(pDoc.data().files || []);
+      else setLiveProductFiles([]);
+    });
     return () => unsubProduct();
   }, [localJob?.product?.id]);
 
   // 3. Live Sibling Job Sync
   useEffect(() => {
     if (!localJob?.set_code) return;
-
     const q = query(collection(db, "jobs"), where("set_code", "==", localJob.set_code));
-    
     const unsubSiblings = onSnapshot(q, (snap) => {
-      const sibs = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-        .sort((a, b) => Number(a.part_index || 0) - Number(b.part_index || 0));
+      const sibs = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => Number(a.part_index || 0) - Number(b.part_index || 0));
       setSiblings(sibs);
-    }, (err) => console.error("Siblings listener error:", err));
-
+    });
     return () => unsubSiblings();
   }, [localJob?.set_code]);
 
   // 4. Live Issued Materials Ledger Sync
   useEffect(() => {
     if (!localJob?.id) return;
-
-    const q = query(
-      collection(db, "inventoryTransactions"), 
-      where("job_ref_id", "==", localJob.id), 
-      where("type", "==", "out")
-    );
-    
+    const q = query(collection(db, "inventoryTransactions"), where("job_ref_id", "==", localJob.id), where("type", "==", "out"));
     const unsubMaterials = onSnapshot(q, (snap) => {
       const materials = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       setIssuedMaterials(materials);
-    }, (err) => console.error("Materials listener error:", err));
-
+    });
     return () => unsubMaterials();
   }, [localJob?.id]);
 
   if (!localJob) return null;
 
-  const handlePrint = () => {
-    const originalTitle = document.title;
-    const dateStr = new Date().toLocaleDateString('en-GB').replace(/\//g, '-');
-    const safeJobId = (localJob.display_id || 'JOB').replace(/[^a-zA-Z0-9_-]/g, '_');
-    const safePart = (localJob.part_name || 'Main').replace(/[^a-zA-Z0-9_-]/g, '_');
-    
-    document.title = `${safeJobId}_${safePart}_${dateStr}`;
-    
-    const afterPrint = () => {
-      document.title = originalTitle;
-      window.removeEventListener('afterprint', afterPrint);
-    };
-    
-    window.addEventListener('afterprint', afterPrint);
-    window.print();
+  // ⭐️ ROUND 10 ITEM B2: Print Counter Logic
+  const handlePrint = async () => {
+    try {
+      const newCount = (localJob.print_count || 0) + 1;
+      await updateDoc(doc(db, "jobs", localJob.id), { print_count: newCount });
+      setLocalJob(prev => ({...prev, print_count: newCount}));
+
+      const originalTitle = document.title;
+      const dateStr = new Date().toLocaleDateString('en-GB').replace(/\//g, '-');
+      const safeJobId = (localJob.display_id || 'JOB').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const safePart = (localJob.part_name || 'Main').replace(/[^a-zA-Z0-9_-]/g, '_');
+      
+      document.title = `${safeJobId}_${safePart}_${dateStr}`;
+      
+      const afterPrint = () => {
+        document.title = originalTitle;
+        window.removeEventListener('afterprint', afterPrint);
+      };
+      
+      window.addEventListener('afterprint', afterPrint);
+      setTimeout(() => window.print(), 100); // Slight delay to ensure state updates visually before print spooler runs
+    } catch (err) {
+      showToast("Error updating print counter: " + err.message, "error");
+    }
   };
 
-  const updateStepStatus = async (idx, newStatus, extraData = {}) => {
+  const updateStepStatus = async (idx, newStatus, extraStepData = {}, extraJobData = {}) => {
     setUpdating(true);
     try {
       const updatedSequence = [...localJob.process_sequence];
@@ -147,15 +134,11 @@ export default function JobViewModal({ job, onClose }) {
         ...currentStep,
         status: newStatus,
         status_updated_at: now,
-        ...extraData
+        ...extraStepData
       };
 
-      if (newStatus === 'in_progress' && !currentStep.started_at) {
-        updatedSequence[idx].started_at = now;
-      }
-      if (newStatus === 'completed') {
-        updatedSequence[idx].completed_at = now;
-      }
+      if (newStatus === 'in_progress' && !currentStep.started_at) updatedSequence[idx].started_at = now;
+      if (newStatus === 'completed') updatedSequence[idx].completed_at = now;
 
       const logEntry = {
         id: Date.now().toString(),
@@ -165,21 +148,26 @@ export default function JobViewModal({ job, onClose }) {
         new_status: newStatus,
         timestamp: now,
         actor: actor,
-        reason: extraData.hold_reason || null,
-        note: extraData.hold_note || null
+        reason: extraStepData.hold_reason || null,
+        note: extraStepData.hold_note || null
       };
 
       const newLog = [logEntry, ...(localJob.activity_log || [])]; 
       const allCompleted = updatedSequence.every(s => s.status === "completed");
-      const newJobStatus = allCompleted ? "completed" : "in_progress";
+      
+      // ⭐️ ROUND 10 ITEM B1: Support final job completion overrides
+      const newJobStatus = extraJobData.status || (allCompleted ? "completed" : "in_progress");
 
-      await updateDoc(doc(db, "jobs", localJob.id), { 
+      const updatePayload = {
         process_sequence: updatedSequence, 
         status: newJobStatus,
-        activity_log: newLog
-      });
+        activity_log: newLog,
+        ...extraJobData
+      };
 
-      setLocalJob(prev => ({ ...prev, process_sequence: updatedSequence, status: newJobStatus, activity_log: newLog }));
+      await updateDoc(doc(db, "jobs", localJob.id), updatePayload);
+
+      setLocalJob(prev => ({ ...prev, ...updatePayload }));
       setCompletingStepIdx(null);
       setActiveHoldIdx(null);
       setHoldReason("");
@@ -191,33 +179,36 @@ export default function JobViewModal({ job, onClose }) {
     }
   };
 
+  // ⭐️ ROUND 10 ITEM B1: Final Step Reconciliation Logic
   const handleCompleteStep = (idx) => {
+    const isFinalStep = idx === (localJob.process_sequence?.length || 0) - 1;
+    const okQty = Number(qtyOk) || 0;
+    const rejQty = Number(qtyReject) || 0;
+    
+    const extraJobData = {};
+    if (isFinalStep) {
+      extraJobData.quantity_completed = okQty;
+      extraJobData.status = 'completed';
+    }
+
     updateStepStatus(idx, 'completed', { 
-      qty_ok: Number(qtyOk) || 0, 
-      qty_rejected: Number(qtyReject) || 0 
-    });
+      qty_ok: okQty, 
+      qty_rejected: rejQty 
+    }, extraJobData);
+
+    if (isFinalStep) {
+      showToast(`Job Completed! ${okQty.toLocaleString()} pcs finalized for analytics.`, "success");
+    }
   };
 
   const handleFileSelect = (e) => {
     const selected = Array.from(e.target.files);
     const validFiles = [];
-    
     selected.forEach(f => {
-      if (f.size > 25 * 1024 * 1024) {
-        return showToast(`File ${f.name} exceeds the 25MB limit.`, "error");
-      }
+      if (f.size > 25 * 1024 * 1024) return showToast(`File ${f.name} exceeds the 25MB limit.`, "error");
       validFiles.push({
         id: Date.now() + Math.random(),
-        rawFile: f, 
-        name: f.name,
-        category: "Client PO",
-        applies_to: "All Parts", 
-        purpose: "",
-        version: "v1",
-        status: "APPROVED",
-        notes: "",
-        url: null, 
-        uploaded_at: new Date().toISOString()
+        rawFile: f, name: f.name, category: "Client PO", applies_to: "All Parts", purpose: "", version: "v1", status: "APPROVED", notes: "", url: null, uploaded_at: new Date().toISOString()
       });
     });
     if (validFiles.length > 0) setFiles([...files, ...validFiles]);
@@ -234,14 +225,7 @@ export default function JobViewModal({ job, onClose }) {
           const modAppliesTo = modifiedFile.applies_to || "All Parts";
           const fPurpose = (f.purpose || "").toLowerCase().trim();
           const modPurpose = (modifiedFile.purpose || "").toLowerCase().trim();
-
-          if (
-            f.id !== fileId && 
-            f.category === modifiedFile.category && 
-            f.status === "APPROVED" &&
-            fAppliesTo === modAppliesTo &&
-            fPurpose === modPurpose
-          ) {
+          if (f.id !== fileId && f.category === modifiedFile.category && f.status === "APPROVED" && fAppliesTo === modAppliesTo && fPurpose === modPurpose) {
             return { ...f, status: "Superseded" };
           }
           return f;
@@ -269,7 +253,6 @@ export default function JobViewModal({ job, onClose }) {
         }
         return fileObj; 
       }));
-
       await updateDoc(doc(db, "jobs", localJob.id), { files: processedFiles });
       setLocalJob(prev => ({ ...prev, files: processedFiles }));
       setFiles(processedFiles);
@@ -299,13 +282,9 @@ export default function JobViewModal({ job, onClose }) {
     let msg = `${localJob.customer} / ${prodName} (${qty} pcs): `;
     if (completedNames) msg += `${completedNames} complete, `;
 
-    if (isOnHold) {
-      msg += `currently paused at ${currentName}; revised timeline to follow.`;
-    } else if (isOverdue) {
-      msg += `currently at ${currentName}, dispatch pending (re-evaluating timeline).`;
-    } else {
-      msg += `currently at ${currentName}, on track for dispatch ${dateStr}.`;
-    }
+    if (isOnHold) msg += `currently paused at ${currentName}; revised timeline to follow.`;
+    else if (isOverdue) msg += `currently at ${currentName}, dispatch pending (re-evaluating timeline).`;
+    else msg += `currently at ${currentName}, on track for dispatch ${dateStr}.`;
 
     navigator.clipboard.writeText(msg);
     showToast("Client update copied to clipboard!", "success");
@@ -314,14 +293,11 @@ export default function JobViewModal({ job, onClose }) {
   const getApplicableFiles = (category) => {
     const jobFiles = (localJob.files || []).filter(f => f.category === category && f.status === 'APPROVED');
     const prodFiles = liveProductFiles.filter(f => f.category === category && f.status === 'APPROVED');
-    
     const targetPartId = localJob.product?.parts?.find(p => p.part_name === localJob.part_name)?.id;
-    
     const isApplicable = (f) => {
        const scope = f.applies_to || "All Parts";
        return scope === "All Parts" || scope === localJob.part_name || (targetPartId && scope === targetPartId);
     };
-
     const map = new Map();
     prodFiles.filter(isApplicable).forEach(f => map.set(f.purpose || f.name, f));
     jobFiles.filter(isApplicable).forEach(f => map.set(f.purpose || f.name, f));
@@ -333,16 +309,12 @@ export default function JobViewModal({ job, onClose }) {
 
   const copyApprovedFiles = () => {
     const finalFiles = [...approvedArtworks, ...approvedDielines].filter(f => f.url);
-
     if (finalFiles.length === 0) return showToast("No approved files found for this part to share.", "error");
-    
     const links = finalFiles.map(f => {
        const purposeStr = f.purpose ? `[${f.purpose.toUpperCase()}] ` : '';
        return `${purposeStr}${f.name} (${f.category} - ${f.version}): ${f.url}`;
     }).join("\n\n");
-    const msg = `Approved Files for ${localJob.display_id}:\n\n${links}`;
-    
-    navigator.clipboard.writeText(msg);
+    navigator.clipboard.writeText(`Approved Files for ${localJob.display_id}:\n\n${links}`);
     showToast("File share links copied to clipboard!", "success");
   };
 
@@ -355,7 +327,7 @@ export default function JobViewModal({ job, onClose }) {
   const isMultiPart = localJob.parts_total > 1 || siblings.length > 1;
 
   const renderQtyMath = () => {
-    if (localJob.is_custom_override) return `(${localJob.quantity_target?.toLocaleString()} custom for this job — standard ${localJob.qty_per_set}/set)`;
+    if (localJob.is_custom_override) return `(${localJob.quantity_target?.toLocaleString()} custom override)`;
     return `(${localJob.active_multiplier || localJob.qty_per_set} per set × ${(localJob.sets_qty || 0).toLocaleString()} sets)`;
   };
 
@@ -376,7 +348,6 @@ export default function JobViewModal({ job, onClose }) {
          if (foundDie) activeDieIds.add(foundDie.id);
      });
   });
-  
   Array.from(activeDieIds).forEach(id => {
      const d = dies.find(die => die.id === id);
      preProdChecklist.push({ isDie: true, material_name: d.dieName, piece_purpose: d.dieNumber, category: 'Die / Tooling', qty_per_unit: 1, unit: 'pcs', notes: 'Auto-included from routing' });
@@ -392,51 +363,59 @@ export default function JobViewModal({ job, onClose }) {
   const productSku = localJob.product_snapshot?.sku || localJob.product?.sku || "N/A";
   const isArtworkRequired = localJob.artwork_required ?? localJob.product?.artwork_required ?? true;
 
+  // ⭐️ ROUND 10 PART A: Massive Print Layout Restructuring
   const PrintView = (
     <div id="print-card" className="hidden print:block w-full bg-white text-black font-sans relative text-sm">
       
-      <div className="flex justify-between items-start border-b-2 border-black pb-3 mb-3 gap-2">
-        <div className="w-[55%] shrink-0">
-          {isMultiPart ? (
-            <>
-              <h1 className="text-2xl font-black uppercase tracking-tighter mb-1 whitespace-nowrap">{localJob.set_code?.includes('-') ? `SET-${localJob.set_code}` : localJob.set_code}</h1>
-              <div className="border border-black px-2 py-0.5 inline-block text-xs font-bold uppercase tracking-wider mb-1">PART {localJob.part_index} OF {localJob.parts_total || siblings.length} — {localJob.part_name}</div>
-              <div className="flex items-center gap-2">
-                <div className="text-xs font-bold font-mono text-gray-700 whitespace-nowrap">{localJob.display_id}</div>
-                <div className="text-[10px] font-bold text-gray-800 uppercase border border-gray-400 inline-block px-1.5 py-0.5 whitespace-nowrap">{routeText}</div>
-              </div>
-            </>
+      {/* HEADER SECTION */}
+      <div className="flex justify-between items-start border-b-2 border-black pb-3 mb-2 gap-4">
+        
+        <div className="w-40 shrink-0 flex items-center">
+          {companyLogo ? (
+            <img src={companyLogo} alt="Company Logo" className="max-w-full max-h-16 object-contain" />
           ) : (
-            <>
-              <h1 className="text-2xl font-black uppercase tracking-tight mb-1 whitespace-nowrap">FACTORY JOB CARD</h1>
-              <div className="flex items-center gap-2">
-                <div className="text-xs font-bold font-mono text-gray-700 whitespace-nowrap">{localJob.display_id || `JOB-${localJob.id.slice(0, 8).toUpperCase()}`}</div>
-                <div className="text-[10px] font-bold text-gray-800 uppercase border border-gray-400 inline-block px-1.5 py-0.5 whitespace-nowrap">{routeText}</div>
-              </div>
-            </>
+            <div className="text-xl font-black uppercase tracking-tighter">FACTORY</div>
           )}
         </div>
         
-        <div className="flex-1 flex flex-col items-center justify-center border-x-2 border-black px-2">
-          <span className="text-[10px] font-bold uppercase text-gray-600 tracking-wider">Target Quantity</span>
-          <span className="text-2xl font-black whitespace-nowrap">{localJob.quantity_target?.toLocaleString()} pcs</span>
-          {isMultiPart && <span className="text-[10px] font-bold mt-0.5 text-gray-600 tracking-wide text-center">{renderQtyMath()}</span>}
+        <div className="flex-1 flex flex-col justify-center border-l-2 border-black pl-4">
+          <div className="flex items-center gap-2 mb-0.5">
+            <div className="text-[10px] uppercase font-bold bg-black text-white px-2 py-0.5">
+              {localJob.print_count > 0 ? `REPRINT #${localJob.print_count}` : "ORIGINAL"}
+            </div>
+            <h1 className="text-xl font-black uppercase tracking-tight whitespace-nowrap">
+              {isMultiPart ? `SET-${localJob.set_code}` : 'JOB CARD'}
+            </h1>
+          </div>
+          <div className="text-xs font-bold font-mono text-gray-800 tracking-tight whitespace-nowrap">
+            {localJob.display_id || `JOB-${localJob.id.slice(0, 8).toUpperCase()}`} 
+            <span className="mx-2 text-gray-300">|</span> 
+            PART {localJob.part_index || 1} OF {localJob.parts_total || siblings.length || 1}: {localJob.part_name || "Main"}
+            <span className="mx-2 text-gray-300">|</span> 
+            {routeText}
+          </div>
         </div>
 
-        <div className="w-[22%] shrink-0 text-right text-xs flex flex-col justify-center space-y-1">
+        <div className="w-[20%] shrink-0 text-right text-xs flex flex-col justify-center space-y-0.5">
           <div className="whitespace-nowrap"><span className="text-gray-500 uppercase">Job Date:</span> <span className="font-bold">{jobDate}</span></div>
-          <div className="whitespace-nowrap"><span className="text-gray-500 uppercase">Due Date:</span> <span className="font-bold">{dueDate}</span></div>
-          <div className="whitespace-nowrap"><span className="text-gray-500 uppercase">Priority:</span> <span className="font-bold uppercase border border-black px-1.5 py-0.5 ml-1">{localJob.priority}</span></div>
+          <div className="whitespace-nowrap"><span className="text-gray-500 uppercase">Due Date:</span> <span className="font-bold text-[13px]">{dueDate}</span></div>
+          <div className="whitespace-nowrap pt-0.5"><span className="text-gray-500 uppercase">Priority:</span> <span className="font-bold uppercase border border-black px-1.5 py-0.5 ml-1">{localJob.priority}</span></div>
         </div>
       </div>
 
+      {/* COMPACT METADATA GRID */}
       <div className="flex justify-between items-center bg-gray-100 border-b-2 border-black py-1.5 px-2 mb-3 text-xs uppercase">
         <div><span className="text-gray-500 font-bold">Customer:</span> <span className="font-bold text-black ml-1">{localJob.customer}</span></div>
         <div><span className="text-gray-500 font-bold">Product:</span> <span className="font-bold text-black ml-1">{productName}</span></div>
-        <div><span className="text-gray-500 font-bold">Part:</span> <span className="font-bold text-black ml-1">{isMultiPart ? localJob.part_name : "Main"}</span></div>
         <div><span className="text-gray-500 font-bold">SKU:</span> <span className="font-bold text-black ml-1">{productSku}</span></div>
+        <div className="flex items-center gap-2">
+          <span className="text-gray-500 font-bold">Target Qty:</span> 
+          <span className="font-black text-black text-sm">{localJob.quantity_target?.toLocaleString()}</span>
+          {isMultiPart && <span className="text-[9px] text-gray-600 font-bold normal-case leading-none mt-0.5">{renderQtyMath()}</span>}
+        </div>
       </div>
 
+      {/* ARTWORK BLOCK */}
       <div className="mb-4 border-2 border-black flex">
         <div className="flex-1 p-2">
           <div className="text-[10px] font-bold uppercase text-gray-600 tracking-wider mb-1">Master Files & Assets</div>
@@ -470,34 +449,31 @@ export default function JobViewModal({ job, onClose }) {
         </div>
       </div>
 
+      {/* CHECKLIST TABLE */}
       <div className="font-bold uppercase mb-1 text-xs">Pre-Production Checklist</div>
-      <table className="w-full text-left border-collapse border-2 border-black text-[10px] mb-4">
+      <table className="w-full text-left border-collapse border-2 border-black text-xs mb-4">
         <thead>
-          <tr className="bg-gray-100 border-b-2 border-black uppercase text-gray-700">
+          <tr className="bg-gray-100 border-b-2 border-black uppercase text-gray-700 text-[10px]">
             <th className="border-r-2 border-black p-1.5 w-6 text-center">☐</th>
             <th className="border-r-2 border-black p-1.5">Item / Material Specification</th>
-            <th className="border-r-2 border-black p-1.5 w-32">Piece / Purpose</th>
-            <th className="border-r-2 border-black p-1.5 w-32">Size</th>
-            <th className="border-r-2 border-black p-1.5 w-24 text-center bg-gray-200">Total Required</th>
+            <th className="border-r-2 border-black p-1.5 w-28">Piece / Purpose</th>
+            <th className="border-r-2 border-black p-1.5 w-28">Size</th>
+            <th className="border-r-2 border-black p-1.5 w-24 text-center bg-gray-200">Required</th>
             <th className="p-1.5 w-32">Notes</th>
           </tr>
         </thead>
         <tbody>
           {preProdChecklist.map((row, i) => {
              let calculatedTotal = 0;
-             if (row.isDie) {
-               calculatedTotal = 1;
-             } else {
+             if (row.isDie) calculatedTotal = 1;
+             else {
                const effBasis = row.basis || 'per_piece';
-               if (effBasis === 'fixed') {
-                 calculatedTotal = Number(row.qty_per_unit) || 1;
-               } else if (effBasis === 'per_step') {
+               if (effBasis === 'fixed') calculatedTotal = Number(row.qty_per_unit) || 1;
+               else if (effBasis === 'per_step') {
                  const sIdx = row.basis_step_index || 0;
                  const stepQty = localJob.process_sequence?.[sIdx] ? (Number(localJob.process_sequence[sIdx].input_qty) || 0) : (localJob.quantity_target || 0);
                  calculatedTotal = (Number(row.qty_per_unit) || 1) * stepQty;
-               } else {
-                 calculatedTotal = (Number(row.qty_per_unit) || 1) * (localJob.quantity_target || 0);
-               }
+               } else calculatedTotal = (Number(row.qty_per_unit) || 1) * (localJob.quantity_target || 0);
              }
 
              let stockFlag = null;
@@ -512,25 +488,18 @@ export default function JobViewModal({ job, onClose }) {
                 
                 if (invItem) {
                    const totalBal = Number(invItem.balance || 0);
-                   
                    const resolvedTargetLoc = locations.find(l => l.code === targetPlace);
                    const targetLocId = resolvedTargetLoc ? resolvedTargetLoc.id : targetPlace; 
                    const localBal = Number(invItem.balances?.[targetLocId] || invItem.balances?.[targetPlace] || 0);
                    
-                   if (calculatedTotal > totalBal) {
-                       stockFlag = <span className="ml-1 bg-red-600 text-white px-1.5 py-0.5 rounded text-[8px] font-black tracking-wider">SHORT {calculatedTotal - totalBal}</span>;
-                   } else if (calculatedTotal > localBal) {
-                       const holding = Object.entries(invItem.balances || {})
-                           .filter(([, q]) => q > 0)
-                           .map(([locKey]) => {
-                               const matchedLoc = locations.find(l => l.id === locKey || l.code === locKey);
-                               return matchedLoc ? matchedLoc.code : locKey;
-                           })
-                           .join(', ');
+                   if (calculatedTotal > totalBal) stockFlag = <span className="ml-1 bg-red-600 text-white px-1.5 py-0.5 rounded text-[8px] font-black tracking-wider">SHORT {calculatedTotal - totalBal}</span>;
+                   else if (calculatedTotal > localBal) {
+                       const holding = Object.entries(invItem.balances || {}).filter(([, q]) => q > 0).map(([locKey]) => {
+                           const matchedLoc = locations.find(l => l.id === locKey || l.code === locKey);
+                           return matchedLoc ? matchedLoc.code : locKey;
+                       }).join(', ');
                        stockFlag = <span className="ml-1 bg-purple-200 border border-purple-800 text-purple-900 px-1.5 py-0.5 rounded text-[8px] font-black tracking-wider uppercase">TRANSFER TO {targetPlace} (FROM {holding || 'UNASSIGNED'})</span>;
-                   } else {
-                       stockFlag = <span className="ml-1 text-gray-500 text-[8px] font-bold">[OK - {targetPlace}]</span>;
-                   }
+                   } else stockFlag = <span className="ml-1 text-gray-500 text-[8px] font-bold">[OK - {targetPlace}]</span>;
 
                    const rawName = row.material_name.split('·')[0].trim();
                    const isBoard = row.category === 'board' || row.category === 'rigid';
@@ -545,13 +514,11 @@ export default function JobViewModal({ job, onClose }) {
              return (
                <tr key={i} className="border-b border-black">
                  <td className="border-r-2 border-black p-1.5 text-center text-lg font-bold">☐</td>
-                 <td className="border-r-2 border-black p-1.5 font-bold text-sm">
-                   {displaySpec} {stockFlag}
-                 </td>
+                 <td className="border-r-2 border-black p-1.5 font-bold text-[13px]">{displaySpec} {stockFlag}</td>
                  <td className="border-r-2 border-black p-1.5 font-bold uppercase">{row.piece_purpose}</td>
-                 <td className="border-r-2 border-black p-1.5 font-mono text-[10px]">{displaySize}</td>
+                 <td className="border-r-2 border-black p-1.5 font-mono text-[11px]">{displaySize}</td>
                  <td className="border-r-2 border-black p-1.5 text-center font-bold text-sm bg-gray-50">{row.isDie ? '—' : `${calculatedTotal.toLocaleString()} ${row.unit || 'pcs'}`}</td>
-                 <td className="p-1.5 text-[9px]">{row.notes || '—'}</td>
+                 <td className="p-1.5 text-[10px] leading-tight">{row.notes || '—'}</td>
                </tr>
              );
           })}
@@ -569,18 +536,19 @@ export default function JobViewModal({ job, onClose }) {
         </div>
       )}
 
-      <div className="font-bold uppercase mb-1 text-xs">Process Routing & Operator Sign-off</div>
+      {/* ROUTING TABLE */}
+      <div className="font-bold uppercase mb-1 text-xs">Process Routing & Sign-offs</div>
       <table id="routing-table" className="w-full text-left border-collapse border-2 border-black text-xs mb-4">
         <thead>
-          <tr className="bg-gray-100 border-b-2 border-black">
-            <th className="border-r-2 border-black p-2 w-8 text-center">#</th>
-            <th className="border-r-2 border-black p-2">Process & Specifications</th>
-            <th className="border-r-2 border-black p-2 w-28">Machine</th>
-            <th className="border-r-2 border-black p-2 w-16">Place</th>
-            <th className="border-r-2 border-black p-2 w-16 text-center">Qty In</th>
-            <th className="border-r-2 border-black p-2 w-16 text-center">Exp. Out</th>
-            <th className="border-r-2 border-black p-2 w-20 text-center">Actual Out</th>
-            <th className="p-2 w-32 text-center">Operator Sign / Date</th>
+          <tr className="bg-gray-100 border-b-2 border-black text-[10px] uppercase">
+            <th className="border-r-2 border-black p-1.5 w-6 text-center">#</th>
+            <th className="border-r-2 border-black p-1.5">Process & Specifications</th>
+            <th className="border-r-2 border-black p-1.5 w-24">Machine/Loc</th>
+            <th className="border-r-2 border-black p-1.5 w-14 text-center leading-tight">Qty<br/>In</th>
+            <th className="border-r-2 border-black p-1.5 w-14 text-center leading-tight">Exp.<br/>Out</th>
+            <th className="border-r-2 border-black p-1.5 w-16 text-center leading-tight">Act.<br/>Out</th>
+            <th className="border-r-2 border-black p-1 w-14 text-center leading-tight text-[8px] bg-gray-200">1st<br/>Piece<br/>OK</th>
+            <th className="p-1.5 w-32 text-center">Operator Sign / Date</th>
           </tr>
         </thead>
         <tbody>
@@ -597,33 +565,34 @@ export default function JobViewModal({ job, onClose }) {
             return (
               <Fragment key={idx}>
                 {isTransfer && (
-                  <tr className="bg-gray-200 border-b border-black">
-                    <td colSpan="8" className="p-1.5 text-center text-[10px] font-black uppercase tracking-widest text-black">
-                      → SEND OUT: {prevPlace} → {currPlace}
+                  <tr className="bg-gray-200 border-b border-black print:table-row">
+                    <td colSpan="9" className="p-0.5 text-center text-[9px] font-black uppercase tracking-widest text-black">
+                      ↓ TRANSFER TO {currPlace} ↓
                     </td>
                   </tr>
                 )}
                 {isChainBreak && (
                   <tr className="bg-red-100 border-b border-black print:table-row">
-                    <td colSpan="8" className="p-1 text-center text-[10px] font-black uppercase tracking-widest text-red-700">
+                    <td colSpan="9" className="p-1 text-center text-[10px] font-black uppercase tracking-widest text-red-700">
                       ⚠️ WARNING: Step {idx} expected {expectedFromPrev?.toLocaleString()} out, but Step {idx+1} is receiving {currentIn?.toLocaleString()} in.
                     </td>
                   </tr>
                 )}
                 <tr className="border-b border-black">
-                  <td className="border-r-2 border-black p-2 text-center font-bold align-top">{idx + 1}</td>
-                  <td className="border-r-2 border-black p-2 align-top">
-                    <span className="font-bold text-sm">{step.process_name}</span>
-                    {step.remarks && (
-                      <div className="text-[10px] font-medium text-gray-800 mt-1 whitespace-pre-wrap leading-tight">{step.remarks.replace(/ \| /g, '\n')}</div>
-                    )}
+                  <td className="border-r-2 border-black p-1.5 text-center font-bold align-top">{idx + 1}</td>
+                  <td className="border-r-2 border-black p-1.5 align-top">
+                    <span className="font-bold text-[13px]">{step.process_name}</span>
+                    {step.remarks && <div className="text-[11px] font-medium text-gray-800 mt-1 whitespace-pre-wrap leading-tight">{step.remarks.replace(/ \| /g, '\n')}</div>}
                   </td>
-                  <td className="border-r-2 border-black p-2 align-top text-gray-800 text-[10px] font-bold">{step.assigned_machine_name || "Any Available"}</td>
-                  <td className="border-r-2 border-black p-2 align-top text-gray-800 text-[10px] font-bold">{currPlace || "—"}</td>
-                  <td className="border-r-2 border-black p-2 text-center align-top font-bold">{step.input_qty?.toLocaleString() || localJob.quantity_target?.toLocaleString()}</td>
-                  <td className="border-r-2 border-black p-2 text-center align-top font-bold text-gray-600">{step.output_qty?.toLocaleString() || localJob.quantity_target?.toLocaleString()}</td>
-                  <td className="border-r-2 border-black p-2 text-center align-top"></td>
-                  <td className="p-2 align-top"></td>
+                  <td className="border-r-2 border-black p-1.5 align-top">
+                    <div className="font-bold text-[10px] leading-tight">{step.assigned_machine_name || "Any"}</div>
+                    {currPlace && <div className="text-[9px] text-gray-600 font-mono mt-0.5">{currPlace}</div>}
+                  </td>
+                  <td className="border-r-2 border-black p-1.5 text-center align-top font-bold">{step.input_qty?.toLocaleString() || localJob.quantity_target?.toLocaleString()}</td>
+                  <td className="border-r-2 border-black p-1.5 text-center align-top font-bold text-gray-600">{step.output_qty?.toLocaleString() || localJob.quantity_target?.toLocaleString()}</td>
+                  <td className="border-r-2 border-black p-1.5 text-center align-bottom border-b border-dashed border-gray-400 pb-2"></td>
+                  <td className="border-r-2 border-black p-1.5 text-center align-bottom bg-gray-50 border-b border-dashed border-gray-400"></td>
+                  <td className="p-1.5 align-bottom border-b border-dashed border-gray-400"></td>
                 </tr>
               </Fragment>
             );
@@ -632,12 +601,13 @@ export default function JobViewModal({ job, onClose }) {
       </table>
 
       {localJob.notes && (
-        <div className="border border-black p-3 mb-4">
+        <div className="border border-black p-3 mb-4 bg-gray-50">
           <h3 className="text-[10px] font-bold text-gray-600 uppercase mb-1">Special Instructions / Notes</h3>
-          <p className="text-xs whitespace-pre-wrap font-medium">{localJob.notes}</p>
+          <p className="text-sm whitespace-pre-wrap font-bold">{localJob.notes}</p>
         </div>
       )}
 
+      {/* FOOTER */}
       <div className="flex justify-between items-stretch border-2 border-black mt-auto">
         <div className="p-2 flex-1 border-r-2 border-black bg-gray-50">
           <div className="text-[10px] font-bold uppercase mb-1">Linked Cards in Set {isMultiPart ? `(SET-${localJob.set_code})` : ''}</div>
@@ -676,14 +646,13 @@ export default function JobViewModal({ job, onClose }) {
         `}
       </style>
 
-      {/* Global Inline Toast Notification */}
       {toast.show && (
-        <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] px-6 py-3 rounded-full shadow-2xl font-bold text-sm flex items-center gap-2 animate-fade-in ${
-          toast.type === "error" ? "bg-red-600 text-white border border-red-500" : "bg-gray-800 text-white border border-gray-700"
-        }`}>
+        <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] px-6 py-3 rounded-full shadow-2xl font-bold text-sm flex items-center gap-2 animate-fade-in ${toast.type === "error" ? "bg-red-600 text-white border border-red-500" : "bg-gray-800 text-white border border-gray-700"}`}>
           {toast.type === "error" ? "⚠️" : "✓"} {toast.msg}
         </div>
       )}
+
+      {PrintView}
 
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm print:hidden">
         <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-6xl shadow-2xl overflow-hidden flex flex-col max-h-[95vh]">
@@ -699,6 +668,13 @@ export default function JobViewModal({ job, onClose }) {
                     {routeText}
                   </span>
                   {isMultiPart && <span className="bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wider ml-1">Part {localJob.part_index} of {localJob.parts_total || siblings.length}</span>}
+                  
+                  {/* Print Indicator Badge */}
+                  {localJob.print_count > 0 && (
+                    <span className="bg-blue-900/40 text-blue-400 px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wider ml-2 border border-blue-500/30">
+                      Printed {localJob.print_count}x
+                    </span>
+                  )}
                 </div>
                 <h2 className="text-2xl font-bold text-white">{localJob.title || productName}</h2>
                 <p className="text-gray-400 text-sm mt-1">{localJob.customer || "No Customer"} | {productSku} {isMultiPart ? `| ${localJob.part_name}` : ""}</p>
@@ -753,6 +729,14 @@ export default function JobViewModal({ job, onClose }) {
 
           <div className="p-6 overflow-y-auto custom-scrollbar flex-1 bg-[#0a0f1a] space-y-6">
             
+            {/* ⭐️ ROUND 10 ITEM B1: Show Special Instructions prominently on UI */}
+            {localJob.notes && (
+               <div className="bg-gray-950 p-4 border-l-4 border-primary-500 rounded-r-lg shadow-lg">
+                  <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">Special Instructions / Notes</h3>
+                  <p className="text-sm text-gray-200 whitespace-pre-wrap font-medium">{localJob.notes}</p>
+               </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <h3 className="text-sm font-bold text-gray-400 mb-3 uppercase tracking-wider flex justify-between">
@@ -772,19 +756,15 @@ export default function JobViewModal({ job, onClose }) {
                     <tbody className="divide-y divide-gray-800">
                       {preProdChecklist.map((row, i) => {
                          let calculatedTotal = 0;
-                         if (row.isDie) {
-                           calculatedTotal = 1;
-                         } else {
+                         if (row.isDie) calculatedTotal = 1;
+                         else {
                            const effBasis = row.basis || 'per_piece';
-                           if (effBasis === 'fixed') {
-                             calculatedTotal = Number(row.qty_per_unit) || 1;
-                           } else if (effBasis === 'per_step') {
+                           if (effBasis === 'fixed') calculatedTotal = Number(row.qty_per_unit) || 1;
+                           else if (effBasis === 'per_step') {
                              const sIdx = row.basis_step_index || 0;
                              const stepQty = localJob.process_sequence?.[sIdx] ? (Number(localJob.process_sequence[sIdx].input_qty) || 0) : (localJob.quantity_target || 0);
                              calculatedTotal = (Number(row.qty_per_unit) || 1) * stepQty;
-                           } else {
-                             calculatedTotal = (Number(row.qty_per_unit) || 1) * (localJob.quantity_target || 0);
-                           }
+                           } else calculatedTotal = (Number(row.qty_per_unit) || 1) * (localJob.quantity_target || 0);
                          }
 
                          let stockDisplay = <span className="text-gray-500">—</span>;
@@ -797,7 +777,6 @@ export default function JobViewModal({ job, onClose }) {
                             
                             if (invItem) {
                                const totalBal = Number(invItem.balance || 0);
-                               
                                const resolvedTargetLoc = locations.find(l => l.code === targetPlace);
                                const targetLocId = resolvedTargetLoc ? resolvedTargetLoc.id : targetPlace; 
                                const localBal = Number(invItem.balances?.[targetLocId] || invItem.balances?.[targetPlace] || 0);
@@ -810,9 +789,7 @@ export default function JobViewModal({ job, onClose }) {
                                      </div>
                                    );
                                } else if (calculatedTotal > localBal) {
-                                   const holding = Object.entries(invItem.balances || {})
-                                     .filter(([, q]) => q > 0)
-                                     .map(([locKey]) => {
+                                   const holding = Object.entries(invItem.balances || {}).filter(([, q]) => q > 0).map(([locKey]) => {
                                         const matchedLoc = locations.find(l => l.id === locKey || l.code === locKey);
                                         return matchedLoc ? matchedLoc.code : locKey;
                                      }).join(', ');
@@ -828,9 +805,7 @@ export default function JobViewModal({ job, onClose }) {
                                    stockDisplay = <span className="px-2 py-0.5 rounded font-bold uppercase bg-green-500/10 text-green-400 text-[10px]">OK ({localBal} at {targetPlace})</span>;
                                }
                             }
-                         } else {
-                           stockDisplay = <span className="text-purple-400 font-bold uppercase text-[10px]">Tooling</span>;
-                         }
+                         } else stockDisplay = <span className="text-purple-400 font-bold uppercase text-[10px]">Tooling</span>;
 
                          return (
                            <tr key={i} className="hover:bg-gray-800/50">
@@ -966,6 +941,8 @@ export default function JobViewModal({ job, onClose }) {
                   const isCompleted = status === 'completed';
                   const isInProgress = status === 'in_progress';
                   const isOnHold = status === 'on_hold';
+                  
+                  const isFinalStep = idx === arr.length - 1; // ⭐️ Check for Reconciliation Step
 
                   const prevStep = idx > 0 ? arr[idx-1] : null;
                   const prevPlace = prevStep?.assigned_machine_place;
@@ -1031,8 +1008,8 @@ export default function JobViewModal({ job, onClose }) {
                                 <button onClick={() => setActiveHoldIdx(idx)} className="text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white rounded transition-colors">
                                   Hold
                                 </button>
-                                <button onClick={() => { setCompletingStepIdx(idx); setQtyOk(step.output_qty || localJob.quantity_target || ""); setQtyReject("0"); }} className="text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 bg-green-600 hover:bg-green-500 text-white rounded shadow-lg transition-colors">
-                                  Complete
+                                <button onClick={() => { setCompletingStepIdx(idx); setQtyOk(step.output_qty || localJob.quantity_target || ""); setQtyReject("0"); }} className={`text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 text-white rounded shadow-lg transition-colors ${isFinalStep ? 'bg-purple-600 hover:bg-purple-500' : 'bg-green-600 hover:bg-green-500'}`}>
+                                  {isFinalStep ? 'Final Reconcile' : 'Complete'}
                                 </button>
                               </>
                             )}
@@ -1076,14 +1053,21 @@ export default function JobViewModal({ job, onClose }) {
                         )}
 
                         {completingStepIdx === idx && (
-                          <div className="mt-2 bg-gray-950 p-4 rounded-lg border border-green-500/30 ml-12 animate-fade-in">
-                            <h4 className="text-xs font-bold text-green-400 mb-3 uppercase tracking-wider">Complete Process: {step.process_name}</h4>
+                          <div className={`mt-2 bg-gray-950 p-4 rounded-lg border ${isFinalStep ? 'border-purple-500/50 shadow-[0_0_15px_rgba(168,85,247,0.15)]' : 'border-green-500/30'} ml-12 animate-fade-in`}>
+                            <h4 className={`text-xs font-bold uppercase tracking-wider mb-2 ${isFinalStep ? 'text-purple-400' : 'text-green-400'}`}>
+                              {isFinalStep ? `🎉 Final Step Reconciliation: ${step.process_name}` : `Complete Process: ${step.process_name}`}
+                            </h4>
+                            {isFinalStep && (
+                              <p className="text-[10px] text-gray-400 mb-4 leading-relaxed max-w-2xl">
+                                This is the final process route. Submitting these numbers will permanently lock the active job card and log the "Qty OK" directly into your Analytics performance charts as completed product.
+                              </p>
+                            )}
                             <div className="flex items-end gap-4">
-                              <div className="flex-1"><label className="block text-[10px] text-gray-500 uppercase font-bold mb-1">Qty OK (Usable)</label><input type="number" value={qtyOk} onChange={e => setQtyOk(e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-white outline-none" /></div>
+                              <div className="flex-1"><label className={`block text-[10px] uppercase font-bold mb-1 ${isFinalStep ? 'text-purple-300' : 'text-gray-500'}`}>Qty OK (Usable)</label><input type="number" value={qtyOk} onChange={e => setQtyOk(e.target.value)} className={`w-full bg-gray-900 border rounded px-3 py-2 text-sm text-white outline-none ${isFinalStep ? 'border-purple-500/50 focus:border-purple-400' : 'border-gray-700'}`} /></div>
                               <div className="flex-1"><label className="block text-[10px] text-gray-500 uppercase font-bold mb-1">Qty Rejected (Wastage)</label><input type="number" value={qtyReject} onChange={e => setQtyReject(e.target.value)} className="w-full bg-gray-900 border border-red-900/50 rounded px-3 py-2 text-sm text-white focus:border-red-500 outline-none" /></div>
                               <div className="flex gap-2">
                                 <button onClick={() => setCompletingStepIdx(null)} className="px-4 py-2 text-xs font-bold text-gray-400 hover:text-white bg-gray-800 rounded transition-colors">Cancel</button>
-                                <button onClick={() => handleCompleteStep(idx)} disabled={updating} className="px-4 py-2 text-xs font-bold text-white bg-green-600 hover:bg-green-500 rounded transition-colors disabled:opacity-50">{updating ? "Saving..." : "Confirm"}</button>
+                                <button onClick={() => handleCompleteStep(idx)} disabled={updating} className={`px-4 py-2 text-xs font-bold text-white rounded transition-colors disabled:opacity-50 ${isFinalStep ? 'bg-purple-600 hover:bg-purple-500 shadow-lg shadow-purple-900/20' : 'bg-green-600 hover:bg-green-500'}`}>{updating ? "Saving..." : (isFinalStep ? "Finalize & Log" : "Confirm")}</button>
                               </div>
                             </div>
                           </div>
@@ -1106,7 +1090,6 @@ export default function JobViewModal({ job, onClose }) {
           </div>
         </div>
       </div>
-      
     </>
   );
 }

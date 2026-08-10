@@ -2,7 +2,8 @@ import { useState, useEffect } from "react";
 import { collection, addDoc, updateDoc, doc, serverTimestamp } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage } from "../firebase/config";
-import { cleanGsm } from "../utils/helpers";
+import { cleanGsm, formatInventoryLabel } from "../utils/helpers";
+
 
 const defaultSequence = () => ({ id: Date.now(), process_name: "", assigned_machine: "", process_details: {}, remarks: "" });
 
@@ -51,6 +52,9 @@ export default function ProductTemplateModal({
   
   const [files, setFiles] = useState([]); 
   const [saving, setSaving] = useState(false);
+
+  // ⭐️ ROUND 9.9 ITEM 1: Material Picker State
+  const [pickerState, setPickerState] = useState({ openId: null, search: "", includeOutOfStock: false });
 
   useEffect(() => {
     if (isOpen) {
@@ -306,7 +310,6 @@ export default function ProductTemplateModal({
 
       const cleanParts = parts.map(part => ({
         ...part,
-        // ⭐️ ROUND 9.5 ITEM 7: Filter out empty material rows before saving to the database
         materialRows: part.materialRows
           .filter(r => r.material_name && r.material_name.trim() !== "")
           .map(r => ({
@@ -383,6 +386,117 @@ export default function ProductTemplateModal({
           );
         })}
       </div>
+    );
+  };
+
+  // ⭐️ ROUND 9.9 ITEM 1 & 2: Custom Grouped/Sorted Material Picker Renderer
+  const renderMaterialPicker = (partId, row) => {
+    const isOpen = pickerState.openId === row.id;
+    const query = (pickerState.search || "").toLowerCase();
+    
+    let filteredItems = [];
+    if (isOpen) {
+        filteredItems = inventoryItems.map(item => {
+            const formattedLabel = formatInventoryLabel(item);
+            const baseCategory = formattedLabel.split('·')[0].trim();
+            return {
+                ...item,
+                formattedLabel,
+                baseCategory,
+                stock: Number(item.qty || item.balance || 0)
+            };
+        }).filter(item => {
+            if (!pickerState.includeOutOfStock && item.stock <= 0) return false;
+            if (query) return item.formattedLabel.toLowerCase().includes(query);
+            return true;
+        });
+    }
+
+    const grouped = {};
+    filteredItems.forEach(item => {
+        if (!grouped[item.baseCategory]) grouped[item.baseCategory] = [];
+        grouped[item.baseCategory].push(item);
+    });
+    
+    const sortedCategories = Object.keys(grouped).sort();
+    sortedCategories.forEach(cat => grouped[cat].sort((a, b) => a.formattedLabel.localeCompare(b.formattedLabel)));
+
+    return (
+      <td className="p-1.5 relative">
+         <input 
+           type="text" 
+           placeholder="Search or type custom..." 
+           value={isOpen ? pickerState.search : row.material_name} 
+           onChange={e => setPickerState(prev => ({ ...prev, search: e.target.value }))}
+           onFocus={() => setPickerState({ openId: row.id, search: row.material_name, includeOutOfStock: pickerState.includeOutOfStock })}
+           onBlur={() => {
+             setTimeout(() => {
+               if (pickerState.openId === row.id) {
+                  handleMaterialRowChange(partId, row.id, 'material_name', pickerState.search || row.material_name);
+                  setPickerState(prev => ({ ...prev, openId: null }));
+               }
+             }, 250);
+           }}
+           className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:border-primary-500 outline-none" 
+         />
+         
+         {isOpen && (
+           <div className="absolute top-full left-0 mt-1 w-[400px] max-h-72 overflow-y-auto bg-gray-800 border border-gray-700 rounded-lg shadow-2xl z-[100] custom-scrollbar flex flex-col">
+              <div className="p-2 border-b border-gray-700 sticky top-0 bg-gray-900 z-10 flex justify-between items-center shrink-0">
+                 <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Select Material</span>
+                 <label className="flex items-center gap-1.5 text-[10px] font-bold text-gray-300 cursor-pointer bg-gray-800 px-2 py-1 rounded hover:bg-gray-700 transition-colors">
+                    <input 
+                      type="checkbox" 
+                      checked={pickerState.includeOutOfStock} 
+                      onChange={(e) => setPickerState(prev => ({ ...prev, includeOutOfStock: e.target.checked }))} 
+                      className="rounded bg-gray-900 border-gray-600 focus:ring-primary-500"
+                    />
+                    Include out-of-stock
+                 </label>
+              </div>
+              
+              <div className="flex-1 overflow-y-auto">
+                  {sortedCategories.length === 0 ? (
+                     <div className="p-4 text-xs text-gray-500 text-center italic">No materials found. Type to use a custom material.</div>
+                  ) : (
+                     sortedCategories.map(cat => (
+                       <div key={cat} className="border-b border-gray-700/50 last:border-0">
+                         <div className="px-3 py-1.5 bg-gray-900 text-[10px] font-black text-primary-400 uppercase tracking-widest sticky top-0 border-b border-gray-800">{cat}</div>
+                         {grouped[cat].map(item => (
+                           <div 
+                             key={item.id} 
+                             className="px-3 py-2 cursor-pointer hover:bg-primary-900/40 flex justify-between items-center transition-colors border-l-2 border-transparent hover:border-primary-500"
+                             onMouseDown={(e) => { 
+                                e.preventDefault();
+                                handleMaterialRowChange(partId, row.id, 'material_name', item.formattedLabel);
+                                
+                                if (!row.category || row.category === 'paper') {
+                                    const catL = item.baseCategory.toLowerCase();
+                                    if (catL.includes('board') || catL.includes('kappa') || catL.includes('rigid')) {
+                                        handleMaterialRowChange(partId, row.id, 'category', 'board');
+                                    } else if (catL.includes('paper') || catL.includes('art') || catL.includes('kraft')) {
+                                        handleMaterialRowChange(partId, row.id, 'category', 'paper');
+                                    } else {
+                                        handleMaterialRowChange(partId, row.id, 'category', 'other');
+                                    }
+                                }
+                                
+                                setPickerState(prev => ({ ...prev, openId: null }));
+                             }}
+                           >
+                             <span className="text-xs text-white font-medium truncate pr-4">{item.formattedLabel}</span>
+                             <span className={`text-[10px] font-mono whitespace-nowrap px-1.5 py-0.5 rounded ${item.stock > 0 ? 'bg-green-500/10 text-green-500/60' : 'bg-red-500/10 text-red-500/60'}`}>
+                                (Stock: {item.stock})
+                             </span>
+                           </div>
+                         ))}
+                       </div>
+                     ))
+                  )}
+              </div>
+           </div>
+         )}
+      </td>
     );
   };
 
@@ -555,12 +669,13 @@ export default function ProductTemplateModal({
                       <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Materials & Cutting List</span>
                       <button type="button" onClick={() => handleMaterialRowAdd(part.id)} className="text-[10px] bg-primary-900/30 text-primary-400 px-2 py-1 rounded hover:bg-primary-500 hover:text-white transition-colors">+ Add Material</button>
                     </div>
-                    <div className="overflow-x-auto">
+                    {/* Added pb-48 to ensure custom dropdown menu isn't vertically clipped inside the table wrapper */}
+                    <div className="w-full overflow-x-auto overflow-y-visible pb-48 -mb-48 relative">
                       <table className="w-full text-left">
                         <thead>
                           <tr className="bg-gray-900 text-[10px] uppercase text-gray-500 border-b border-gray-800">
                             <th className="p-2 font-bold w-6 text-center">⇅</th>
-                            <th className="p-2 font-bold min-w-[140px]">Material (Inventory/Text)</th>
+                            <th className="p-2 font-bold min-w-[200px]">Material (Inventory/Text)</th>
                             <th className="p-2 font-bold w-24">Type</th>
                             <th className="p-2 font-bold w-20">Thk / GSM</th>
                             <th className="p-2 font-bold w-32">Piece / Purpose</th>
@@ -568,7 +683,7 @@ export default function ProductTemplateModal({
                             <th className="p-2 font-bold w-16">Qty/Unit</th>
                             <th className="p-2 font-bold w-24">Unit</th>
                             <th className="p-2 font-bold w-28">Basis Calc</th>
-                            <th className="p-2 font-bold">Notes</th>
+                            <th className="p-2 font-bold min-w-[120px]">Notes</th>
                             <th className="p-2 w-8"></th>
                           </tr>
                         </thead>
@@ -581,26 +696,10 @@ export default function ProductTemplateModal({
                                   <button type="button" onClick={() => handleMaterialRowMove(part.id, rIdx, 'down')} className="text-gray-600 hover:text-white" disabled={rIdx === part.materialRows.length - 1}>▼</button>
                                 </div>
                               </td>
-                              <td className="p-1.5">
-                                <input 
-                                  type="text" 
-                                  list={`inv-list-${row.id}`}
-                                  placeholder="e.g. Kappa 2mm" 
-                                  value={row.material_name} 
-                                  onChange={e => handleMaterialRowChange(part.id, row.id, 'material_name', e.target.value)} 
-                                  className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white" 
-                                />
-                                <datalist id={`inv-list-${row.id}`}>
-                                  {inventoryItems?.map(i => {
-                                    const displayLabel = i.name || i.itemName || i.label || "Unnamed Material";
-                                    return (
-                                      <option key={i.id} value={displayLabel}>
-                                        {displayLabel} (Stock: {i.qty || i.balance || 0})
-                                      </option>
-                                    );
-                                  })}
-                                </datalist>
-                              </td>
+                              
+                              {/* ⭐️ ROUND 9.9: Inject Custom Dropdown here */}
+                              {renderMaterialPicker(part.id, row)}
+
                               <td className="p-1.5">
                                 <select value={row.category} onChange={e => handleMaterialRowChange(part.id, row.id, 'category', e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white">
                                   <option value="paper">Paper/Art</option>
@@ -655,7 +754,7 @@ export default function ProductTemplateModal({
                     </div>
                   </div>
 
-                  <div className="bg-gray-950 p-4 rounded border border-gray-800 space-y-3">
+                  <div className="bg-gray-950 p-4 rounded border border-gray-800 space-y-3 relative z-0">
                     {part.sequence.map((step, idx) => (
                       <div key={step.id} className="flex flex-col gap-2 border-l-2 border-gray-800 pl-3 py-1">
                         <div className="flex gap-3 items-center">
@@ -686,8 +785,8 @@ export default function ProductTemplateModal({
           </div>
           
           <div className="pt-4 flex justify-end gap-3 border-t border-gray-800">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-gray-400 bg-gray-950 rounded">Cancel</button>
-            <button type="submit" disabled={saving} className="bg-primary-600 hover:bg-primary-500 text-white font-bold px-6 py-2 rounded shadow-lg flex items-center gap-2">
+            <button type="button" onClick={onClose} className="px-4 py-2 text-gray-400 bg-gray-950 rounded hover:text-white transition-colors">Cancel</button>
+            <button type="submit" disabled={saving} className="bg-primary-600 hover:bg-primary-500 text-white font-bold px-6 py-2 rounded shadow-lg flex items-center gap-2 transition-colors disabled:opacity-50">
               {saving ? (
                 <>
                   <svg className="animate-spin h-4 w-4 text-white" viewBox="0 0 24 24">

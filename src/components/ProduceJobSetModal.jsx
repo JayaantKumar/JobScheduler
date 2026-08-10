@@ -18,11 +18,12 @@ export default function ProduceJobSetModal({
   updatePartCustomPcs,
   handleStepQtyChange,
   togglePartExpanded,
+  updatePartNotes, // ⭐️ ROUND 10 ITEM B1: New prop for notes
   machines,
   dbProcesses,
   inventoryItems,
   dies,
-  locations, // ⭐️ ROUND 9.5 ITEM 2: Added locations prop to resolve IDs
+  locations,
   onSuccess
 }) {
   const [producing, setProducing] = useState(false);
@@ -111,7 +112,6 @@ export default function ProduceJobSetModal({
           };
         });
 
-        // ⭐️ ROUND 9.5 ITEM 7: Filter out rows with empty material names before committing
         const processedMaterialRows = (masterPart.materialRows || [])
           .filter(row => row.isDie || (row.material_name && row.material_name.trim() !== ""))
           .map(row => {
@@ -175,7 +175,9 @@ export default function ProduceJobSetModal({
           deadline: new Date(produceDate).toISOString(),
           status: "pending", 
           process_sequence: final_process_sequence, 
-          notes: "Auto-generated multi-part set.",
+          
+          // ⭐️ ROUND 10 ITEM B1: Store custom notes or leave totally blank
+          notes: pState.notes || "",
           
           activity_log: [{
             id: Date.now().toString() + i,
@@ -228,7 +230,6 @@ export default function ProduceJobSetModal({
               {produceParts.map((p, pIdx) => {
                 const masterPart = activeProduceProduct.parts.find(mp => mp.id === p.id) || activeProduceProduct.parts[pIdx];
                 
-                // ⭐️ ROUND 9.5 ITEM 7: Filter out rows with empty material names on UI preview
                 const cuttingList = (masterPart.materialRows || []).filter(row => row.isDie || (row.material_name && row.material_name.trim() !== ""));
                 
                 const firstStepWithMachine = p.sequence?.find(step => step.assigned_machine);
@@ -257,32 +258,46 @@ export default function ProduceJobSetModal({
                     </button>
                   </div>
 
-                  <div className="flex flex-wrap gap-4 items-end bg-gray-950 p-3 rounded border border-gray-800">
-                    <div className="relative">
-                      <label className="block text-[10px] uppercase text-primary-400 font-bold mb-1">
-                        Target Sets for Part
-                        {p.dirtyFields?.part_sets && <span className="absolute -top-1 -right-2 w-2 h-2 bg-orange-500 rounded-full shadow-[0_0_4px_#f97316]" title="Manually edited (Locked)"></span>}
-                      </label>
-                      <input type="number" value={p.part_sets} onChange={e => updatePartSets(pIdx, e.target.value)} className="w-24 bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-xs text-white font-bold focus:border-primary-500 outline-none" />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] uppercase text-gray-500 font-bold mb-1">Multiplier</label>
-                      <input type="number" step="any" value={p.active_multiplier} onChange={e => updatePartMultiplier(pIdx, e.target.value)} className="w-20 bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-xs text-white" disabled={p.is_custom_override} />
-                    </div>
-                    <div className="text-gray-600 font-bold mb-1.5 text-xs">OR</div>
-                    <div className="relative">
-                      <label className="block text-[10px] uppercase text-gray-500 font-bold mb-1">
-                        Direct Pieces Override
-                        {p.dirtyFields?.custom_override && <span className="absolute -top-1 -right-2 w-2 h-2 bg-orange-500 rounded-full shadow-[0_0_4px_#f97316]" title="Manually edited (Locked)"></span>}
-                      </label>
-                      <div className="flex items-center gap-2">
-                        <input type="checkbox" checked={p.is_custom_override} onChange={e => toggleCustomOverride(pIdx, e.target.checked)} />
-                        <input type="number" value={p.is_custom_override ? p.final_pcs : ""} onChange={e => updatePartCustomPcs(pIdx, e.target.value)} disabled={!p.is_custom_override} className="w-28 bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-xs text-white disabled:opacity-50" placeholder="Custom Pcs" />
+                  <div className="flex flex-col gap-3 bg-gray-950 p-3 rounded border border-gray-800">
+                    <div className="flex flex-wrap gap-4 items-end">
+                      <div className="relative">
+                        <label className="block text-[10px] uppercase text-primary-400 font-bold mb-1">
+                          Target Sets for Part
+                          {p.dirtyFields?.part_sets && <span className="absolute -top-1 -right-2 w-2 h-2 bg-orange-500 rounded-full shadow-[0_0_4px_#f97316]" title="Manually edited (Locked)"></span>}
+                        </label>
+                        <input type="number" value={p.part_sets} onChange={e => updatePartSets(pIdx, e.target.value)} className="w-24 bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-xs text-white font-bold focus:border-primary-500 outline-none" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] uppercase text-gray-500 font-bold mb-1">Multiplier</label>
+                        <input type="number" step="any" value={p.active_multiplier} onChange={e => updatePartMultiplier(pIdx, e.target.value)} className="w-20 bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-xs text-white" disabled={p.is_custom_override} />
+                      </div>
+                      <div className="text-gray-600 font-bold mb-1.5 text-xs">OR</div>
+                      <div className="relative">
+                        <label className="block text-[10px] uppercase text-gray-500 font-bold mb-1">
+                          Direct Pieces Override
+                          {p.dirtyFields?.custom_override && <span className="absolute -top-1 -right-2 w-2 h-2 bg-orange-500 rounded-full shadow-[0_0_4px_#f97316]" title="Manually edited (Locked)"></span>}
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <input type="checkbox" checked={p.is_custom_override} onChange={e => toggleCustomOverride(pIdx, e.target.checked)} />
+                          <input type="number" value={p.is_custom_override ? p.final_pcs : ""} onChange={e => updatePartCustomPcs(pIdx, e.target.value)} disabled={!p.is_custom_override} className="w-28 bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-xs text-white disabled:opacity-50" placeholder="Custom Pcs" />
+                        </div>
+                      </div>
+                      <div className="ml-auto text-right">
+                        <span className="text-[10px] text-gray-500 uppercase font-bold block">Calculated Blanks</span>
+                        <span className="text-xl font-black text-white">{p.final_pcs === "" ? "—" : `${p.final_pcs.toLocaleString()} pcs`}</span>
                       </div>
                     </div>
-                    <div className="ml-auto text-right">
-                      <span className="text-[10px] text-gray-500 uppercase font-bold block">Calculated Blanks</span>
-                      <span className="text-xl font-black text-white">{p.final_pcs === "" ? "—" : `${p.final_pcs.toLocaleString()} pcs`}</span>
+                    
+                    {/* ⭐️ ROUND 10 ITEM B1: Special Instructions per Part */}
+                    <div className="border-t border-gray-800/50 pt-3 mt-1">
+                      <label className="block text-[10px] uppercase text-gray-500 font-bold mb-1.5">Special Instructions / Notes (Optional)</label>
+                      <input 
+                        type="text" 
+                        value={p.notes || ""} 
+                        onChange={e => updatePartNotes(pIdx, e.target.value)} 
+                        placeholder="e.g. Ensure grain direction is parallel to the longer side..." 
+                        className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-xs text-white focus:border-primary-500 outline-none" 
+                      />
                     </div>
                   </div>
 
@@ -319,7 +334,6 @@ export default function ProduceJobSetModal({
                               const totalBal = Number(invItem.balance ?? invItem.qty ?? 0);
                               const localBalances = invItem.balances || {};
                               
-                              // ⭐️ ROUND 9.5 ITEM 2: Map the target code to ID for UI preview balance check
                               const resolvedTargetLoc = locations?.find(l => l.code === targetPlace);
                               const targetLocId = resolvedTargetLoc ? resolvedTargetLoc.id : targetPlace; 
                               
@@ -330,7 +344,6 @@ export default function ProduceJobSetModal({
                               if (req > totalBal) {
                                 stockDisplay = <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-red-500/20 text-red-400">SHORT {req - totalBal}</span>;
                               } else if (req > localBal) {
-                                // ⭐️ ROUND 9.5 ITEM 2: Reverse-map holding IDs back to readable codes
                                 const holding = Object.entries(localBalances)
                                      .filter(([, q]) => q > 0)
                                      .map(([locKey]) => {
@@ -406,11 +419,11 @@ export default function ProduceJobSetModal({
           )}
 
           <div className="pt-6 border-t border-gray-800 shrink-0 flex justify-end gap-3 sticky bottom-0 bg-[#0a0f1a] pb-2">
-            <button type="button" onClick={onClose} className="px-5 py-2.5 text-gray-400 bg-gray-900 rounded-lg">Cancel</button>
+            <button type="button" onClick={onClose} className="px-5 py-2.5 text-gray-400 bg-gray-900 rounded-lg hover:text-white transition-colors">Cancel</button>
             <button 
               type="submit" 
               disabled={producing || produceParts.length === 0} 
-              className="bg-primary-600 hover:bg-primary-500 disabled:opacity-50 text-white px-6 py-2.5 rounded-lg font-bold shadow-lg flex items-center justify-center min-w-[220px]"
+              className="bg-primary-600 hover:bg-primary-500 disabled:opacity-50 text-white px-6 py-2.5 rounded-lg font-bold shadow-lg flex items-center justify-center min-w-[220px] transition-colors"
             >
               {producing ? (
                 <span className="flex items-center gap-2">

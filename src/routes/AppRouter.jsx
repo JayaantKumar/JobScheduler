@@ -12,6 +12,7 @@ import ProductManagement from "../pages/ProductManagement";
 import ProcessManagement from "../pages/ProcessManagement";
 import InventoryManagement from "../pages/InventoryManagement";
 import OperationsBoard from "../components/OperationsBoard"; // ⭐️ ADDED IMPORT
+import Settings from "../pages/Settings"; // ⭐️ ADDED IMPORT
 
 const ProtectedRoute = ({ children, requiredRole }) => {
   const { user, role } = useAuth();
@@ -54,6 +55,7 @@ export const AppRouter = () => {
           
           {/* ⭐️ ADDED NEW OPERATIONS BOARD ROUTE */}
           <Route path="operations-board" element={<OperationsBoard />} />
+          <Route path="settings" element={<Settings />} />
         </Route>
         
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
