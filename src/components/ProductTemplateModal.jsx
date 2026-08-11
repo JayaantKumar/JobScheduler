@@ -438,7 +438,7 @@ export default function ProductTemplateModal({
          />
          
          {isOpen && (
-           <div className="absolute top-full left-0 mt-1 w-[400px] max-h-72 overflow-y-auto bg-gray-800 border border-gray-700 rounded-lg shadow-2xl z-[100] custom-scrollbar flex flex-col">
+           <div className="absolute top-full left-0 mt-1 w-[400px] max-h-72 overflow-y-auto bg-gray-800 border border-gray-700 rounded-lg shadow-2xl z-[99999] custom-scrollbar flex flex-col">
               <div className="p-2 border-b border-gray-700 sticky top-0 bg-gray-900 z-10 flex justify-between items-center shrink-0">
                  <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Select Material</span>
                  <label className="flex items-center gap-1.5 text-[10px] font-bold text-gray-300 cursor-pointer bg-gray-800 px-2 py-1 rounded hover:bg-gray-700 transition-colors">
@@ -659,11 +659,12 @@ export default function ProductTemplateModal({
                 </div>
 
                 <div className="p-4 space-y-4">
-                  <div className="border border-gray-800 rounded-lg">
-                    <div className="bg-gray-950 px-4 py-2 border-b border-gray-800 flex justify-between items-center">
-                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Materials & Cutting List</span>
-                      <button type="button" onClick={() => handleMaterialRowAdd(part.id)} className="text-[10px] bg-primary-900/30 text-primary-400 px-2 py-1 rounded hover:bg-primary-500 hover:text-white transition-colors">+ Add Material</button>
-                    </div>
+                  {/* Materials Table Container with visible overflow so dropdown escapes */}
+<div className="border border-gray-800 rounded-lg overflow-visible relative">
+  <div className="bg-gray-950 px-4 py-2 border-b border-gray-800 flex justify-between items-center rounded-t-lg">
+    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Materials & Cutting List</span>
+    <button type="button" onClick={() => handleMaterialRowAdd(part.id)} className="text-[10px] bg-primary-900/30 text-primary-400 px-2 py-1 rounded hover:bg-primary-500 hover:text-white transition-colors">+ Add Material</button>
+  </div>
                     
                     <div className="w-full relative">
                       <table className="w-full text-left">
