@@ -5,7 +5,9 @@ import { db, storage } from "../firebase/config";
 
 export default function Settings() {
   const [logoUrl, setLogoUrl] = useState("");
+  const [companyName, setCompanyName] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [savingName, setSavingName] = useState(false);
   const [toast, setToast] = useState({ show: false, msg: "", type: "success" });
 
   const showToast = (msg, type = "success") => {
@@ -18,8 +20,14 @@ export default function Settings() {
       try {
         const docRef = doc(db, "settings", "global");
         const docSnap = await getDoc(docRef);
-        if (docSnap.exists() && docSnap.data().companyLogo) {
-          setLogoUrl(docSnap.data().companyLogo);
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          if (data.logoUrl || data.companyLogo) {
+            setLogoUrl(data.logoUrl || data.companyLogo);
+          }
+          if (data.companyName) {
+            setCompanyName(data.companyName);
+          }
         }
       } catch (error) {
         console.error("Failed to load settings:", error);
@@ -38,13 +46,12 @@ export default function Settings() {
 
     setUploading(true);
     try {
-      // 1. Upload to Storage
       const storageRef = ref(storage, `settings/company_logo_${Date.now()}`);
       await uploadBytes(storageRef, file);
       const downloadUrl = await getDownloadURL(storageRef);
 
-      // 2. Save to Firestore
-      await setDoc(doc(db, "settings", "global"), { companyLogo: downloadUrl }, { merge: true });
+      // Save both logoUrl and companyLogo for cross-compatibility
+      await setDoc(doc(db, "settings", "global"), { logoUrl: downloadUrl, companyLogo: downloadUrl }, { merge: true });
       
       setLogoUrl(downloadUrl);
       showToast("Company logo updated successfully!");
@@ -52,6 +59,19 @@ export default function Settings() {
       showToast("Failed to upload logo: " + error.message, "error");
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleSaveCompanyName = async (e) => {
+    e.preventDefault();
+    setSavingName(true);
+    try {
+      await setDoc(doc(db, "settings", "global"), { companyName }, { merge: true });
+      showToast("Company name updated successfully!");
+    } catch (error) {
+      showToast("Failed to save company name: " + error.message, "error");
+    } finally {
+      setSavingName(false);
     }
   };
 
@@ -71,9 +91,31 @@ export default function Settings() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Branding & Logo Card */}
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 shadow-xl">
-          <h3 className="text-lg font-bold text-white mb-4 border-b border-gray-800 pb-2">Company Branding</h3>
+          <h3 className="text-lg font-bold text-white mb-4 border-b border-gray-800 pb-2">Company Branding & Details</h3>
           
-          <div className="space-y-4">
+          <div className="space-y-6">
+            {/* Company Name Form */}
+            <form onSubmit={handleSaveCompanyName} className="space-y-2">
+              <label className="block text-sm font-bold text-gray-400">Company Name</label>
+              <div className="flex gap-3">
+                <input 
+                  type="text" 
+                  value={companyName} 
+                  onChange={(e) => setCompanyName(e.target.value)} 
+                  placeholder="e.g. Janus Print" 
+                  className="flex-1 bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary-500"
+                />
+                <button 
+                  type="submit" 
+                  disabled={savingName}
+                  className="bg-primary-600 hover:bg-primary-500 text-white px-5 py-2.5 rounded-lg font-bold text-sm transition-colors shadow-lg disabled:opacity-50"
+                >
+                  {savingName ? "Saving..." : "Save Name"}
+                </button>
+              </div>
+            </form>
+
+            {/* Logo Upload Section */}
             <div>
               <label className="block text-sm font-bold text-gray-400 mb-2">Printed Job Card Logo</label>
               <div className="flex items-start gap-6">
@@ -85,7 +127,7 @@ export default function Settings() {
                   )}
                 </div>
                 <div className="flex flex-col gap-2">
-                  <label className="bg-primary-600 hover:bg-primary-500 text-white px-4 py-2 rounded-lg font-bold text-sm cursor-pointer transition-colors shadow-lg text-center w-max">
+                  <label className="bg-gray-800 hover:bg-gray-700 text-white px-4 py-2 rounded-lg font-bold text-sm cursor-pointer transition-colors shadow-lg text-center w-max border border-gray-700">
                     {uploading ? "Uploading..." : "Upload New Logo"}
                     <input type="file" accept="image/png, image/jpeg, image/svg+xml" className="hidden" onChange={handleLogoUpload} disabled={uploading} />
                   </label>

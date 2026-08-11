@@ -4,7 +4,6 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage } from "../firebase/config";
 import { cleanGsm, formatInventoryLabel } from "../utils/helpers";
 
-
 const defaultSequence = () => ({ id: Date.now(), process_name: "", assigned_machine: "", process_details: {}, remarks: "" });
 
 const defaultMaterialRow = () => ({
@@ -53,7 +52,6 @@ export default function ProductTemplateModal({
   const [files, setFiles] = useState([]); 
   const [saving, setSaving] = useState(false);
 
-  // ⭐️ ROUND 9.9 ITEM 1: Material Picker State
   const [pickerState, setPickerState] = useState({ openId: null, search: "", includeOutOfStock: false });
 
   useEffect(() => {
@@ -389,7 +387,6 @@ export default function ProductTemplateModal({
     );
   };
 
-  // ⭐️ ROUND 9.9 ITEM 1 & 2: Custom Grouped/Sorted Material Picker Renderer
   const renderMaterialPicker = (partId, row) => {
     const isOpen = pickerState.openId === row.id;
     const query = (pickerState.search || "").toLowerCase();
@@ -635,9 +632,8 @@ export default function ProductTemplateModal({
             </div>
 
             {parts.map((part, pIndex) => (
-              <div key={part.id} className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden shadow-lg">
-                
-                <div className="bg-[#151724] border-b border-gray-800 p-4 flex justify-between items-center flex-wrap gap-4">
+              <div key={part.id} className="bg-gray-900 border border-gray-800 rounded-xl shadow-lg">
+                <div className="bg-[#151724] border-b border-gray-800 p-4 rounded-t-xl flex justify-between items-center flex-wrap gap-4">
                   <div className="flex items-center gap-3">
                     <span className="bg-primary-500/20 text-primary-400 font-bold w-8 h-8 rounded flex items-center justify-center border border-primary-500/30">{String.fromCharCode(65 + pIndex)}</span>
                     <input required type="text" value={part.part_name} onChange={e => updatePartField(part.id, 'part_name', e.target.value)} className="bg-gray-950 border border-gray-800 rounded px-3 py-1 text-sm font-bold text-white focus:border-primary-500 outline-none" placeholder="Part Label (e.g. Lid)" />
@@ -663,14 +659,13 @@ export default function ProductTemplateModal({
                 </div>
 
                 <div className="p-4 space-y-4">
-                  
-                  <div className="border border-gray-800 rounded-lg overflow-hidden">
+                  <div className="border border-gray-800 rounded-lg">
                     <div className="bg-gray-950 px-4 py-2 border-b border-gray-800 flex justify-between items-center">
                       <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Materials & Cutting List</span>
                       <button type="button" onClick={() => handleMaterialRowAdd(part.id)} className="text-[10px] bg-primary-900/30 text-primary-400 px-2 py-1 rounded hover:bg-primary-500 hover:text-white transition-colors">+ Add Material</button>
                     </div>
-                    {/* Added pb-48 to ensure custom dropdown menu isn't vertically clipped inside the table wrapper */}
-                    <div className="w-full overflow-x-auto overflow-y-visible pb-48 -mb-48 relative">
+                    
+                    <div className="w-full relative">
                       <table className="w-full text-left">
                         <thead>
                           <tr className="bg-gray-900 text-[10px] uppercase text-gray-500 border-b border-gray-800">
@@ -697,7 +692,6 @@ export default function ProductTemplateModal({
                                 </div>
                               </td>
                               
-                              {/* ⭐️ ROUND 9.9: Inject Custom Dropdown here */}
                               {renderMaterialPicker(part.id, row)}
 
                               <td className="p-1.5">

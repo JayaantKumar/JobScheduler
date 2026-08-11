@@ -27,23 +27,31 @@ export default function ProduceJobSetModal({
   onSuccess
 }) {
   const [producing, setProducing] = useState(false);
+  const [errorMsg, setErrorMsg] = useState(""); // ⭐️ Added inline error state
 
   if (!isOpen) return null;
 
   const handleQuickProduce = async (e) => {
     e.preventDefault();
+    setErrorMsg(""); // Clear previous errors
     
     if (producing) return; 
-    if (!produceQty || !produceDate) return alert("Please enter sets quantity and due date.");
     
-    // ⭐️ ROUND 11 FIX (ITEM 4): Strict Zero-Quantity Blocker
+    if (!produceQty || !produceDate) {
+      setErrorMsg("Please enter sets quantity and due date.");
+      return;
+    }
+    
+    // ⭐️ ROUND 13 FIX (ITEM 6): Inline Zero-Quantity Blocker
     const zeroQtyParts = produceParts.filter(p => !p.final_pcs || p.final_pcs <= 0);
     if (zeroQtyParts.length > 0) {
       const affectedNames = zeroQtyParts.map((p, i) => {
         const mp = activeProduceProduct.parts.find(master => master.id === p.id) || activeProduceProduct.parts[i];
         return mp?.part_name || `Part ${i+1}`;
       }).join(", ");
-      return alert(`Cannot generate jobs with zero quantity. Please check Target Sets or Custom Overrides for: ${affectedNames}`);
+      
+      setErrorMsg(`Cannot generate jobs with zero quantity. Please check Target Sets or Custom Overrides for: ${affectedNames}`);
+      return;
     }
 
     setProducing(true);
@@ -208,7 +216,7 @@ export default function ProduceJobSetModal({
       onClose();
       onSuccess("Success! Multi-part job cards have been generated.");
     } catch (error) { 
-      alert("Failed to generate multi-part jobs: " + error.message); 
+      setErrorMsg("Failed to generate multi-part jobs: " + error.message); 
     } finally { 
       setProducing(false); 
     }
@@ -221,6 +229,14 @@ export default function ProduceJobSetModal({
           <h3 className="text-xl font-bold text-white">🚀 Generate Job Set</h3>
           <p className="text-xs text-gray-400 mt-1">Review Pre-Production requirements and set counts.</p>
         </div>
+        
+        {/* ⭐️ Inline Error Banner */}
+        {errorMsg && (
+          <div className="mx-6 mt-6 bg-red-500/10 border border-red-500/50 text-red-400 px-4 py-3 rounded flex items-start gap-3 shadow-lg">
+            <span className="text-lg leading-none">🚨</span>
+            <div className="font-bold text-sm leading-tight">{errorMsg}</div>
+          </div>
+        )}
         
         <form onSubmit={handleQuickProduce} className="p-6 overflow-y-auto custom-scrollbar flex-1 space-y-6 bg-[#0a0f1a]">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -428,7 +444,7 @@ export default function ProduceJobSetModal({
             </div>
           )}
 
-          <div className="pt-6 border-t border-gray-800 shrink-0 flex justify-end gap-3 sticky bottom-0 bg-[#0a0f1a] pb-2">
+          <div className="pt-6 border-t border-gray-800 shrink-0 flex justify-end gap-3 sticky bottom-0 bg-[#0a0f1a] pb-2 z-10">
             <button type="button" onClick={onClose} className="px-5 py-2.5 text-gray-400 bg-gray-900 rounded-lg hover:text-white transition-colors">Cancel</button>
             <button 
               type="submit" 

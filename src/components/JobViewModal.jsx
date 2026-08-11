@@ -99,8 +99,10 @@ export default function JobViewModal({ job, onClose }) {
   // ⭐️ ROUND 10 ITEM B2: Print Counter Logic
   const handlePrint = () => {
     // 1. Instantly open the tab
-    const newTab = window.open(`/print/${job.id}`, '_blank');
-    
+    const newTab = window.open(`/print/${job.id}?autoprint=1`, '_blank');
+if (!newTab || newTab.closed || typeof newTab.closed === 'undefined') {
+  window.location.href = `/print/${job.id}?autoprint=1`;
+}
     // 2. Fallback if blocked
     if (!newTab || newTab.closed || typeof newTab.closed === 'undefined') {
       window.location.href = `/print/${job.id}`;

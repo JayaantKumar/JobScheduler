@@ -249,7 +249,10 @@ export default function OperationsBoard() {
     e.stopPropagation();
     
     // 1. Instantly open the tab (Synchronous, keeps user gesture)
-    const newTab = window.open(`/print/${job.id}`, '_blank');
+    const newTab = window.open(`/print/${job.id}?autoprint=1`, '_blank');
+if (!newTab || newTab.closed || typeof newTab.closed === 'undefined') {
+  window.location.href = `/print/${job.id}?autoprint=1`;
+}
     
     // 2. Fallback if Brave/Safari strictly blocks it
     if (!newTab || newTab.closed || typeof newTab.closed === 'undefined') {
