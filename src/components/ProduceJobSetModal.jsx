@@ -39,7 +39,7 @@ export default function ProduceJobSetModal({
         const masterPart = activeProduceProduct.parts.find(mp => mp.id === p.id) || activeProduceProduct.parts[i];
         const rows = masterPart?.materialRows || [];
         
-        // ⭐️ Fallback: If template has no rows, provide a default empty row so the table is never blank
+        // Fallback: If template has no rows, provide a default empty row so the table is never blank
         if (rows.length === 0) {
           return [{
             id: Date.now() + Math.random(),
@@ -55,7 +55,17 @@ export default function ProduceJobSetModal({
           }];
         }
         
-        return rows.map(r => ({ ...r, is_substituted: false }));
+        // ⭐️ ROUND 16 FIX (POINT 2): Strictly inherit template Basis Calc settings
+        return rows.map(r => {
+           const cat = (r.category || '').toLowerCase();
+           const isBoardOrPaper = cat === 'paper' || cat === 'board' || cat === 'rigid' || cat.includes('kraft') || cat.includes('kappa');
+           return {
+             ...r,
+             basis: r.basis || (isBoardOrPaper ? 'per_step' : 'per_piece'),
+             basis_step_index: r.basis_step_index !== undefined ? Number(r.basis_step_index) : 0,
+             is_substituted: false
+           };
+        });
       });
       setLocalMaterials(initialMats);
     }
@@ -75,7 +85,6 @@ export default function ProduceJobSetModal({
           if (rawCat.includes('paper') || rawCat.includes('art') || rawCat.includes('kraft')) newCategory = 'paper';
           else if (rawCat.includes('board') || rawCat.includes('kappa') || rawCat.includes('rigid')) newCategory = 'board';
 
-          // ⭐️ ROUND 15 FIX: Smart fallback to extract missing GSM/Size from the formatted label
           const labelParts = (item.formattedLabel || "").split('·').map(s => s.trim());
           let extractedGsm = item.gsm || item.thickness || item.thickness_mm || "";
           let extractedSize = item.size || "";
@@ -569,7 +578,6 @@ export default function ProduceJobSetModal({
                                 <th className="py-2 w-1/3">Material Setup / Override</th>
                                 <th className="py-2 px-2">Purpose / Area</th>
                                 <th className="py-2 px-2 w-20">Qty/Unit</th>
-                                {/* ⭐️ ROUND 15 FIX (POINT 1): Added missing Basis Calc Column */}
                                 <th className="py-2 px-2 w-28">Basis Calc</th>
                                 <th className="py-2 text-right">Target Req & Live Stock</th>
                                 <th className="py-2 w-8"></th>
@@ -592,7 +600,6 @@ export default function ProduceJobSetModal({
                                   req = (Number(row.qty_per_unit) || 1) * Number(p.final_pcs);
                                 }
                                 
-                                // ⭐️ ROUND 15 FIX (POINT 3): Ensure we match via material_id first to prevent "FREE TEXT" errors on valid items
                                 const invItem = inventoryItems?.find(inv => {
                                   if (row.material_id && inv.id === row.material_id) return true;
                                   return formatInventoryLabel(inv) === row.material_name;
@@ -610,10 +617,12 @@ export default function ProduceJobSetModal({
                                   if (req > totalBal) {
                                     stockDisplay = <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-red-500/20 text-red-400">SHORT {req - totalBal}</span>;
                                   } else if (req > localBal) {
+                                    // ⭐️ ROUND 16 FIX (POINT 3): Ensure location IDs are resolved via string matching so they don't break
                                     const holding = Object.entries(localBalances).filter(([, q]) => q > 0).map(([locKey]) => {
-                                      const matchedLoc = locations?.find(l => l.id === locKey || l.code === locKey);
-                                      return matchedLoc ? matchedLoc.code : locKey;
+                                      const matchedLoc = locations?.find(l => String(l.id) === String(locKey) || String(l.code) === String(locKey));
+                                      return matchedLoc ? (matchedLoc.code || matchedLoc.name) : locKey;
                                     }).join(', ');
+                                    
                                     stockDisplay = (
                                        <div className="flex flex-col items-end gap-0.5">
                                          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-purple-500/20 text-purple-400 border border-purple-500/30">TRANSFER REQ</span>
@@ -635,7 +644,6 @@ export default function ProduceJobSetModal({
                                       <input type="number" step="any" value={row.qty_per_unit || ""} onChange={e => updateLocalMaterial(pIdx, row.id, 'qty_per_unit', e.target.value)} className={`w-full bg-gray-900 border ${row.is_substituted ? 'border-orange-500/50 text-orange-100' : 'border-gray-700 text-white'} rounded px-2 py-1.5 text-xs focus:border-primary-500 outline-none transition-colors`} />
                                     </td>
                                     
-                                    {/* ⭐️ ROUND 15 FIX (POINT 1): Render missing Basis Calc controls */}
                                     <td className="py-2 px-2">
                                       <select value={row.basis || 'per_piece'} onChange={e => updateLocalMaterial(pIdx, row.id, 'basis', e.target.value)} className={`w-full bg-gray-900 border ${row.is_substituted ? 'border-orange-500/50 text-orange-100' : 'border-gray-700 text-white'} rounded px-2 py-1 text-[9px] font-bold uppercase tracking-wider mb-1 outline-none transition-colors`}>
                                         <option value="per_piece">Per Fin. Piece</option>

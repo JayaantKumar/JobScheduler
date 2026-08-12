@@ -10,12 +10,14 @@ export default function Jobs() {
   const { customers } = useCustomers();
   
   const [activeTab, setActiveTab] = useState("All");
-  const [selectedCustomerFilter, setSelectedCustomerFilter] = useState(""); // ⭐️ ROUND 9.8: Customer Filter
-  const [searchQuery, setSearchQuery] = useState(""); // ⭐️ ROUND 9.8: Search Query (ID, Set Code, Product, SKU, PO)
+  const [selectedCustomerFilter, setSelectedCustomerFilter] = useState("");
+  const [searchQuery, setSearchQuery] = useState(""); 
   const [viewingJob, setViewingJob] = useState(null);
-  const [confirmConfig, setConfirmConfig] = useState(null); // ⭐️ ROUND 9.7: Inline Confirm
+  const [confirmConfig, setConfirmConfig] = useState(null); 
 
-  // ⭐️ ROUND 9.7 ITEM 4: Replaced native window.confirm and alert
+  // ⭐️ ROUND 16 FIX: State for collapsing/expanding Job Sets
+  const [expandedSets, setExpandedSets] = useState({});
+
   const handleDelete = (id) => {
     setConfirmConfig({
       isOpen: true,
@@ -62,9 +64,8 @@ export default function Jobs() {
     return activeStep?.status === 'in_progress' || activeStep?.status === 'scheduled';
   };
 
-  // ⭐️ ROUND 9.8: Combined Tabs + Customer Filter + Advanced Search
   const filteredGroups = groupedJobs.filter(group => {
-    // 1. Search Query Filter (Matches Job ID, Set Code, Product Name, SKU, Customer PO)
+    // 1. Search Query Filter
     if (searchQuery.trim() !== "") {
       const q = searchQuery.toLowerCase().trim();
       const matchesAnyJob = group.some(j => {
@@ -72,7 +73,7 @@ export default function Jobs() {
         const setId = (j.set_code || "").toLowerCase();
         const prodName = (j.title || j.product_snapshot?.name || j.product?.name || "").toLowerCase();
         const sku = (j.product_snapshot?.sku || j.product?.sku || "").toLowerCase();
-        const customerPo = (j.customer_po || j.po_number || "").toLowerCase(); // Future-proof PO field support
+        const customerPo = (j.customer_po || j.po_number || "").toLowerCase(); 
         
         return displayId.includes(q) || setId.includes(q) || prodName.includes(q) || sku.includes(q) || customerPo.includes(q);
       });
@@ -102,6 +103,26 @@ export default function Jobs() {
 
     return true;
   });
+
+  // ⭐️ ROUND 16 FIX: Toggle logic for Sets
+  const toggleSet = (setCode) => {
+    setExpandedSets(prev => ({ ...prev, [setCode]: !prev[setCode] }));
+  };
+
+  const handleToggleAllSets = () => {
+    const anyExpanded = Object.values(expandedSets).some(Boolean);
+    if (anyExpanded) {
+      setExpandedSets({}); // Collapse all
+    } else {
+      // Expand all currently visible sets
+      const all = {};
+      filteredGroups.forEach(g => {
+        const isSet = g.length > 1 || (g[0].parts_total > 1 && g[0].set_code);
+        if (isSet) all[g[0].set_code] = true;
+      });
+      setExpandedSets(all);
+    }
+  };
 
   if (loading) return <div className="p-8 text-primary-500 animate-pulse font-medium">Loading Job Data...</div>;
 
@@ -151,7 +172,6 @@ export default function Jobs() {
   return (
     <div className="max-w-[1600px] mx-auto p-4 sm:p-6 h-full flex flex-col">
       
-      {/* Inline Confirmation Modal */}
       {confirmConfig && confirmConfig.isOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
           <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-md shadow-2xl overflow-hidden animate-fade-in">
@@ -176,7 +196,6 @@ export default function Jobs() {
         </div>
       </div>
 
-      {/* Filters Bar: Customer Dropdown + Advanced Search Box */}
       <div className="flex flex-col sm:flex-row gap-4 mb-6">
         <select
           value={selectedCustomerFilter}
@@ -196,6 +215,18 @@ export default function Jobs() {
           onChange={(e) => setSearchQuery(e.target.value)}
           className="flex-1 max-w-lg bg-gray-950 border border-gray-800 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary-500"
         />
+
+        {/* ⭐️ ROUND 16 FIX: Expand / Collapse All Toggle Button */}
+        <button 
+          onClick={handleToggleAllSets} 
+          className="bg-gray-900 border border-gray-700 text-gray-300 px-4 py-2.5 rounded-lg text-sm font-bold hover:text-white hover:bg-gray-800 transition-colors whitespace-nowrap flex items-center justify-center gap-2"
+        >
+          {Object.values(expandedSets).some(Boolean) ? (
+            <>Collapse All Sets <svg className="w-4 h-4 rotate-180 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg></>
+          ) : (
+            <>Expand All Sets <svg className="w-4 h-4 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg></>
+          )}
+        </button>
       </div>
 
       <div className="flex items-center gap-6 border-b border-gray-800 mb-6 overflow-x-auto no-scrollbar">
@@ -247,13 +278,26 @@ export default function Jobs() {
                     else if (group.some(isJobOnHold)) setStatus = "on_hold";
                     else if (group.some(isJobInProgress)) setStatus = "in_progress";
 
+                    const isExpanded = expandedSets[setCode];
+
                     return (
                       <Fragment key={`set-${setCode}`}>
-                        <tr className="bg-[#151724] border-t-2 border-gray-800">
+                        {/* ⭐️ ROUND 16 FIX: Make the entire Set header clickable to expand/collapse */}
+                        <tr 
+                          onClick={() => toggleSet(setCode)}
+                          className="bg-[#151724] border-t-2 border-gray-800 cursor-pointer hover:bg-gray-800/60 transition-colors group"
+                        >
                           <td className="py-4 px-6">
-                            <span className="font-mono text-sm font-bold text-primary-400">
-                              SET-{setCode}
-                            </span>
+                            <div className="flex items-center gap-2">
+                              <button className="text-gray-500 group-hover:text-white transition-colors focus:outline-none">
+                                <svg className={`w-4 h-4 transition-transform duration-200 ${isExpanded ? 'rotate-180 text-primary-400' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+                                </svg>
+                              </button>
+                              <span className="font-mono text-sm font-bold text-primary-400">
+                                SET-{setCode}
+                              </span>
+                            </div>
                           </td>
                           <td className="py-4 px-6">
                             <div className="font-bold text-white text-sm">
@@ -280,7 +324,8 @@ export default function Jobs() {
                           <td className="py-4 px-6 text-right"></td>
                         </tr>
 
-                        {group.map(job => (
+                        {/* ⭐️ ROUND 16 FIX: Only render child rows if expanded */}
+                        {isExpanded && group.map(job => (
                           <tr key={job.id} className="hover:bg-gray-800/30 transition-colors bg-gray-900/40">
                             <td className="py-3 px-6 pl-10 border-l-2 border-gray-800">
                               <div className="flex items-center gap-2">

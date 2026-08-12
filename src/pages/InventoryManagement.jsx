@@ -25,7 +25,6 @@ export default function InventoryManagement() {
   const [isMigrateModalOpen, setMigrateModalOpen] = useState(false);
   const [migrateLoc, setMigrateLoc] = useState(""); 
 
-  // ⭐️ ROUND 11 FIX: Added Global Toast Notification State
   const [toast, setToast] = useState({ show: false, msg: "", type: "info" });
   const showToast = (msg, type = "info") => {
     setToast({ show: true, msg, type });
@@ -183,13 +182,13 @@ export default function InventoryManagement() {
     } catch (err) { setErrorMsg("Migration failed: " + err.message); }
   };
 
-  // ⭐️ ROUND 11 FIX (ITEM 3): Reconciliation Generator
+  // ⭐️ ROUND 16 FIX: Reconciliation Generation
   const resolveLegacyMismatch = async (item, resolvedBalances, ledgerSumsByCode) => {
     setConfirmConfig({
       isOpen: true,
       title: "Reconcile Ledger Balance",
-      message: `This will write adjustment ledger entries so the ledger mathematically matches the stored physical stock. Proceed?`,
-      confirmText: "Generate Adjustments",
+      message: `This will write an OPENING BALANCE adjustment so the ledger mathematically matches the stored physical stock. Proceed?`,
+      confirmText: "Generate Opening Balance",
       isDanger: false,
       onConfirm: async () => {
         setConfirmConfig(null);
@@ -206,11 +205,15 @@ export default function InventoryManagement() {
               const txRef = doc(collection(db, "inventoryTransactions"));
               batch.set(txRef, {
                 itemId: item.id, itemName: item.name,
-                type: variance > 0 ? 'in' : 'out', // Use 'in' or 'out' so it calculates properly
+                type: 'reconciliation', // Explicitly typed to avoid "ISSUE OUT"
                 supplier: 'System Reconciliation',
-                date: dateStr, qty: Math.abs(variance), location: locCode,
-                previous_balance: ledgerQty, new_balance: storedQty, total_balance: item.balance,
-                notes: `Auto-reconciliation adjustment. Variance: ${variance > 0 ? '+' : ''}${variance}`,
+                date: dateStr, 
+                qty: variance, // Keeps the native positive/negative sign to fix the math loop
+                location: locCode,
+                previous_balance: ledgerQty, 
+                new_balance: storedQty, 
+                total_balance: item.balance,
+                notes: `Opening Balance / Auto-reconciliation. Variance: ${variance > 0 ? '+' : ''}${variance}`,
                 created_at: serverTimestamp(),
               });
               operations++;
@@ -239,7 +242,6 @@ export default function InventoryManagement() {
     setTransModalOpen(true);
   };
 
-  // ⭐️ ROUND 11 FIX (ITEM 1): Bulletproof Atomic Transfer & Legacy Key Normalization
   const processTransactionSubmit = async (isConfirmedNegative = false) => {
     setErrorMsg("");
     const qtyNum = Number(transQty);
@@ -252,7 +254,6 @@ export default function InventoryManagement() {
     const sourceLocObj = locations.find(l => l.id === transLoc);
     const sourceLocDisplay = sourceLocObj ? sourceLocObj.code : transLoc;
     
-    // 🔥 Normalizer: Convert any legacy code keys in the database into clean location IDs before math
     const normalizedBalances = {};
     Object.entries(activeItem.balances || {}).forEach(([k, v]) => {
       const matchedLoc = locations.find(l => l.code === k || l.id === k);
@@ -301,7 +302,6 @@ export default function InventoryManagement() {
       const destLocObj = transToLoc ? locations.find(l => l.id === transToLoc) : null;
       const destLocDisplay = destLocObj ? destLocObj.code : transToLoc;
 
-      // LEDGER ROW 1
       const txRef1 = doc(collection(db, "inventoryTransactions"));
       const transPayload = {
         itemId: activeItem.id, itemName: activeItem.name,
@@ -321,7 +321,6 @@ export default function InventoryManagement() {
       batch.set(txRef1, transPayload);
       normalizedBalances[transLoc] = newLocBalance;
 
-      // LEDGER ROW 2 (Transfers Only)
       if (transType === 'transfer') {
         const destLocBalance = normalizedBalances[transToLoc] || 0;
         normalizedBalances[transToLoc] = destLocBalance + qtyNum;
@@ -934,9 +933,10 @@ export default function InventoryManagement() {
                             entry.type === 'in' || entry.type === 'transfer_in' ? 'bg-green-500/10 text-green-400' : 
                             entry.type === 'out' || entry.type === 'transfer_out' ? 'bg-blue-500/10 text-blue-400' : 
                             entry.type === 'transfer' ? 'bg-purple-500/10 text-purple-400' :
+                            entry.type === 'reconciliation' ? 'bg-orange-500/10 text-orange-400' :
                             'bg-yellow-500/10 text-yellow-400'
                           }`}>
-                            {entry.type === 'in' ? 'Stock In' : entry.type === 'out' ? 'Issue Out' : entry.type === 'transfer_out' ? 'Transfer Out' : entry.type === 'transfer_in' ? 'Transfer In' : entry.type === 'transfer' ? 'Transfer (Legacy)' : 'Adjust'}
+                            {entry.type === 'in' ? 'Stock In' : entry.type === 'out' ? 'Issue Out' : entry.type === 'transfer_out' ? 'Transfer Out' : entry.type === 'transfer_in' ? 'Transfer In' : entry.type === 'transfer' ? 'Transfer (Legacy)' : entry.type === 'reconciliation' ? 'Opening Balance' : 'Adjust'}
                           </span>
                         </td>
                         <td className="py-3 px-4 text-xs font-bold text-gray-300">
