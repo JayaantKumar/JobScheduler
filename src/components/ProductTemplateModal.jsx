@@ -169,7 +169,7 @@ export default function ProductTemplateModal({
   };
 
   const handleMaterialRowChange = (partId, rowId, field, val) => {
-    setParts(parts.map(p => {
+    setParts(prevParts => prevParts.map(p => {
       if (p.id === partId) {
         const newRows = p.materialRows.map(r => {
           if (r.id === rowId) {
@@ -184,6 +184,37 @@ export default function ProductTemplateModal({
                }
             }
             return { ...r, ...updates };
+          }
+          return r;
+        });
+        return { ...p, materialRows: newRows };
+      }
+      return p;
+    }));
+  };
+
+  // ⭐️ ROUND 14 FIX: Handle Bulk Update for Material Picker
+  const handleMaterialItemSelect = (partId, rowId, item) => {
+    setParts(prevParts => prevParts.map(p => {
+      if (p.id === partId) {
+        const newRows = p.materialRows.map(r => {
+          if (r.id === rowId) {
+            const catL = item.baseCategory.toLowerCase();
+            let newCategory = 'other';
+            if (catL.includes('board') || catL.includes('kappa') || catL.includes('rigid')) newCategory = 'board';
+            else if (catL.includes('paper') || catL.includes('art') || catL.includes('kraft')) newCategory = 'paper';
+
+            return {
+              ...r,
+              material_name: item.formattedLabel,
+              material_id: item.id, // Store ID to link with inventory snapshot on Jobs
+              category: newCategory,
+              basis: (newCategory === 'paper' || newCategory === 'board' || newCategory === 'rigid') ? 'per_step' : 'per_piece',
+              unit: item.unit || ((newCategory === 'paper' || newCategory === 'board' || newCategory === 'rigid') ? 'sheets' : 'pcs'),
+              gsm: item.gsm || "",
+              thickness_mm: item.thickness || item.thickness_mm || "",
+              size: item.size || ""
+            };
           }
           return r;
         });
@@ -287,6 +318,18 @@ export default function ProductTemplateModal({
 
   const handleSave = async (e) => {
     e.preventDefault();
+
+    // ⭐️ ROUND 14 FIX: Strict Validation - Block empty material names with quantities
+    for (const part of parts) {
+      const invalidRow = part.materialRows?.find(r => 
+        (!r.material_name || r.material_name.trim() === "") && Number(r.qty_per_unit) > 0
+      );
+      if (invalidRow) {
+        alert(`Validation Error in ${part.part_name}: You have a material row with a quantity (${invalidRow.qty_per_unit}) but no material selected.\n\nPlease select a material from the dropdown or remove the row before saving.`);
+        return; // Halt save completely
+      }
+    }
+
     setSaving(true);
     
     try {
@@ -465,19 +508,8 @@ export default function ProductTemplateModal({
                              className="px-3 py-2 cursor-pointer hover:bg-primary-900/40 flex justify-between items-center transition-colors border-l-2 border-transparent hover:border-primary-500"
                              onMouseDown={(e) => { 
                                 e.preventDefault();
-                                handleMaterialRowChange(partId, row.id, 'material_name', item.formattedLabel);
-                                
-                                if (!row.category || row.category === 'paper') {
-                                    const catL = item.baseCategory.toLowerCase();
-                                    if (catL.includes('board') || catL.includes('kappa') || catL.includes('rigid')) {
-                                        handleMaterialRowChange(partId, row.id, 'category', 'board');
-                                    } else if (catL.includes('paper') || catL.includes('art') || catL.includes('kraft')) {
-                                        handleMaterialRowChange(partId, row.id, 'category', 'paper');
-                                    } else {
-                                        handleMaterialRowChange(partId, row.id, 'category', 'other');
-                                    }
-                                }
-                                
+                                // ⭐️ ROUND 14 FIX: Using the bulk update function here
+                                handleMaterialItemSelect(partId, row.id, item);
                                 setPickerState(prev => ({ ...prev, openId: null }));
                              }}
                            >
@@ -659,12 +691,11 @@ export default function ProductTemplateModal({
                 </div>
 
                 <div className="p-4 space-y-4">
-                  {/* Materials Table Container with visible overflow so dropdown escapes */}
-<div className="border border-gray-800 rounded-lg overflow-visible relative">
-  <div className="bg-gray-950 px-4 py-2 border-b border-gray-800 flex justify-between items-center rounded-t-lg">
-    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Materials & Cutting List</span>
-    <button type="button" onClick={() => handleMaterialRowAdd(part.id)} className="text-[10px] bg-primary-900/30 text-primary-400 px-2 py-1 rounded hover:bg-primary-500 hover:text-white transition-colors">+ Add Material</button>
-  </div>
+                  <div className="border border-gray-800 rounded-lg overflow-visible relative">
+                    <div className="bg-gray-950 px-4 py-2 border-b border-gray-800 flex justify-between items-center rounded-t-lg">
+                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Materials & Cutting List</span>
+                      <button type="button" onClick={() => handleMaterialRowAdd(part.id)} className="text-[10px] bg-primary-900/30 text-primary-400 px-2 py-1 rounded hover:bg-primary-500 hover:text-white transition-colors">+ Add Material</button>
+                    </div>
                     
                     <div className="w-full relative">
                       <table className="w-full text-left">

@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { collection, doc, query, where, getDocs, writeBatch } from "firebase/firestore";
 import { db } from "../firebase/config";
-import { cleanGsm } from "../utils/helpers";
+import { cleanGsm, formatInventoryLabel } from "../utils/helpers";
 
 export default function ProduceJobSetModal({
   isOpen,
@@ -27,13 +27,195 @@ export default function ProduceJobSetModal({
   onSuccess
 }) {
   const [producing, setProducing] = useState(false);
-  const [errorMsg, setErrorMsg] = useState(""); // ⭐️ Added inline error state
+  const [errorMsg, setErrorMsg] = useState("");
+
+  // ⭐️ ROUND 14 FIX: Localized Job-Specific Material Overrides
+  const [localMaterials, setLocalMaterials] = useState([]);
+  const [pickerState, setPickerState] = useState({ openId: null, search: "", includeOutOfStock: false });
+
+  // Initialize local materials from the master product template when modal opens
+  useEffect(() => {
+    if (isOpen && activeProduceProduct && produceParts.length > 0) {
+      const initialMats = produceParts.map((p, i) => {
+        const masterPart = activeProduceProduct.parts.find(mp => mp.id === p.id) || activeProduceProduct.parts[i];
+        return (masterPart.materialRows || []).map(r => ({ ...r, is_substituted: false }));
+      });
+      setLocalMaterials(initialMats);
+    }
+  }, [isOpen, activeProduceProduct, produceParts]);
 
   if (!isOpen) return null;
 
+  // -- Material Override Handlers --
+  const handleLocalMaterialItemSelect = (pIdx, rowId, item) => {
+    setLocalMaterials(prev => {
+      const newMats = [...prev];
+      newMats[pIdx] = newMats[pIdx].map(r => {
+        if (r.id === rowId) {
+          const catL = item.baseCategory.toLowerCase();
+          let newCategory = 'other';
+          if (catL.includes('board') || catL.includes('kappa') || catL.includes('rigid')) newCategory = 'board';
+          else if (catL.includes('paper') || catL.includes('art') || catL.includes('kraft')) newCategory = 'paper';
+
+          return {
+            ...r,
+            material_name: item.formattedLabel,
+            material_id: item.id,
+            category: newCategory,
+            basis: (newCategory === 'paper' || newCategory === 'board' || newCategory === 'rigid') ? 'per_step' : 'per_piece',
+            unit: item.unit || ((newCategory === 'paper' || newCategory === 'board' || newCategory === 'rigid') ? 'sheets' : 'pcs'),
+            gsm: item.gsm || "",
+            thickness_mm: item.thickness || item.thickness_mm || "",
+            size: item.size || "",
+            is_substituted: true 
+          };
+        }
+        return r;
+      });
+      return newMats;
+    });
+  };
+
+  const updateLocalMaterial = (pIdx, rowId, field, val) => {
+    setLocalMaterials(prev => {
+      const newMats = [...prev];
+      newMats[pIdx] = newMats[pIdx].map(r => {
+        if (r.id === rowId) return { ...r, [field]: val, is_substituted: true };
+        return r;
+      });
+      return newMats;
+    });
+  };
+
+  const addLocalMaterial = (pIdx) => {
+    setLocalMaterials(prev => {
+      const newMats = [...prev];
+      newMats[pIdx] = [
+        ...(newMats[pIdx] || []), 
+        { 
+          id: Date.now() + Math.random(), 
+          material_name: "", category: "paper", piece_purpose: "Extra Consumable", 
+          size: "", qty_per_unit: 1, unit: "pcs", basis: "fixed", 
+          basis_step_index: 0, is_substituted: true 
+        }
+      ];
+      return newMats;
+    });
+  };
+
+  const removeLocalMaterial = (pIdx, rowId) => {
+     setLocalMaterials(prev => {
+      const newMats = [...prev];
+      newMats[pIdx] = newMats[pIdx].filter(r => r.id !== rowId);
+      return newMats;
+    });
+  };
+
+  const renderMaterialPicker = (pIdx, row) => {
+    const isOpen = pickerState.openId === row.id;
+    const query = (pickerState.search || "").toLowerCase();
+    
+    let filteredItems = [];
+    if (isOpen) {
+        filteredItems = inventoryItems.map(item => {
+            const formattedLabel = formatInventoryLabel(item);
+            const baseCategory = formattedLabel.split('·')[0].trim();
+            return {
+                ...item,
+                formattedLabel,
+                baseCategory,
+                stock: Number(item.qty || item.balance || 0)
+            };
+        }).filter(item => {
+            if (!pickerState.includeOutOfStock && item.stock <= 0) return false;
+            if (query) return item.formattedLabel.toLowerCase().includes(query);
+            return true;
+        });
+    }
+
+    const grouped = {};
+    filteredItems.forEach(item => {
+        if (!grouped[item.baseCategory]) grouped[item.baseCategory] = [];
+        grouped[item.baseCategory].push(item);
+    });
+    
+    const sortedCategories = Object.keys(grouped).sort();
+    sortedCategories.forEach(cat => grouped[cat].sort((a, b) => a.formattedLabel.localeCompare(b.formattedLabel)));
+
+    return (
+      <td className="py-1.5 pr-2 relative">
+         <div className="relative">
+           <input 
+             type="text" 
+             placeholder="Search material override..." 
+             value={isOpen ? pickerState.search : row.material_name} 
+             onChange={e => setPickerState(prev => ({ ...prev, search: e.target.value }))}
+             onFocus={() => setPickerState({ openId: row.id, search: row.material_name, includeOutOfStock: pickerState.includeOutOfStock })}
+             onBlur={() => {
+               setTimeout(() => {
+                 if (pickerState.openId === row.id) {
+                    updateLocalMaterial(pIdx, row.id, 'material_name', pickerState.search || row.material_name);
+                    setPickerState(prev => ({ ...prev, openId: null }));
+                 }
+               }, 250);
+             }}
+             className={`w-full bg-gray-900 border ${row.is_substituted ? 'border-orange-500/50 text-orange-100' : 'border-gray-700 text-white'} rounded px-2 py-1.5 text-xs focus:border-primary-500 outline-none transition-colors`} 
+           />
+           {row.is_substituted && <span className="absolute -top-1 -right-1 w-2 h-2 bg-orange-500 rounded-full shadow-[0_0_4px_#f97316]" title="Material Substituted for this run"></span>}
+         </div>
+         
+         {isOpen && (
+           <div className="absolute top-full left-0 mt-1 w-[400px] max-h-72 overflow-y-auto bg-gray-800 border border-gray-700 rounded-lg shadow-2xl z-[99999] custom-scrollbar flex flex-col">
+              <div className="p-2 border-b border-gray-700 sticky top-0 bg-gray-900 z-10 flex justify-between items-center shrink-0">
+                 <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Select Override Material</span>
+                 <label className="flex items-center gap-1.5 text-[10px] font-bold text-gray-300 cursor-pointer bg-gray-800 px-2 py-1 rounded hover:bg-gray-700 transition-colors">
+                    <input 
+                      type="checkbox" 
+                      checked={pickerState.includeOutOfStock} 
+                      onChange={(e) => setPickerState(prev => ({ ...prev, includeOutOfStock: e.target.checked }))} 
+                      className="rounded bg-gray-900 border-gray-600 focus:ring-primary-500"
+                    />
+                    Include out-of-stock
+                 </label>
+              </div>
+              
+              <div className="flex-1 overflow-y-auto">
+                  {sortedCategories.length === 0 ? (
+                     <div className="p-4 text-xs text-gray-500 text-center italic">No materials found. Type to use a custom material.</div>
+                  ) : (
+                     sortedCategories.map(cat => (
+                       <div key={cat} className="border-b border-gray-700/50 last:border-0">
+                         <div className="px-3 py-1.5 bg-gray-900 text-[10px] font-black text-primary-400 uppercase tracking-widest sticky top-0 border-b border-gray-800">{cat}</div>
+                         {grouped[cat].map(item => (
+                           <div 
+                             key={item.id} 
+                             className="px-3 py-2 cursor-pointer hover:bg-primary-900/40 flex justify-between items-center transition-colors border-l-2 border-transparent hover:border-primary-500"
+                             onMouseDown={(e) => { 
+                                e.preventDefault();
+                                handleLocalMaterialItemSelect(pIdx, row.id, item);
+                                setPickerState(prev => ({ ...prev, openId: null }));
+                             }}
+                           >
+                             <span className="text-xs text-white font-medium truncate pr-4">{item.formattedLabel}</span>
+                             <span className={`text-[10px] font-mono whitespace-nowrap px-1.5 py-0.5 rounded ${item.stock > 0 ? 'bg-green-500/10 text-green-500/60' : 'bg-red-500/10 text-red-500/60'}`}>
+                                (Stock: {item.stock})
+                             </span>
+                           </div>
+                         ))}
+                       </div>
+                     ))
+                  )}
+              </div>
+           </div>
+         )}
+      </td>
+    );
+  };
+  // -- End Material Override Logic --
+
   const handleQuickProduce = async (e) => {
     e.preventDefault();
-    setErrorMsg(""); // Clear previous errors
+    setErrorMsg(""); 
     
     if (producing) return; 
     
@@ -42,7 +224,6 @@ export default function ProduceJobSetModal({
       return;
     }
     
-    // ⭐️ ROUND 13 FIX (ITEM 6): Inline Zero-Quantity Blocker
     const zeroQtyParts = produceParts.filter(p => !p.final_pcs || p.final_pcs <= 0);
     if (zeroQtyParts.length > 0) {
       const affectedNames = zeroQtyParts.map((p, i) => {
@@ -52,6 +233,17 @@ export default function ProduceJobSetModal({
       
       setErrorMsg(`Cannot generate jobs with zero quantity. Please check Target Sets or Custom Overrides for: ${affectedNames}`);
       return;
+    }
+
+    // ⭐️ Validate local material rows for empty material names
+    for (let i = 0; i < localMaterials.length; i++) {
+       const invalidRow = localMaterials[i]?.find(r => 
+         (!r.material_name || r.material_name.trim() === "") && Number(r.qty_per_unit) > 0
+       );
+       if (invalidRow) {
+         setErrorMsg(`Validation Error: Part ${String.fromCharCode(65 + i)} has a material override row with a quantity but no material name. Please select a material or remove the extra row.`);
+         return;
+       }
     }
 
     setProducing(true);
@@ -130,7 +322,8 @@ export default function ProduceJobSetModal({
           };
         });
 
-        const processedMaterialRows = (masterPart.materialRows || [])
+        // ⭐️ Build Job Payload using Substituted/Local Materials, NOT the hardcoded Master Template
+        const processedMaterialRows = (localMaterials[i] || [])
           .filter(row => row.isDie || (row.material_name && row.material_name.trim() !== ""))
           .map(row => {
             const cat = row.category?.toLowerCase() || '';
@@ -176,7 +369,7 @@ export default function ProduceJobSetModal({
             sku: activeProduceProduct.sku || "",
             category: activeProduceProduct.category || "", 
             artwork_required: masterPart.artwork_required ?? true,
-            materialRows: processedMaterialRows, 
+            materialRows: processedMaterialRows, // Using new local overrides
             files: activeProduceProduct.files || [], 
             size: masterPart.size || "", 
             material: masterPart.paperType || masterPart.material || "", 
@@ -230,7 +423,6 @@ export default function ProduceJobSetModal({
           <p className="text-xs text-gray-400 mt-1">Review Pre-Production requirements and set counts.</p>
         </div>
         
-        {/* ⭐️ Inline Error Banner */}
         {errorMsg && (
           <div className="mx-6 mt-6 bg-red-500/10 border border-red-500/50 text-red-400 px-4 py-3 rounded flex items-start gap-3 shadow-lg">
             <span className="text-lg leading-none">🚨</span>
@@ -254,8 +446,7 @@ export default function ProduceJobSetModal({
             <div className="space-y-4">
               {produceParts.map((p, pIdx) => {
                 const masterPart = activeProduceProduct.parts.find(mp => mp.id === p.id) || activeProduceProduct.parts[pIdx];
-                
-                const cuttingList = (masterPart.materialRows || []).filter(row => row.isDie || (row.material_name && row.material_name.trim() !== ""));
+                const activeMats = localMaterials[pIdx] || []; // Live materials mapping
                 
                 const firstStepWithMachine = p.sequence?.find(step => step.assigned_machine);
                 const assignedMach = firstStepWithMachine ? machines?.find(m => m.id === firstStepWithMachine.assigned_machine) : null;
@@ -330,91 +521,116 @@ export default function ProduceJobSetModal({
                   {p.expanded && (
                     <div className="mt-4 border-t border-gray-800 pt-4 space-y-4">
                       
-                      <div className="bg-gray-950 rounded border border-gray-800 p-3">
-                        <h4 className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">Pre-Production Checklist Preview (Location: {targetPlace})</h4>
-                        <div className="space-y-1 text-xs">
-                          {cuttingList.map((row, i) => {
-                            const cat = row.category?.toLowerCase() || '';
-                            const isBoardOrPaper = cat === 'paper' || cat === 'board' || cat === 'rigid';
-                            const effBasis = row.basis || (isBoardOrPaper ? 'per_step' : 'per_piece');
-                            
-                            let req = 0;
-                            if (effBasis === 'fixed') {
-                              req = Number(row.qty_per_unit) || 1;
-                            } else if (effBasis === 'per_step') {
-                              const sIdx = row.basis_step_index || 0;
-                              const stepQty = p.sequence[sIdx] ? Number(p.sequence[sIdx].input_qty) : Number(p.final_pcs);
-                              req = (Number(row.qty_per_unit) || 1) * stepQty;
-                            } else {
-                              req = (Number(row.qty_per_unit) || 1) * Number(p.final_pcs);
-                            }
-                            
-                            const invItem = inventoryItems?.find(inv => {
-                              const displayLabel = inv.name || inv.itemName || inv.label || "Unnamed Material";
-                              return displayLabel === row.material_name;
-                            });
-                            
-                            let stockDisplay = <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-gray-800 text-gray-600">Free Text (—)</span>;
+                      {/* ⭐️ ROUND 14 FIX: Editable Job-Specific Material Overrides Table */}
+                      <div className="bg-gray-950 rounded border border-gray-800 p-3 overflow-visible relative">
+                        <div className="flex justify-between items-center mb-2 border-b border-gray-800 pb-2">
+                          <h4 className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Job Material List (Location: {targetPlace})</h4>
+                          <button type="button" onClick={() => addLocalMaterial(pIdx)} className="text-[10px] bg-primary-900/30 text-primary-400 px-2 py-1 rounded hover:bg-primary-500 hover:text-white transition-colors">+ Add Extra Material</button>
+                        </div>
+                        
+                        <div className="w-full relative overflow-visible">
+                          <table className="w-full text-left text-xs border-collapse">
+                            <thead>
+                              <tr className="border-b border-gray-800/50 text-[10px] text-gray-500 uppercase tracking-wider">
+                                <th className="py-2 w-1/3">Material Setup / Override</th>
+                                <th className="py-2 px-2">Purpose / Area</th>
+                                <th className="py-2 px-2 w-20">Qty/Unit</th>
+                                <th className="py-2 text-right">Target Req & Live Stock</th>
+                                <th className="py-2 w-8"></th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {activeMats.map((row) => {
+                                const cat = row.category?.toLowerCase() || '';
+                                const isBoardOrPaper = cat === 'paper' || cat === 'board' || cat === 'rigid';
+                                const effBasis = row.basis || (isBoardOrPaper ? 'per_step' : 'per_piece');
+                                
+                                let req = 0;
+                                if (effBasis === 'fixed') {
+                                  req = Number(row.qty_per_unit) || 1;
+                                } else if (effBasis === 'per_step') {
+                                  const sIdx = row.basis_step_index || 0;
+                                  const stepQty = p.sequence[sIdx] ? Number(p.sequence[sIdx].input_qty) : Number(p.final_pcs);
+                                  req = (Number(row.qty_per_unit) || 1) * stepQty;
+                                } else {
+                                  req = (Number(row.qty_per_unit) || 1) * Number(p.final_pcs);
+                                }
+                                
+                                const invItem = inventoryItems?.find(inv => {
+                                  const displayLabel = inv.name || inv.itemName || inv.label || "Unnamed Material";
+                                  return displayLabel === row.material_name;
+                                });
+                                
+                                let stockDisplay = <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-gray-800 text-gray-600">Free Text (—)</span>;
 
-                            if (invItem) {
-                              const totalBal = Number(invItem.balance ?? invItem.qty ?? 0);
-                              const localBalances = invItem.balances || {};
-                              
-                              const resolvedTargetLoc = locations?.find(l => l.code === targetPlace);
-                              const targetLocId = resolvedTargetLoc ? resolvedTargetLoc.id : targetPlace; 
-                              
-                              const localBal = targetPlace !== "Unassigned" 
-                                ? Number(localBalances[targetLocId] || localBalances[targetPlace] || 0) 
-                                : totalBal;
+                                if (invItem) {
+                                  const totalBal = Number(invItem.balance ?? invItem.qty ?? 0);
+                                  const localBalances = invItem.balances || {};
+                                  const resolvedTargetLoc = locations?.find(l => l.code === targetPlace);
+                                  const targetLocId = resolvedTargetLoc ? resolvedTargetLoc.id : targetPlace; 
+                                  const localBal = targetPlace !== "Unassigned" ? Number(localBalances[targetLocId] || localBalances[targetPlace] || 0) : totalBal;
 
-                              if (req > totalBal) {
-                                stockDisplay = <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-red-500/20 text-red-400">SHORT {req - totalBal}</span>;
-                              } else if (req > localBal) {
-                                const holding = Object.entries(localBalances)
-                                     .filter(([, q]) => q > 0)
-                                     .map(([locKey]) => {
-                                        const matchedLoc = locations?.find(l => l.id === locKey || l.code === locKey);
-                                        return matchedLoc ? matchedLoc.code : locKey;
-                                     }).join(', ');
-                                stockDisplay = (
-                                   <div className="flex flex-col items-end gap-1">
-                                     <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-purple-500/20 text-purple-400 border border-purple-500/30">TRANSFER REQ ({targetPlace})</span>
-                                     <span className="text-[8px] text-gray-500">From: {holding || 'Unassigned'}</span>
-                                   </div>
+                                  if (req > totalBal) {
+                                    stockDisplay = <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-red-500/20 text-red-400">SHORT {req - totalBal}</span>;
+                                  } else if (req > localBal) {
+                                    const holding = Object.entries(localBalances).filter(([, q]) => q > 0).map(([locKey]) => {
+                                      const matchedLoc = locations?.find(l => l.id === locKey || l.code === locKey);
+                                      return matchedLoc ? matchedLoc.code : locKey;
+                                    }).join(', ');
+                                    stockDisplay = (
+                                       <div className="flex flex-col items-end gap-0.5">
+                                         <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-purple-500/20 text-purple-400 border border-purple-500/30">TRANSFER REQ</span>
+                                         <span className="text-[8px] text-gray-500">From: {holding || 'Unassigned'}</span>
+                                       </div>
+                                    );
+                                  } else {
+                                    stockDisplay = <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-green-500/10 text-green-400">OK ({localBal})</span>;
+                                  }
+                                }
+                                
+                                return (
+                                  <tr key={row.id} className="border-b border-gray-800/50">
+                                    {renderMaterialPicker(pIdx, row)}
+                                    <td className="py-2 px-2">
+                                      <input type="text" value={row.piece_purpose || ""} onChange={e => updateLocalMaterial(pIdx, row.id, 'piece_purpose', e.target.value)} className={`w-full bg-gray-900 border ${row.is_substituted ? 'border-orange-500/50 text-orange-100' : 'border-gray-700 text-white'} rounded px-2 py-1.5 text-xs focus:border-primary-500 outline-none transition-colors`} placeholder="Purpose" />
+                                    </td>
+                                    <td className="py-2 px-2">
+                                      <input type="number" step="any" value={row.qty_per_unit || ""} onChange={e => updateLocalMaterial(pIdx, row.id, 'qty_per_unit', e.target.value)} className={`w-full bg-gray-900 border ${row.is_substituted ? 'border-orange-500/50 text-orange-100' : 'border-gray-700 text-white'} rounded px-2 py-1.5 text-xs focus:border-primary-500 outline-none transition-colors`} />
+                                    </td>
+                                    <td className="py-2 text-right">
+                                      <div className="flex flex-col items-end gap-1">
+                                        <span className="text-gray-400">
+                                          Req: <strong className="text-white">{req.toLocaleString()}</strong> <span className="text-[9px] uppercase">{row.unit || (isBoardOrPaper ? 'sheets' : 'pcs')}</span>
+                                        </span>
+                                        {stockDisplay}
+                                      </div>
+                                    </td>
+                                    <td className="py-2 text-center">
+                                      <button type="button" onClick={() => removeLocalMaterial(pIdx, row.id)} className="text-gray-600 hover:text-red-400 font-bold text-xs ml-2">✕</button>
+                                    </td>
+                                  </tr>
                                 );
-                              } else {
-                                stockDisplay = <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-green-500/10 text-green-400">OK ({localBal} at {targetPlace})</span>;
-                              }
-                            }
-                            
-                            return (
-                              <div key={i} className="flex justify-between items-center py-1 border-b border-gray-800/50">
-                                <div>
-                                  <span className="text-gray-300 font-bold">{row.material_name}</span>
-                                  <span className="text-gray-500 ml-2">({row.piece_purpose})</span>
-                                </div>
-                                <div className="flex items-center gap-4">
-                                  <span className="text-gray-400">
-                                    Req: <strong className="text-white">{req.toLocaleString()}</strong> <span className="text-[9px] uppercase">{row.unit || (isBoardOrPaper ? 'sheets' : 'pcs')}</span>
-                                  </span>
-                                  {stockDisplay}
-                                </div>
-                              </div>
-                            );
-                          })}
+                              })}
+                            </tbody>
+                          </table>
                           
-                          {Array.from(activeDieIds).map(id => {
-                            const d = dies.find(die => die.id === id);
-                            return (
-                              <div key={`die-${id}`} className="flex justify-between items-center py-1 border-b border-gray-800/50">
-                                <div>
-                                  <span className="text-purple-400 font-bold">{d.dieName}</span>
-                                  <span className="text-gray-500 ml-2">({d.dieNumber})</span>
-                                </div>
-                                <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-purple-500/10 text-purple-400 border border-purple-500/20">Die / Tooling</span>
-                              </div>
-                            );
-                          })}
+                          {/* Render active Dies attached to sequences */}
+                          {Array.from(activeDieIds).length > 0 && (
+                            <div className="mt-3 border-t border-gray-800 pt-3">
+                              {Array.from(activeDieIds).map(id => {
+                                const d = dies.find(die => die.id === id);
+                                return (
+                                  <div key={`die-${id}`} className="flex justify-between items-center py-1">
+                                    <div>
+                                      <span className="text-purple-400 font-bold text-xs">{d.dieName}</span>
+                                      <span className="text-gray-500 ml-2 text-[10px]">({d.dieNumber})</span>
+                                    </div>
+                                    <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-purple-500/10 text-purple-400 border border-purple-500/20">Die / Tooling Locked</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
                       </div>
 

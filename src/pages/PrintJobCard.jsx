@@ -235,7 +235,15 @@ export default function PrintJobCard() {
 
                    return (
                      <tr key={i}>
-                       <td className="p-1.5 border-r border-black font-bold">{row.material_name}</td>
+                       <td className="p-1.5 border-r border-black font-bold">
+                         {row.material_name}
+                         {/* ⭐️ ROUND 14 FIX: Operational Override Flag */}
+                         {row.is_substituted && (
+                           <span className="ml-1 text-[9px] font-black uppercase tracking-widest text-gray-500 italic block mt-0.5">
+                             (Substituted)
+                           </span>
+                         )}
+                       </td>
                        <td className="p-1.5 border-r border-black text-gray-700">{row.piece_purpose || '—'}</td>
                        <td className="p-1.5 border-r border-black text-gray-700">{specStr}</td>
                        <td className="p-1.5 border-r border-black text-gray-700">{size || '—'}</td>
