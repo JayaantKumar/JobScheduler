@@ -51,11 +51,15 @@ export default function ProductTemplateModal({
   
   const [files, setFiles] = useState([]); 
   const [saving, setSaving] = useState(false);
+  
+  // ⭐️ ROUND 15 FIX: Inline error state to replace native alert()
+  const [errorMsg, setErrorMsg] = useState(""); 
 
   const [pickerState, setPickerState] = useState({ openId: null, search: "", includeOutOfStock: false });
 
   useEffect(() => {
     if (isOpen) {
+      setErrorMsg(""); // Clear errors on open
       if (editingProduct) {
         setName(editingProduct.name || "");
         setSku(editingProduct.sku || "");
@@ -193,27 +197,46 @@ export default function ProductTemplateModal({
     }));
   };
 
-  // ⭐️ ROUND 14 FIX: Handle Bulk Update for Material Picker
   const handleMaterialItemSelect = (partId, rowId, item) => {
     setParts(prevParts => prevParts.map(p => {
       if (p.id === partId) {
         const newRows = p.materialRows.map(r => {
           if (r.id === rowId) {
-            const catL = item.baseCategory.toLowerCase();
+            const rawCat = (item.category || item.baseCategory || "").toLowerCase();
             let newCategory = 'other';
-            if (catL.includes('board') || catL.includes('kappa') || catL.includes('rigid')) newCategory = 'board';
-            else if (catL.includes('paper') || catL.includes('art') || catL.includes('kraft')) newCategory = 'paper';
+            
+            if (rawCat.includes('paper') || rawCat.includes('art') || rawCat.includes('kraft')) newCategory = 'paper';
+            else if (rawCat.includes('board') || rawCat.includes('kappa') || rawCat.includes('rigid')) newCategory = 'board';
+
+            // ⭐️ ROUND 15 FIX: Smart fallback to extract missing GSM/Size from the formatted label
+            const labelParts = (item.formattedLabel || "").split('·').map(s => s.trim());
+            let extractedGsm = item.gsm || item.thickness || item.thickness_mm || "";
+            let extractedSize = item.size || "";
+
+            if (labelParts.length >= 2) {
+               const specPart = labelParts.find(part => part.toLowerCase().includes('gsm') || part.toLowerCase().includes('mm'));
+               if (!extractedGsm && specPart) {
+                   extractedGsm = specPart.replace(/[^\d.]/g, ''); // Extract just the numbers
+               }
+               
+               const sizePart = labelParts.find(part => part.includes('x') || part.includes('*') || part.includes('in'));
+               if (!extractedSize && sizePart) {
+                   extractedSize = sizePart;
+               } else if (!extractedSize && labelParts.length >= 3) {
+                   extractedSize = labelParts[2]; // Fallback to 3rd section if no 'x' is found
+               }
+            }
 
             return {
               ...r,
               material_name: item.formattedLabel,
-              material_id: item.id, // Store ID to link with inventory snapshot on Jobs
+              material_id: item.id, 
               category: newCategory,
               basis: (newCategory === 'paper' || newCategory === 'board' || newCategory === 'rigid') ? 'per_step' : 'per_piece',
               unit: item.unit || ((newCategory === 'paper' || newCategory === 'board' || newCategory === 'rigid') ? 'sheets' : 'pcs'),
-              gsm: item.gsm || "",
-              thickness_mm: item.thickness || item.thickness_mm || "",
-              size: item.size || ""
+              gsm: newCategory === 'paper' ? extractedGsm : "", 
+              thickness_mm: newCategory === 'board' ? extractedGsm : "",
+              size: extractedSize
             };
           }
           return r;
@@ -257,7 +280,7 @@ export default function ProductTemplateModal({
     const validFiles = [];
     selected.forEach(f => {
       if (f.size > 25 * 1024 * 1024) {
-        alert(`File ${f.name} exceeds the 25MB limit.`);
+        setErrorMsg(`File ${f.name} exceeds the 25MB limit.`);
         return;
       }
       validFiles.push({
@@ -313,20 +336,21 @@ export default function ProductTemplateModal({
   const copyShareLink = (url) => {
     if (!url) return alert("Save the product first to generate a live link.");
     navigator.clipboard.writeText(url);
-    alert("Share link copied to clipboard!");
+    alert("Share link copied to clipboard!"); // Kept as standard alert for simple clipboard actions
   };
 
   const handleSave = async (e) => {
     e.preventDefault();
+    setErrorMsg("");
 
-    // ⭐️ ROUND 14 FIX: Strict Validation - Block empty material names with quantities
+    // ⭐️ ROUND 15 FIX (POINT 4): Inline validation block instead of browser alert()
     for (const part of parts) {
       const invalidRow = part.materialRows?.find(r => 
         (!r.material_name || r.material_name.trim() === "") && Number(r.qty_per_unit) > 0
       );
       if (invalidRow) {
-        alert(`Validation Error in ${part.part_name}: You have a material row with a quantity (${invalidRow.qty_per_unit}) but no material selected.\n\nPlease select a material from the dropdown or remove the row before saving.`);
-        return; // Halt save completely
+        setErrorMsg(`Validation Error in ${part.part_name}: You have a material row with a quantity (${invalidRow.qty_per_unit}) but no material selected. Please select a material or remove the row before saving.`);
+        return; 
       }
     }
 
@@ -378,7 +402,7 @@ export default function ProductTemplateModal({
       }
       onSaveSuccess(savedProdData);
     } catch (error) { 
-      alert("Error saving product: " + error.message); 
+      setErrorMsg("Error saving product: " + error.message); 
     } finally { 
       setSaving(false); 
     }
@@ -472,7 +496,9 @@ export default function ProductTemplateModal({
            onBlur={() => {
              setTimeout(() => {
                if (pickerState.openId === row.id) {
-                  handleMaterialRowChange(partId, row.id, 'material_name', pickerState.search || row.material_name);
+                  // ⭐️ Fix: Allow empty string so users can clear the input and test validation
+                  const updatedVal = pickerState.search !== undefined ? pickerState.search : row.material_name;
+                  handleMaterialRowChange(partId, row.id, 'material_name', updatedVal);
                   setPickerState(prev => ({ ...prev, openId: null }));
                }
              }, 250);
@@ -508,7 +534,6 @@ export default function ProductTemplateModal({
                              className="px-3 py-2 cursor-pointer hover:bg-primary-900/40 flex justify-between items-center transition-colors border-l-2 border-transparent hover:border-primary-500"
                              onMouseDown={(e) => { 
                                 e.preventDefault();
-                                // ⭐️ ROUND 14 FIX: Using the bulk update function here
                                 handleMaterialItemSelect(partId, row.id, item);
                                 setPickerState(prev => ({ ...prev, openId: null }));
                              }}
@@ -540,6 +565,14 @@ export default function ProductTemplateModal({
           <h2 className="text-xl font-bold text-white">{editingProduct ? "Edit Product Template" : "Add New Product Template"}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-white bg-gray-800 p-2 rounded-lg"><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg></button>
         </div>
+
+        {/* ⭐️ ROUND 15 FIX: Inline Error Banner rendering */}
+        {errorMsg && (
+          <div className="mx-6 mt-6 bg-red-500/10 border border-red-500/50 text-red-400 px-4 py-3 rounded flex items-start gap-3 shadow-lg">
+            <span className="text-lg leading-none">🚨</span>
+            <div className="font-bold text-sm leading-tight">{errorMsg}</div>
+          </div>
+        )}
 
         <form onSubmit={handleSave} className="p-6 overflow-y-auto custom-scrollbar flex-1 space-y-6 bg-[#0a0f1a]">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5 p-5 bg-gray-950/40 rounded-xl border border-gray-800">

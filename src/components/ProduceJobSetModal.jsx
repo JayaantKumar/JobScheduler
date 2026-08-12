@@ -29,7 +29,6 @@ export default function ProduceJobSetModal({
   const [producing, setProducing] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
-  // ⭐️ ROUND 14 FIX: Localized Job-Specific Material Overrides
   const [localMaterials, setLocalMaterials] = useState([]);
   const [pickerState, setPickerState] = useState({ openId: null, search: "", includeOutOfStock: false });
 
@@ -38,7 +37,25 @@ export default function ProduceJobSetModal({
     if (isOpen && activeProduceProduct && produceParts.length > 0) {
       const initialMats = produceParts.map((p, i) => {
         const masterPart = activeProduceProduct.parts.find(mp => mp.id === p.id) || activeProduceProduct.parts[i];
-        return (masterPart.materialRows || []).map(r => ({ ...r, is_substituted: false }));
+        const rows = masterPart?.materialRows || [];
+        
+        // ⭐️ Fallback: If template has no rows, provide a default empty row so the table is never blank
+        if (rows.length === 0) {
+          return [{
+            id: Date.now() + Math.random(),
+            material_name: "",
+            category: "paper",
+            piece_purpose: "Main",
+            size: "",
+            qty_per_unit: 1,
+            unit: "sheets",
+            basis: "per_step",
+            basis_step_index: 0,
+            is_substituted: false
+          }];
+        }
+        
+        return rows.map(r => ({ ...r, is_substituted: false }));
       });
       setLocalMaterials(initialMats);
     }
@@ -52,21 +69,41 @@ export default function ProduceJobSetModal({
       const newMats = [...prev];
       newMats[pIdx] = newMats[pIdx].map(r => {
         if (r.id === rowId) {
-          const catL = item.baseCategory.toLowerCase();
+          const rawCat = (item.category || item.baseCategory || "").toLowerCase();
           let newCategory = 'other';
-          if (catL.includes('board') || catL.includes('kappa') || catL.includes('rigid')) newCategory = 'board';
-          else if (catL.includes('paper') || catL.includes('art') || catL.includes('kraft')) newCategory = 'paper';
+          
+          if (rawCat.includes('paper') || rawCat.includes('art') || rawCat.includes('kraft')) newCategory = 'paper';
+          else if (rawCat.includes('board') || rawCat.includes('kappa') || rawCat.includes('rigid')) newCategory = 'board';
+
+          // ⭐️ ROUND 15 FIX: Smart fallback to extract missing GSM/Size from the formatted label
+          const labelParts = (item.formattedLabel || "").split('·').map(s => s.trim());
+          let extractedGsm = item.gsm || item.thickness || item.thickness_mm || "";
+          let extractedSize = item.size || "";
+
+          if (labelParts.length >= 2) {
+             const specPart = labelParts.find(part => part.toLowerCase().includes('gsm') || part.toLowerCase().includes('mm'));
+             if (!extractedGsm && specPart) {
+                 extractedGsm = specPart.replace(/[^\d.]/g, ''); 
+             }
+             
+             const sizePart = labelParts.find(part => part.includes('x') || part.includes('*') || part.includes('in'));
+             if (!extractedSize && sizePart) {
+                 extractedSize = sizePart;
+             } else if (!extractedSize && labelParts.length >= 3) {
+                 extractedSize = labelParts[2];
+             }
+          }
 
           return {
             ...r,
             material_name: item.formattedLabel,
-            material_id: item.id,
+            material_id: item.id, 
             category: newCategory,
             basis: (newCategory === 'paper' || newCategory === 'board' || newCategory === 'rigid') ? 'per_step' : 'per_piece',
             unit: item.unit || ((newCategory === 'paper' || newCategory === 'board' || newCategory === 'rigid') ? 'sheets' : 'pcs'),
-            gsm: item.gsm || "",
-            thickness_mm: item.thickness || item.thickness_mm || "",
-            size: item.size || "",
+            gsm: newCategory === 'paper' ? extractedGsm : "",
+            thickness_mm: newCategory === 'board' ? extractedGsm : "",
+            size: extractedSize,
             is_substituted: true 
           };
         }
@@ -235,7 +272,6 @@ export default function ProduceJobSetModal({
       return;
     }
 
-    // ⭐️ Validate local material rows for empty material names
     for (let i = 0; i < localMaterials.length; i++) {
        const invalidRow = localMaterials[i]?.find(r => 
          (!r.material_name || r.material_name.trim() === "") && Number(r.qty_per_unit) > 0
@@ -322,7 +358,6 @@ export default function ProduceJobSetModal({
           };
         });
 
-        // ⭐️ Build Job Payload using Substituted/Local Materials, NOT the hardcoded Master Template
         const processedMaterialRows = (localMaterials[i] || [])
           .filter(row => row.isDie || (row.material_name && row.material_name.trim() !== ""))
           .map(row => {
@@ -369,7 +404,7 @@ export default function ProduceJobSetModal({
             sku: activeProduceProduct.sku || "",
             category: activeProduceProduct.category || "", 
             artwork_required: masterPart.artwork_required ?? true,
-            materialRows: processedMaterialRows, // Using new local overrides
+            materialRows: processedMaterialRows, 
             files: activeProduceProduct.files || [], 
             size: masterPart.size || "", 
             material: masterPart.paperType || masterPart.material || "", 
@@ -446,7 +481,7 @@ export default function ProduceJobSetModal({
             <div className="space-y-4">
               {produceParts.map((p, pIdx) => {
                 const masterPart = activeProduceProduct.parts.find(mp => mp.id === p.id) || activeProduceProduct.parts[pIdx];
-                const activeMats = localMaterials[pIdx] || []; // Live materials mapping
+                const activeMats = localMaterials[pIdx] || [];
                 
                 const firstStepWithMachine = p.sequence?.find(step => step.assigned_machine);
                 const assignedMach = firstStepWithMachine ? machines?.find(m => m.id === firstStepWithMachine.assigned_machine) : null;
@@ -521,7 +556,6 @@ export default function ProduceJobSetModal({
                   {p.expanded && (
                     <div className="mt-4 border-t border-gray-800 pt-4 space-y-4">
                       
-                      {/* ⭐️ ROUND 14 FIX: Editable Job-Specific Material Overrides Table */}
                       <div className="bg-gray-950 rounded border border-gray-800 p-3 overflow-visible relative">
                         <div className="flex justify-between items-center mb-2 border-b border-gray-800 pb-2">
                           <h4 className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Job Material List (Location: {targetPlace})</h4>
@@ -535,6 +569,8 @@ export default function ProduceJobSetModal({
                                 <th className="py-2 w-1/3">Material Setup / Override</th>
                                 <th className="py-2 px-2">Purpose / Area</th>
                                 <th className="py-2 px-2 w-20">Qty/Unit</th>
+                                {/* ⭐️ ROUND 15 FIX (POINT 1): Added missing Basis Calc Column */}
+                                <th className="py-2 px-2 w-28">Basis Calc</th>
                                 <th className="py-2 text-right">Target Req & Live Stock</th>
                                 <th className="py-2 w-8"></th>
                               </tr>
@@ -556,9 +592,10 @@ export default function ProduceJobSetModal({
                                   req = (Number(row.qty_per_unit) || 1) * Number(p.final_pcs);
                                 }
                                 
+                                // ⭐️ ROUND 15 FIX (POINT 3): Ensure we match via material_id first to prevent "FREE TEXT" errors on valid items
                                 const invItem = inventoryItems?.find(inv => {
-                                  const displayLabel = inv.name || inv.itemName || inv.label || "Unnamed Material";
-                                  return displayLabel === row.material_name;
+                                  if (row.material_id && inv.id === row.material_id) return true;
+                                  return formatInventoryLabel(inv) === row.material_name;
                                 });
                                 
                                 let stockDisplay = <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-gray-800 text-gray-600">Free Text (—)</span>;
@@ -597,6 +634,23 @@ export default function ProduceJobSetModal({
                                     <td className="py-2 px-2">
                                       <input type="number" step="any" value={row.qty_per_unit || ""} onChange={e => updateLocalMaterial(pIdx, row.id, 'qty_per_unit', e.target.value)} className={`w-full bg-gray-900 border ${row.is_substituted ? 'border-orange-500/50 text-orange-100' : 'border-gray-700 text-white'} rounded px-2 py-1.5 text-xs focus:border-primary-500 outline-none transition-colors`} />
                                     </td>
+                                    
+                                    {/* ⭐️ ROUND 15 FIX (POINT 1): Render missing Basis Calc controls */}
+                                    <td className="py-2 px-2">
+                                      <select value={row.basis || 'per_piece'} onChange={e => updateLocalMaterial(pIdx, row.id, 'basis', e.target.value)} className={`w-full bg-gray-900 border ${row.is_substituted ? 'border-orange-500/50 text-orange-100' : 'border-gray-700 text-white'} rounded px-2 py-1 text-[9px] font-bold uppercase tracking-wider mb-1 outline-none transition-colors`}>
+                                        <option value="per_piece">Per Fin. Piece</option>
+                                        <option value="per_step">Per Step In</option>
+                                        <option value="fixed">Fixed Total</option>
+                                      </select>
+                                      {row.basis === 'per_step' && (
+                                         <select value={row.basis_step_index || 0} onChange={e => updateLocalMaterial(pIdx, row.id, 'basis_step_index', Number(e.target.value))} className="w-full bg-gray-800 border border-gray-600 rounded px-1 py-1 text-[9px] text-gray-300 outline-none mt-1">
+                                           {p.sequence.map((s, sIdx) => (
+                                             <option key={s.id} value={sIdx}>Step {sIdx + 1}</option>
+                                           ))}
+                                         </select>
+                                      )}
+                                    </td>
+
                                     <td className="py-2 text-right">
                                       <div className="flex flex-col items-end gap-1">
                                         <span className="text-gray-400">
@@ -614,7 +668,6 @@ export default function ProduceJobSetModal({
                             </tbody>
                           </table>
                           
-                          {/* Render active Dies attached to sequences */}
                           {Array.from(activeDieIds).length > 0 && (
                             <div className="mt-3 border-t border-gray-800 pt-3">
                               {Array.from(activeDieIds).map(id => {

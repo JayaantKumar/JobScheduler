@@ -28,17 +28,22 @@ export function useProduceMath() {
           active_multiplier: existing.active_multiplier !== undefined ? existing.active_multiplier : mult,
           is_custom_override: existing.is_custom_override || false,
           final_pcs: finalPcs,
-          notes: existing.notes !== undefined ? existing.notes : "", // ⭐️ ROUND 10 ITEM B1: Preserve Notes
+          notes: existing.notes !== undefined ? existing.notes : "", 
           expanded: existing.expanded !== undefined ? existing.expanded : false, 
           dirtyFields: dirty,
           sequence: (p.sequence || []).map((s, sIdx) => {
              const existingStep = existing.sequence?.[sIdx] || {};
              const stepDirty = dirty;
+             
+             // ⭐️ ROUND 15 FIX: Step 1 input defaults to raw sets/sheets, subsequent steps default to final pieces
+             const defaultStepInput = sIdx === 0 ? partSets : finalPcs;
+             const defaultStepOutput = finalPcs;
+
              return {
                ...s,
                id: existingStep.id || s.id || `step-${sIdx}`, 
-               input_qty: stepDirty[`input_${sIdx}`] && existingStep.input_qty !== undefined ? existingStep.input_qty : finalPcs,
-               output_qty: stepDirty[`output_${sIdx}`] && existingStep.output_qty !== undefined ? existingStep.output_qty : finalPcs
+               input_qty: stepDirty[`input_${sIdx}`] && existingStep.input_qty !== undefined ? existingStep.input_qty : defaultStepInput,
+               output_qty: stepDirty[`output_${sIdx}`] && existingStep.output_qty !== undefined ? existingStep.output_qty : defaultStepOutput
              };
           })
        };
@@ -80,9 +85,10 @@ export function useProduceMath() {
         pCopy.final_pcs = count === "" ? "" : count * pCopy.active_multiplier;
         pCopy.sequence = pCopy.sequence.map((s, sIdx) => {
           const stepDirty = pCopy.dirtyFields;
+          const defaultStepInput = sIdx === 0 ? count : pCopy.final_pcs;
           return {
             ...s,
-            input_qty: stepDirty[`input_${sIdx}`] ? s.input_qty : pCopy.final_pcs,
+            input_qty: stepDirty[`input_${sIdx}`] ? s.input_qty : defaultStepInput,
             output_qty: stepDirty[`output_${sIdx}`] ? s.output_qty : pCopy.final_pcs
           };
         });
@@ -102,9 +108,10 @@ export function useProduceMath() {
          pCopy.final_pcs = (pCopy.part_sets === "" || mult === "") ? "" : pCopy.part_sets * mult;
          pCopy.sequence = pCopy.sequence.map((s, sIdx) => {
            const stepDirty = pCopy.dirtyFields || {};
+           const defaultStepInput = sIdx === 0 ? pCopy.part_sets : pCopy.final_pcs;
            return {
              ...s,
-             input_qty: stepDirty[`input_${sIdx}`] ? s.input_qty : pCopy.final_pcs,
+             input_qty: stepDirty[`input_${sIdx}`] ? s.input_qty : defaultStepInput,
              output_qty: stepDirty[`output_${sIdx}`] ? s.output_qty : pCopy.final_pcs
            };
          });
@@ -122,7 +129,10 @@ export function useProduceMath() {
        pCopy.dirtyFields = { ...(pCopy.dirtyFields || {}), custom_override: checked };
        if (!checked) {
          pCopy.final_pcs = (pCopy.part_sets === "" || pCopy.active_multiplier === "") ? "" : pCopy.part_sets * pCopy.active_multiplier;
-         pCopy.sequence = pCopy.sequence.map(s => ({...s, input_qty: pCopy.final_pcs, output_qty: pCopy.final_pcs}));
+         pCopy.sequence = pCopy.sequence.map((s, sIdx) => {
+           const defaultStepInput = sIdx === 0 ? pCopy.part_sets : pCopy.final_pcs;
+           return {...s, input_qty: defaultStepInput, output_qty: pCopy.final_pcs};
+         });
        }
        copy[pIdx] = pCopy;
        return copy;
@@ -174,7 +184,6 @@ export function useProduceMath() {
     });
   };
 
-  // ⭐️ ROUND 10 ITEM B1: Update Special Instructions
   const updatePartNotes = (pIdx, val) => {
     setProduceParts(prev => {
         const copy = [...prev];
@@ -210,7 +219,7 @@ export function useProduceMath() {
     toggleCustomOverride,
     updatePartCustomPcs,
     handleStepQtyChange,
-    updatePartNotes, // ⭐️ Expose the notes updater to the modal
+    updatePartNotes,
     togglePartExpanded
   };
 }

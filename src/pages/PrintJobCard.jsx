@@ -9,7 +9,6 @@ export default function PrintJobCard() {
   const navigate = useNavigate();
   const location = useLocation();
   
-  // Detect if the user clicked Print from the app, or just opened the URL manually
   const isAutoprint = new URLSearchParams(location.search).get("autoprint") === "1";
   const autoPrintTriggered = useRef(false);
 
@@ -27,7 +26,6 @@ export default function PrintJobCard() {
   };
 
   useEffect(() => {
-    // Fetch Company Branding (Logo & Name) & Live Inventory (For Spec/Size columns)
     const fetchGlobals = async () => {
       const settingsSnap = await getDocs(query(collection(db, "settings")));
       settingsSnap.forEach(d => { 
@@ -45,13 +43,11 @@ export default function PrintJobCard() {
     };
     fetchGlobals();
 
-    // Live Snapshot of the Job
     const unsub = onSnapshot(doc(db, "jobs", jobId), async (docSnap) => {
       if (docSnap.exists()) {
         const jobData = docSnap.data();
         setJob(jobData);
         
-        // Fetch sibling parts for the Linked Cards footer
         if (jobData.set_code) {
           const q = query(collection(db, "jobs"), where("set_code", "==", jobData.set_code));
           const sibSnap = await getDocs(q);
@@ -61,9 +57,16 @@ export default function PrintJobCard() {
         
         setLoading(false);
         
-        // Auto-print ONLY if the URL flag is present and hasn't fired yet
+        // ⭐️ ROUND 15 FIX (POINT 4): Increment strictly on auto-print, then clean the URL to prevent refresh loops
         if (isAutoprint && !autoPrintTriggered.current) {
           autoPrintTriggered.current = true;
+          
+          // Increment the counter since this is a valid print routing
+          updateDoc(doc(db, "jobs", jobId), { print_count: increment(1) }).catch(err => console.error("Counter err:", err));
+          
+          // Strip the ?autoprint=1 flag from the URL entirely so hitting Refresh does nothing
+          navigate(`/print/${jobId}`, { replace: true });
+          
           setTimeout(() => window.print(), 800);
         }
       } else {
@@ -73,9 +76,8 @@ export default function PrintJobCard() {
     });
 
     return () => unsub();
-  }, [jobId, isAutoprint]);
+  }, [jobId, isAutoprint, navigate]);
 
-  // Handle manual print clicks from the Top Nav Bar
   const handleManualPrint = async () => {
     try {
       await updateDoc(doc(db, "jobs", jobId), { print_count: increment(1) });
@@ -95,7 +97,6 @@ export default function PrintJobCard() {
   return (
     <div className="min-h-screen bg-[#0a0f1a] print:bg-white flex flex-col items-center">
       
-      {/* ⭐️ Top Navigation Bar (Hidden on Print) */}
       <div className="print:hidden w-full bg-[#151724] p-4 flex justify-between items-center border-b border-gray-800 shadow-xl z-10 sticky top-0">
         <button 
           onClick={() => navigate('/dashboard/jobs')} 
@@ -111,11 +112,9 @@ export default function PrintJobCard() {
         </button>
       </div>
 
-      {/* ⭐️ A4 Paper Container */}
       <div className="p-8 print:p-0 w-full flex justify-center overflow-auto">
         <div className="bg-white text-black font-sans p-6 w-[210mm] min-h-[297mm] shadow-2xl print:shadow-none print:w-full print:h-auto">
           
-          {/* 1. Header */}
           <div className="flex justify-between items-start border-b-2 border-black pb-2 mb-2">
             <div className="flex items-center gap-3">
               {logoUrl ? (
@@ -136,7 +135,6 @@ export default function PrintJobCard() {
             </div>
           </div>
 
-          {/* 2. Identity Row */}
           <div className="bg-black text-white py-1.5 px-2 mb-2 flex flex-wrap items-center gap-2 text-sm font-black uppercase tracking-tight">
             <span>{job.set_code?.includes('-') ? `SET-${job.set_code}` : job.set_code}</span>
             <span className="text-gray-400">|</span>
@@ -147,7 +145,6 @@ export default function PrintJobCard() {
             <span className="text-[10px] text-gray-300 font-bold tracking-normal">{routeString}</span>
           </div>
 
-          {/* 3. Detail Row */}
           <div className="grid grid-cols-4 gap-4 mb-3 border-b-2 border-black pb-2 text-sm">
             <div className="col-span-2">
               <div className="font-bold text-[10px] uppercase text-gray-500">Customer & Product</div>
@@ -167,7 +164,6 @@ export default function PrintJobCard() {
             </div>
           </div>
 
-          {/* 4. Artwork Line & QR Code */}
           <div className="flex items-center gap-4 border-2 border-black p-1.5 mb-3">
             <div className="h-12 w-12 border border-gray-300 bg-white p-0.5 flex-shrink-0">
               <QRCode 
@@ -189,7 +185,6 @@ export default function PrintJobCard() {
             </div>
           </div>
 
-          {/* 5. Special Instructions */}
           {displayNotes && (
             <div className="mb-3 p-2 border-2 border-dashed border-black bg-gray-50">
               <div className="text-[10px] font-black uppercase tracking-widest text-gray-600">Special Instructions / Notes</div>
@@ -197,7 +192,6 @@ export default function PrintJobCard() {
             </div>
           )}
 
-          {/* 6. Pre-Production Issue Checklist */}
           <div className="mb-4">
             <h3 className="font-black uppercase tracking-widest text-xs bg-gray-200 border-2 border-black border-b-0 px-2 py-1">Pre-Production Issue Checklist</h3>
             <table className="w-full text-left text-xs border-collapse border-2 border-black">
@@ -237,7 +231,6 @@ export default function PrintJobCard() {
                      <tr key={i}>
                        <td className="p-1.5 border-r border-black font-bold">
                          {row.material_name}
-                         {/* ⭐️ ROUND 14 FIX: Operational Override Flag */}
                          {row.is_substituted && (
                            <span className="ml-1 text-[9px] font-black uppercase tracking-widest text-gray-500 italic block mt-0.5">
                              (Substituted)
@@ -256,7 +249,6 @@ export default function PrintJobCard() {
             </table>
           </div>
 
-          {/* 7. Process Routing & Sign-off */}
           <div className="mb-4">
             <h3 className="font-black uppercase tracking-widest text-xs bg-gray-200 border-2 border-black border-b-0 px-2 py-1">Process Routing & Sign-off</h3>
             <table className="w-full text-left text-xs border-collapse border-2 border-black">
@@ -296,7 +288,6 @@ export default function PrintJobCard() {
                         <td className="p-1 h-12 bg-gray-50"></td>
                       </tr>
                       
-                      {/* Compact Transfer Divider */}
                       {showTransfer && (
                         <tr className="bg-gray-100 text-center font-black uppercase text-[10px] tracking-widest border-b-[3px] border-gray-400">
                           <td colSpan="9" className="py-1">
@@ -311,7 +302,6 @@ export default function PrintJobCard() {
             </table>
           </div>
 
-          {/* 8. Final Reconciliation Box */}
           <div className="border-2 border-black p-3 flex justify-between items-end bg-gray-100 break-inside-avoid mb-4">
             <div>
               <div className="font-black uppercase tracking-widest text-lg">Final Reconciliation</div>
@@ -337,7 +327,6 @@ export default function PrintJobCard() {
             </div>
           </div>
 
-          {/* 9. Footer: Linked Cards & Supervisor Sign */}
           <div className="flex justify-between items-end border-t-2 border-black pt-2 break-inside-avoid">
             <div className="text-xs">
               <div className="font-black uppercase text-[10px] text-gray-500 mb-1">Linked Cards in Set ({job.set_code})</div>
