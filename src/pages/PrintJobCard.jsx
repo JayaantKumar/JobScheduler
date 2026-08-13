@@ -1,6 +1,6 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import { collection, doc, query, where, getDocs, onSnapshot, updateDoc, increment } from "firebase/firestore";
+import { collection, doc, query, where, getDocs, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase/config";
 import QRCode from "react-qr-code";
 
@@ -10,7 +10,6 @@ export default function PrintJobCard() {
   const location = useLocation();
   
   const isAutoprint = new URLSearchParams(location.search).get("autoprint") === "1";
-  const autoPrintTriggered = useRef(false);
 
   const [job, setJob] = useState(null);
   const [siblings, setSiblings] = useState([]);
@@ -57,16 +56,10 @@ export default function PrintJobCard() {
         
         setLoading(false);
         
-        // ⭐️ ROUND 15 FIX (POINT 4): Increment strictly on auto-print, then clean the URL to prevent refresh loops
-        if (isAutoprint && !autoPrintTriggered.current) {
-          autoPrintTriggered.current = true;
-          
-          // Increment the counter since this is a valid print routing
-          updateDoc(doc(db, "jobs", jobId), { print_count: increment(1) }).catch(err => console.error("Counter err:", err));
-          
-          // Strip the ?autoprint=1 flag from the URL entirely so hitting Refresh does nothing
+        // ⭐️ ROUND 17 FIX (POINT 2): Only trigger print dialog, do NOT touch database here
+        if (isAutoprint) {
+          // Clean URL strictly for UI purposes (preventing endless print loops if they refresh)
           navigate(`/print/${jobId}`, { replace: true });
-          
           setTimeout(() => window.print(), 800);
         }
       } else {
@@ -78,12 +71,8 @@ export default function PrintJobCard() {
     return () => unsub();
   }, [jobId, isAutoprint, navigate]);
 
-  const handleManualPrint = async () => {
-    try {
-      await updateDoc(doc(db, "jobs", jobId), { print_count: increment(1) });
-    } catch (err) {
-      console.error("Failed to increment counter:", err);
-    }
+  const handleManualPrint = () => {
+    // ⭐️ ROUND 17 FIX (POINT 2): This just prints the current view.
     window.print();
   };
 

@@ -75,7 +75,19 @@ export default function InventoryManagement() {
     const fetchJobs = async () => {
       const q = query(collection(db, "jobs"));
       const snap = await getDocs(q);
-      const jobsList = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(j => j.status !== "completed");
+      let jobsList = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(j => j.status !== "completed");
+      
+      // ⭐️ ROUND 17 FIX: Sort active jobs so they appear logically in Issue Out dropdown
+      jobsList.sort((a, b) => {
+        const idA = a.set_code || a.display_id || "";
+        const idB = b.set_code || b.display_id || "";
+        
+        if (idA !== idB) {
+           return idB.localeCompare(idA); // Descending sort (newest sets first)
+        }
+        return (Number(a.part_index) || 0) - (Number(b.part_index) || 0); // Ascending sort for parts within set
+      });
+
       setActiveJobs(jobsList);
     };
     fetchJobs();
@@ -182,12 +194,12 @@ export default function InventoryManagement() {
     } catch (err) { setErrorMsg("Migration failed: " + err.message); }
   };
 
-  // ⭐️ ROUND 16 FIX: Reconciliation Generation
+  // ⭐️ ROUND 17 FIX: Iterate over a union of ALL locations (stored & ledger)
   const resolveLegacyMismatch = async (item, resolvedBalances, ledgerSumsByCode) => {
     setConfirmConfig({
       isOpen: true,
       title: "Reconcile Ledger Balance",
-      message: `This will write an OPENING BALANCE adjustment so the ledger mathematically matches the stored physical stock. Proceed?`,
+      message: `This will write an OPENING BALANCE adjustment so the ledger mathematically matches the stored physical stock across all mismatched locations. Proceed?`,
       confirmText: "Generate Opening Balance",
       isDanger: false,
       onConfirm: async () => {
@@ -196,8 +208,15 @@ export default function InventoryManagement() {
           const batch = writeBatch(db);
           const dateStr = new Date().toISOString().split('T')[0];
           let operations = 0;
+
+          // Combine all keys found in either Physical Balances or the Ledger History
+          const allLocCodes = new Set([
+             ...Object.keys(resolvedBalances),
+             ...Object.keys(ledgerSumsByCode)
+          ]);
   
-          Object.entries(resolvedBalances).forEach(([locCode, storedQty]) => {
+          allLocCodes.forEach(locCode => {
+            const storedQty = resolvedBalances[locCode] || 0;
             const ledgerQty = ledgerSumsByCode[locCode] || 0;
             const variance = storedQty - ledgerQty;
             
@@ -205,10 +224,10 @@ export default function InventoryManagement() {
               const txRef = doc(collection(db, "inventoryTransactions"));
               batch.set(txRef, {
                 itemId: item.id, itemName: item.name,
-                type: 'reconciliation', // Explicitly typed to avoid "ISSUE OUT"
+                type: 'reconciliation', 
                 supplier: 'System Reconciliation',
                 date: dateStr, 
-                qty: variance, // Keeps the native positive/negative sign to fix the math loop
+                qty: variance, 
                 location: locCode,
                 previous_balance: ledgerQty, 
                 new_balance: storedQty, 

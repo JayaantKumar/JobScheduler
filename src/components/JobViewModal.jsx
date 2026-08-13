@@ -20,7 +20,7 @@ export default function JobViewModal({ job, onClose }) {
   const [inventoryItems, setInventoryItems] = useState([]);
   const [dies, setDies] = useState([]);
   const [locations, setLocations] = useState([]);
-  const [companyLogo, setCompanyLogo] = useState(""); // ⭐️ ROUND 10 ITEM A1: Global Settings Logo
+  const [companyLogo, setCompanyLogo] = useState(""); 
 
   const [liveProductFiles, setLiveProductFiles] = useState([]);
   const [files, setFiles] = useState(job.files || []); 
@@ -49,7 +49,6 @@ export default function JobViewModal({ job, onClose }) {
     const unsubDies = onSnapshot(collection(db, "dies"), (snap) => setDies(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubLocs = onSnapshot(collection(db, "locations"), (snap) => setLocations(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     
-    // ⭐️ ROUND 10 ITEM A1: Fetch the global logo
     const unsubSettings = onSnapshot(doc(db, "settings", "global"), (docSnap) => {
       if (docSnap.exists() && docSnap.data().companyLogo) {
         setCompanyLogo(docSnap.data().companyLogo);
@@ -96,20 +95,22 @@ export default function JobViewModal({ job, onClose }) {
 
   if (!localJob) return null;
 
-  // ⭐️ ROUND 10 ITEM B2: Print Counter Logic
-  const handlePrint = () => {
-    // 1. Instantly open the tab
-    const newTab = window.open(`/print/${job.id}?autoprint=1`, '_blank');
-if (!newTab || newTab.closed || typeof newTab.closed === 'undefined') {
-  window.location.href = `/print/${job.id}?autoprint=1`;
-}
-    // 2. Fallback if blocked
-    if (!newTab || newTab.closed || typeof newTab.closed === 'undefined') {
-      window.location.href = `/print/${job.id}`;
+  // ⭐️ ROUND 17 FIX: Print Counter Logic safely isolated to the button click
+  const handlePrint = async () => {
+    try {
+      // 1. Fire database increment exactly ONCE when the user clicks
+      await updateDoc(doc(db, "jobs", localJob.id), { print_count: increment(1) });
+    } catch (err) {
+      console.error("Failed to increment print count:", err);
     }
 
-    // 3. Fire database increment
-    updateDoc(doc(db, "jobs", job.id), { print_count: increment(1) }).catch(err => console.error(err));
+    // 2. Instantly open the tab
+    const newTab = window.open(`/print/${localJob.id}?autoprint=1`, '_blank');
+    
+    // 3. Fallback if popup blocked
+    if (!newTab || newTab.closed || typeof newTab.closed === 'undefined') {
+      window.location.href = `/print/${localJob.id}?autoprint=1`;
+    }
   };
 
   const updateStepStatus = async (idx, newStatus, extraStepData = {}, extraJobData = {}) => {
@@ -145,7 +146,6 @@ if (!newTab || newTab.closed || typeof newTab.closed === 'undefined') {
       const newLog = [logEntry, ...(localJob.activity_log || [])]; 
       const allCompleted = updatedSequence.every(s => s.status === "completed");
       
-      // ⭐️ ROUND 10 ITEM B1: Support final job completion overrides
       const newJobStatus = extraJobData.status || (allCompleted ? "completed" : "in_progress");
 
       const updatePayload = {
@@ -169,7 +169,6 @@ if (!newTab || newTab.closed || typeof newTab.closed === 'undefined') {
     }
   };
 
-  // ⭐️ ROUND 10 ITEM B1: Final Step Reconciliation Logic
   const handleCompleteStep = (idx) => {
     const isFinalStep = idx === (localJob.process_sequence?.length || 0) - 1;
     const okQty = Number(qtyOk) || 0;
@@ -353,7 +352,6 @@ if (!newTab || newTab.closed || typeof newTab.closed === 'undefined') {
   const productSku = localJob.product_snapshot?.sku || localJob.product?.sku || "N/A";
   const isArtworkRequired = localJob.artwork_required ?? localJob.product?.artwork_required ?? true;
 
-  // ⭐️ ROUND 10 PART A: Massive Print Layout Restructuring
   const PrintView = (
     <div id="print-card" className="hidden print:block w-full bg-white text-black font-sans relative text-sm">
       
@@ -932,7 +930,7 @@ if (!newTab || newTab.closed || typeof newTab.closed === 'undefined') {
                   const isInProgress = status === 'in_progress';
                   const isOnHold = status === 'on_hold';
                   
-                  const isFinalStep = idx === arr.length - 1; // ⭐️ Check for Reconciliation Step
+                  const isFinalStep = idx === arr.length - 1;
 
                   const prevStep = idx > 0 ? arr[idx-1] : null;
                   const prevPlace = prevStep?.assigned_machine_place;
