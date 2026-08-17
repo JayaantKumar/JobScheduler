@@ -95,19 +95,15 @@ export default function JobViewModal({ job, onClose }) {
 
   if (!localJob) return null;
 
-  // ⭐️ ROUND 17 FIX: Print Counter Logic safely isolated to the button click
   const handlePrint = async () => {
     try {
-      // 1. Fire database increment exactly ONCE when the user clicks
       await updateDoc(doc(db, "jobs", localJob.id), { print_count: increment(1) });
     } catch (err) {
       console.error("Failed to increment print count:", err);
     }
 
-    // 2. Instantly open the tab
     const newTab = window.open(`/print/${localJob.id}?autoprint=1`, '_blank');
     
-    // 3. Fallback if popup blocked
     if (!newTab || newTab.closed || typeof newTab.closed === 'undefined') {
       window.location.href = `/print/${localJob.id}?autoprint=1`;
     }
@@ -352,6 +348,7 @@ export default function JobViewModal({ job, onClose }) {
   const productSku = localJob.product_snapshot?.sku || localJob.product?.sku || "N/A";
   const isArtworkRequired = localJob.artwork_required ?? localJob.product?.artwork_required ?? true;
 
+  // ⭐️ ROUND 18.1 FIX: Typography and contrast synced for embedded PrintView fallback
   const PrintView = (
     <div id="print-card" className="hidden print:block w-full bg-white text-black font-sans relative text-sm">
       
@@ -362,51 +359,51 @@ export default function JobViewModal({ job, onClose }) {
           {companyLogo ? (
             <img src={companyLogo} alt="Company Logo" className="max-w-full max-h-16 object-contain" />
           ) : (
-            <div className="text-xl font-black uppercase tracking-tighter">FACTORY</div>
+            <div className="text-xl font-black uppercase tracking-tighter text-black">FACTORY</div>
           )}
         </div>
         
         <div className="flex-1 flex flex-col justify-center border-l-2 border-black pl-4">
           <div className="flex items-center gap-2 mb-0.5">
             <div className="text-[10px] uppercase font-bold bg-black text-white px-2 py-0.5">
-              {localJob.print_count > 0 ? `REPRINT #${localJob.print_count}` : "ORIGINAL"}
+              {!localJob.print_count || localJob.print_count <= 1 ? "ORIGINAL" : `REPRINT #${localJob.print_count}`}
             </div>
-            <h1 className="text-xl font-black uppercase tracking-tight whitespace-nowrap">
+            <h1 className="text-xl font-black uppercase tracking-tight whitespace-nowrap text-black">
               {isMultiPart ? `SET-${localJob.set_code}` : 'JOB CARD'}
             </h1>
           </div>
-          <div className="text-xs font-bold font-mono text-gray-800 tracking-tight whitespace-nowrap">
+          <div className="text-xs font-bold font-mono text-black tracking-tight whitespace-nowrap">
             {localJob.display_id || `JOB-${localJob.id.slice(0, 8).toUpperCase()}`} 
-            <span className="mx-2 text-gray-300">|</span> 
+            <span className="mx-2 text-gray-400">|</span> 
             PART {localJob.part_index || 1} OF {localJob.parts_total || siblings.length || 1}: {localJob.part_name || "Main"}
-            <span className="mx-2 text-gray-300">|</span> 
+            <span className="mx-2 text-gray-400">|</span> 
             {routeText}
           </div>
         </div>
 
-        <div className="w-[20%] shrink-0 text-right text-xs flex flex-col justify-center space-y-0.5">
-          <div className="whitespace-nowrap"><span className="text-gray-500 uppercase">Job Date:</span> <span className="font-bold">{jobDate}</span></div>
-          <div className="whitespace-nowrap"><span className="text-gray-500 uppercase">Due Date:</span> <span className="font-bold text-[13px]">{dueDate}</span></div>
-          <div className="whitespace-nowrap pt-0.5"><span className="text-gray-500 uppercase">Priority:</span> <span className="font-bold uppercase border border-black px-1.5 py-0.5 ml-1">{localJob.priority}</span></div>
+        <div className="w-[20%] shrink-0 text-right text-xs flex flex-col justify-center space-y-0.5 text-black">
+          <div className="whitespace-nowrap"><span className="text-gray-800 uppercase font-bold">Job Date:</span> <span className="font-bold">{jobDate}</span></div>
+          <div className="whitespace-nowrap"><span className="text-gray-800 uppercase font-bold">Due Date:</span> <span className="font-bold text-[13px]">{dueDate}</span></div>
+          <div className="whitespace-nowrap pt-0.5"><span className="text-gray-800 uppercase font-bold">Priority:</span> <span className="font-bold uppercase border border-black px-1.5 py-0.5 ml-1">{localJob.priority}</span></div>
         </div>
       </div>
 
       {/* COMPACT METADATA GRID */}
       <div className="flex justify-between items-center bg-gray-100 border-b-2 border-black py-1.5 px-2 mb-3 text-xs uppercase">
-        <div><span className="text-gray-500 font-bold">Customer:</span> <span className="font-bold text-black ml-1">{localJob.customer}</span></div>
-        <div><span className="text-gray-500 font-bold">Product:</span> <span className="font-bold text-black ml-1">{productName}</span></div>
-        <div><span className="text-gray-500 font-bold">SKU:</span> <span className="font-bold text-black ml-1">{productSku}</span></div>
+        <div><span className="text-gray-800 font-bold">Customer:</span> <span className="font-bold text-black ml-1">{localJob.customer}</span></div>
+        <div><span className="text-gray-800 font-bold">Product:</span> <span className="font-bold text-black ml-1">{productName}</span></div>
+        <div><span className="text-gray-800 font-bold">SKU:</span> <span className="font-bold text-black ml-1">{productSku}</span></div>
         <div className="flex items-center gap-2">
-          <span className="text-gray-500 font-bold">Target Qty:</span> 
+          <span className="text-gray-800 font-bold">Target Qty:</span> 
           <span className="font-black text-black text-sm">{localJob.quantity_target?.toLocaleString()}</span>
-          {isMultiPart && <span className="text-[9px] text-gray-600 font-bold normal-case leading-none mt-0.5">{renderQtyMath()}</span>}
+          {isMultiPart && <span className="text-xs text-black font-black normal-case leading-none mt-0.5 ml-2">{renderQtyMath()}</span>}
         </div>
       </div>
 
       {/* ARTWORK BLOCK */}
       <div className="mb-4 border-2 border-black flex">
         <div className="flex-1 p-2">
-          <div className="text-[10px] font-bold uppercase text-gray-600 tracking-wider mb-1">Master Files & Assets</div>
+          <div className="text-[10px] font-bold uppercase text-gray-800 tracking-wider mb-1">Master Files & Assets</div>
           
           {!isArtworkRequired ? (
             <div className="text-black font-black text-base uppercase tracking-wider mt-1 bg-gray-100 p-2 border border-black inline-block">
@@ -419,12 +416,12 @@ export default function JobViewModal({ job, onClose }) {
           ) : (
             <div className="space-y-1 mt-2">
               {approvedArtworks.map((art, i) => (
-                <div key={`art-${i}`} className="text-sm font-bold">
+                <div key={`art-${i}`} className="text-sm font-bold text-black">
                   ARTWORK {art.purpose ? `[${art.purpose.toUpperCase()}]` : ''}: {art.name} <span className="text-xs bg-black text-white px-1 ml-1">{art.version}</span>
                 </div>
               ))}
               {approvedDielines.map((die, i) => (
-                <div key={`die-${i}`} className="text-sm font-bold mt-1">
+                <div key={`die-${i}`} className="text-sm font-bold mt-1 text-black">
                   DIELINE {die.purpose ? `[${die.purpose.toUpperCase()}]` : ''}: {die.name} <span className="text-xs bg-gray-200 px-1 ml-1 border border-black">{die.version}</span>
                 </div>
               ))}
@@ -433,15 +430,15 @@ export default function JobViewModal({ job, onClose }) {
         </div>
         <div className="w-24 border-l-2 border-black flex flex-col items-center justify-center p-1 bg-gray-50 shrink-0">
           <img src={`https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent('Job-' + localJob.display_id)}&margin=0`} alt="Job QR" className="w-16 h-16" />
-          <span className="text-[7px] uppercase font-bold mt-1 text-center leading-tight">Scan for Files<br/>& Updates</span>
+          <span className="text-[7px] uppercase font-bold mt-1 text-center leading-tight text-black">Scan for Files<br/>& Updates</span>
         </div>
       </div>
 
       {/* CHECKLIST TABLE */}
-      <div className="font-bold uppercase mb-1 text-xs">Pre-Production Checklist</div>
+      <div className="font-bold uppercase mb-1 text-xs text-black">Pre-Production Checklist</div>
       <table className="w-full text-left border-collapse border-2 border-black text-xs mb-4">
         <thead>
-          <tr className="bg-gray-100 border-b-2 border-black uppercase text-gray-700 text-[10px]">
+          <tr className="bg-gray-100 border-b-2 border-black uppercase text-black text-[10px]">
             <th className="border-r-2 border-black p-1.5 w-6 text-center">☐</th>
             <th className="border-r-2 border-black p-1.5">Item / Material Specification</th>
             <th className="border-r-2 border-black p-1.5 w-28">Piece / Purpose</th>
@@ -450,7 +447,7 @@ export default function JobViewModal({ job, onClose }) {
             <th className="p-1.5 w-32">Notes</th>
           </tr>
         </thead>
-        <tbody>
+        <tbody className="text-black">
           {preProdChecklist.map((row, i) => {
              let calculatedTotal = 0;
              if (row.isDie) calculatedTotal = 1;
@@ -487,7 +484,7 @@ export default function JobViewModal({ job, onClose }) {
                            return matchedLoc ? matchedLoc.code : locKey;
                        }).join(', ');
                        stockFlag = <span className="ml-1 bg-purple-200 border border-purple-800 text-purple-900 px-1.5 py-0.5 rounded text-[8px] font-black tracking-wider uppercase">TRANSFER TO {targetPlace} (FROM {holding || 'UNASSIGNED'})</span>;
-                   } else stockFlag = <span className="ml-1 text-gray-500 text-[8px] font-bold">[OK - {targetPlace}]</span>;
+                   } else stockFlag = <span className="ml-1 text-gray-800 text-[8px] font-bold">[OK - {targetPlace}]</span>;
 
                    const rawName = row.material_name.split('·')[0].trim();
                    const isBoard = row.category === 'board' || row.category === 'rigid';
@@ -501,12 +498,12 @@ export default function JobViewModal({ job, onClose }) {
 
              return (
                <tr key={i} className="border-b border-black">
-                 <td className="border-r-2 border-black p-1.5 text-center text-lg font-bold">☐</td>
-                 <td className="border-r-2 border-black p-1.5 font-bold text-[13px]">{displaySpec} {stockFlag}</td>
-                 <td className="border-r-2 border-black p-1.5 font-bold uppercase">{row.piece_purpose}</td>
-                 <td className="border-r-2 border-black p-1.5 font-mono text-[11px]">{displaySize}</td>
-                 <td className="border-r-2 border-black p-1.5 text-center font-bold text-sm bg-gray-50">{row.isDie ? '—' : `${calculatedTotal.toLocaleString()} ${row.unit || 'pcs'}`}</td>
-                 <td className="p-1.5 text-[10px] leading-tight">{row.notes || '—'}</td>
+                 <td className="border-r-2 border-black p-1.5 text-center text-lg font-bold text-black">☐</td>
+                 <td className="border-r-2 border-black p-1.5 font-bold text-[13px] text-black">{displaySpec} {stockFlag}</td>
+                 <td className="border-r-2 border-black p-1.5 font-bold uppercase text-black">{row.piece_purpose}</td>
+                 <td className="border-r-2 border-black p-1.5 font-mono text-[11px] text-black">{displaySize}</td>
+                 <td className="border-r-2 border-black p-1.5 text-center font-bold text-sm bg-gray-50 text-black">{row.isDie ? '—' : `${calculatedTotal.toLocaleString()} ${row.unit || 'pcs'}`}</td>
+                 <td className="p-1.5 text-[10px] leading-tight text-black">{row.notes || '—'}</td>
                </tr>
              );
           })}
@@ -515,20 +512,20 @@ export default function JobViewModal({ job, onClose }) {
 
       {issuedMaterials.length > 0 && (
         <div className="mb-4 text-xs">
-          <span className="font-bold uppercase border-b border-black pb-0.5 mr-3">Materials Issued (Inventory):</span>
+          <span className="font-bold uppercase border-b border-black pb-0.5 mr-3 text-black">Materials Issued (Inventory):</span>
           {issuedMaterials.map(mat => (
-            <span key={mat.id} className="mr-4 inline-block font-medium">
-              {mat.itemName} — <span className="font-bold">{Math.abs(mat.qty).toLocaleString()}</span> <span className="text-[9px] text-gray-500">({mat.date})</span>
+            <span key={mat.id} className="mr-4 inline-block font-medium text-black">
+              {mat.itemName} — <span className="font-bold">{Math.abs(mat.qty).toLocaleString()}</span> <span className="text-[9px] text-gray-800">({mat.date})</span>
             </span>
           ))}
         </div>
       )}
 
       {/* ROUTING TABLE */}
-      <div className="font-bold uppercase mb-1 text-xs">Process Routing & Sign-offs</div>
+      <div className="font-bold uppercase mb-1 text-xs text-black">Process Routing & Sign-offs</div>
       <table id="routing-table" className="w-full text-left border-collapse border-2 border-black text-xs mb-4">
         <thead>
-          <tr className="bg-gray-100 border-b-2 border-black text-[10px] uppercase">
+          <tr className="bg-gray-100 border-b-2 border-black text-[10px] uppercase text-black">
             <th className="border-r-2 border-black p-1.5 w-6 text-center">#</th>
             <th className="border-r-2 border-black p-1.5">Process & Specifications</th>
             <th className="border-r-2 border-black p-1.5 w-24">Machine/Loc</th>
@@ -539,7 +536,7 @@ export default function JobViewModal({ job, onClose }) {
             <th className="p-1.5 w-32 text-center">Operator Sign / Date</th>
           </tr>
         </thead>
-        <tbody>
+        <tbody className="text-black">
           {localJob.process_sequence?.map((step, idx, arr) => {
             const prevStep = idx > 0 ? arr[idx-1] : null;
             const prevPlace = prevStep?.assigned_machine_place;
@@ -567,17 +564,22 @@ export default function JobViewModal({ job, onClose }) {
                   </tr>
                 )}
                 <tr className="border-b border-black">
-                  <td className="border-r-2 border-black p-1.5 text-center font-bold align-top">{idx + 1}</td>
+                  <td className="border-r-2 border-black p-1.5 text-center font-bold align-top text-black">{idx + 1}</td>
                   <td className="border-r-2 border-black p-1.5 align-top">
-                    <span className="font-bold text-[13px]">{step.process_name}</span>
-                    {step.remarks && <div className="text-[11px] font-medium text-gray-800 mt-1 whitespace-pre-wrap leading-tight">{step.remarks.replace(/ \| /g, '\n')}</div>}
+                    <span className="font-bold text-[13px] uppercase text-black">{step.process_name}</span>
+                    {step.remarks && (
+                      <div className="mt-1.5 bg-gray-200 p-1.5 border border-black text-[11px] font-bold text-black whitespace-pre-wrap leading-tight">
+                        <span className="text-[9px] uppercase font-black mr-1 text-gray-800 block mb-0.5">Remarks:</span>
+                        {step.remarks.replace(/ \| /g, '\n')}
+                      </div>
+                    )}
                   </td>
                   <td className="border-r-2 border-black p-1.5 align-top">
-                    <div className="font-bold text-[10px] leading-tight">{step.assigned_machine_name || "Any"}</div>
-                    {currPlace && <div className="text-[9px] text-gray-600 font-mono mt-0.5">{currPlace}</div>}
+                    <div className="font-bold text-[10px] leading-tight text-black">{step.assigned_machine_name || "Any"}</div>
+                    {currPlace && <div className="text-[9px] text-black font-mono font-bold mt-0.5">{currPlace}</div>}
                   </td>
-                  <td className="border-r-2 border-black p-1.5 text-center align-top font-bold">{step.input_qty?.toLocaleString() || localJob.quantity_target?.toLocaleString()}</td>
-                  <td className="border-r-2 border-black p-1.5 text-center align-top font-bold text-gray-600">{step.output_qty?.toLocaleString() || localJob.quantity_target?.toLocaleString()}</td>
+                  <td className="border-r-2 border-black p-1.5 text-center align-top font-bold text-black">{step.input_qty?.toLocaleString() || localJob.quantity_target?.toLocaleString()}</td>
+                  <td className="border-r-2 border-black p-1.5 text-center align-top font-bold text-black">{step.output_qty?.toLocaleString() || localJob.quantity_target?.toLocaleString()}</td>
                   <td className="border-r-2 border-black p-1.5 text-center align-bottom border-b border-dashed border-gray-400 pb-2"></td>
                   <td className="border-r-2 border-black p-1.5 text-center align-bottom bg-gray-50 border-b border-dashed border-gray-400"></td>
                   <td className="p-1.5 align-bottom border-b border-dashed border-gray-400"></td>
@@ -589,28 +591,28 @@ export default function JobViewModal({ job, onClose }) {
       </table>
 
       {localJob.notes && (
-        <div className="border border-black p-3 mb-4 bg-gray-50">
-          <h3 className="text-[10px] font-bold text-gray-600 uppercase mb-1">Special Instructions / Notes</h3>
+        <div className="border border-black p-3 mb-4 bg-gray-50 text-black">
+          <h3 className="text-[10px] font-bold text-gray-800 uppercase mb-1">Special Instructions / Notes</h3>
           <p className="text-sm whitespace-pre-wrap font-bold">{localJob.notes}</p>
         </div>
       )}
 
       {/* FOOTER */}
-      <div className="flex justify-between items-stretch border-2 border-black mt-auto">
+      <div className="flex justify-between items-stretch border-2 border-black mt-auto text-black">
         <div className="p-2 flex-1 border-r-2 border-black bg-gray-50">
           <div className="text-[10px] font-bold uppercase mb-1">Linked Cards in Set {isMultiPart ? `(SET-${localJob.set_code})` : ''}</div>
           <div className="grid grid-cols-2 gap-x-4 gap-y-1">
             {siblings.map(sib => (
               <div key={sib.id} className="text-[9px] font-bold uppercase flex justify-between">
                 <span>Part {sib.part_index}: {sib.part_name} - {sib.quantity_target?.toLocaleString()} pcs</span>
-                <span className={sib.id === localJob.id ? 'text-black' : 'text-gray-500'}>{sib.id === localJob.id ? '[THIS CARD]' : sib.status}</span>
+                <span className={sib.id === localJob.id ? 'text-black' : 'text-gray-800'}>{sib.id === localJob.id ? '[THIS CARD]' : sib.status}</span>
               </div>
             ))}
-            {!isMultiPart && <div className="text-[9px] text-gray-500 italic">Single job card. No siblings.</div>}
+            {!isMultiPart && <div className="text-[9px] text-gray-800 italic font-bold">Single job card. No siblings.</div>}
           </div>
         </div>
         <div className="w-64 p-2 flex flex-col shrink-0">
-          <div className="text-[10px] font-bold uppercase mb-4 text-center">Supervisor Sign / Date</div>
+          <div className="text-[10px] font-bold uppercase mb-4 text-center text-black">Supervisor Sign / Date</div>
           <div className="mt-auto border-b border-black w-full"></div>
         </div>
       </div>

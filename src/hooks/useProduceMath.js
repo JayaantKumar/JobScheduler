@@ -6,58 +6,114 @@ export function useProduceMath() {
   const [produceQty, setProduceQty] = useState(""); 
   const [produceDate, setProduceDate] = useState("");
   const [produceParts, setProduceParts] = useState([]);
+  
+  const [cachedProcesses, setCachedProcesses] = useState([]);
 
-  // ⭐️ ROUND 9.2: BUG 4 FIX - Strict preservation of existing state and IDs to prevent panel collapse
-  const generateProduceParts = (qtyStr, baseParts, existingParts = []) => {
-    const sets = qtyStr === "" ? "" : Number(qtyStr);
+  // ⭐️ ROUND 18.3 FIX: Check if a value is text without modifying the user's keystrokes
+  const isText = (val) => {
+    if (val === "" || val === null || val === undefined) return true;
+    if (typeof val === 'string' && isNaN(Number(val))) return true;
+    return false;
+  };
+
+  // ⭐️ ROUND 18.3 FIX: Refined sequence engine that allows smooth text typing 
+  const recalculateSequence = (sequence, dirtyFields, baseSets, basePcs, multiplier, processes = cachedProcesses) => {
+    let previousOutput = basePcs; 
+    
+    return sequence.map((step, idx) => {
+        // 1. Determine Input
+        let stepInput = step.input_qty;
+        if (!dirtyFields[`input_${idx}`]) {
+            stepInput = idx === 0 ? baseSets : previousOutput; 
+        }
+
+        // 2. Fetch Default Wastage
+        const processDef = processes.find(dp => dp.processName === step.process_name);
+        const defWastage = processDef?.defaultWastage || 0;
+        const wVal = (step.wastage_val !== undefined && step.wastage_val !== "") ? step.wastage_val : defWastage;
+        const wType = step.wastage_type || '%';
+
+        // 3. Determine Output
+        let stepOutput = step.output_qty;
+        
+        if (!dirtyFields[`output_${idx}`]) {
+            // If the input is Text (like "TBD" or empty), pass the text straight through safely
+            if (isText(stepInput)) {
+                stepOutput = stepInput;
+            } else {
+                // Otherwise, it's a valid number so we do the math
+                const safeMult = Number(multiplier) || 1;
+                let numericBase = (idx === 0) ? (Number(stepInput) * safeMult) : Number(stepInput);
+                
+                const numericWastage = Number(wVal) || 0;
+                let wasteAmt = 0;
+                
+                if (wType === '%') {
+                    wasteAmt = numericBase * (numericWastage / 100);
+                } else {
+                    wasteAmt = numericWastage;
+                }
+                
+                stepOutput = Math.max(0, Math.round(numericBase - wasteAmt));
+            }
+        }
+
+        // Cascade this output to become the next step's default input
+        previousOutput = stepOutput; 
+
+        return {
+            ...step,
+            input_qty: stepInput,
+            output_qty: stepOutput,
+            wastage_val: wVal,
+            wastage_type: wType
+        };
+    });
+  };
+
+  const generateProduceParts = (qtyStr, baseParts, existingParts = [], processes = cachedProcesses) => {
     return baseParts.map((p, pIdx) => {
        const existing = existingParts[pIdx] || {};
        const dirty = existing.dirtyFields || {};
        
        const mult = Number(p.qty_per_set) || 1;
-       const computedPcs = sets === "" ? "" : sets * mult;
+       const computedPcs = isText(qtyStr) ? qtyStr : Number(qtyStr) * mult;
 
-       const partSets = dirty.part_sets && existing.part_sets !== undefined ? existing.part_sets : sets;
+       const partSets = dirty.part_sets && existing.part_sets !== undefined ? existing.part_sets : qtyStr;
        const finalPcs = dirty.custom_override || dirty.part_sets ? (existing.final_pcs ?? computedPcs) : computedPcs;
+
+       const baseSequence = (p.sequence || []).map((s, sIdx) => {
+          const existingStep = existing.sequence?.[sIdx] || {};
+          return { ...s, ...existingStep, id: existingStep.id || s.id || `step-${sIdx}` };
+       });
+
+       const activeMult = existing.active_multiplier !== undefined ? existing.active_multiplier : mult;
 
        return {
           id: existing.id || p.id || `part-${pIdx}`, 
           part_name: p.part_name,
           part_sets: partSets,
           original_multiplier: mult,
-          active_multiplier: existing.active_multiplier !== undefined ? existing.active_multiplier : mult,
+          active_multiplier: activeMult,
           is_custom_override: existing.is_custom_override || false,
           final_pcs: finalPcs,
           notes: existing.notes !== undefined ? existing.notes : "", 
           expanded: existing.expanded !== undefined ? existing.expanded : false, 
           dirtyFields: dirty,
-          sequence: (p.sequence || []).map((s, sIdx) => {
-             const existingStep = existing.sequence?.[sIdx] || {};
-             const stepDirty = dirty;
-             
-             // ⭐️ ROUND 15 FIX: Step 1 input defaults to raw sets/sheets, subsequent steps default to final pieces
-             const defaultStepInput = sIdx === 0 ? partSets : finalPcs;
-             const defaultStepOutput = finalPcs;
-
-             return {
-               ...s,
-               id: existingStep.id || s.id || `step-${sIdx}`, 
-               input_qty: stepDirty[`input_${sIdx}`] && existingStep.input_qty !== undefined ? existingStep.input_qty : defaultStepInput,
-               output_qty: stepDirty[`output_${sIdx}`] && existingStep.output_qty !== undefined ? existingStep.output_qty : defaultStepOutput
-             };
-          })
+          sequence: recalculateSequence(baseSequence, dirty, partSets, finalPcs, activeMult, processes)
        };
     });
   };
 
-  const openProduceModal = (prod) => {
+  const openProduceModal = (prod, dbProcesses = []) => {
+    setCachedProcesses(dbProcesses);
     const formattedProd = { ...prod };
     if (!formattedProd.parts) {
       formattedProd.parts = [{ part_name: prod.name, qty_per_set: 1, sequence: prod.default_sequence || [] }];
     }
     setActiveProduceProduct(formattedProd);
     setProduceQty("");
-    setProduceParts(generateProduceParts("", formattedProd.parts, [])); 
+    setProduceParts(generateProduceParts("", formattedProd.parts, [], dbProcesses)); 
     
     const defaultDate = new Date();
     defaultDate.setDate(defaultDate.getDate() + 14);
@@ -77,21 +133,13 @@ export function useProduceMath() {
     setProduceParts(prev => {
       const copy = [...prev];
       const pCopy = { ...copy[pIdx] }; 
-      const count = newSets === "" ? "" : Number(newSets);
-      pCopy.part_sets = count;
+      
+      pCopy.part_sets = newSets;
       pCopy.dirtyFields = { ...(pCopy.dirtyFields || {}), part_sets: true };
       
       if (!pCopy.is_custom_override) {
-        pCopy.final_pcs = count === "" ? "" : count * pCopy.active_multiplier;
-        pCopy.sequence = pCopy.sequence.map((s, sIdx) => {
-          const stepDirty = pCopy.dirtyFields;
-          const defaultStepInput = sIdx === 0 ? count : pCopy.final_pcs;
-          return {
-            ...s,
-            input_qty: stepDirty[`input_${sIdx}`] ? s.input_qty : defaultStepInput,
-            output_qty: stepDirty[`output_${sIdx}`] ? s.output_qty : pCopy.final_pcs
-          };
-        });
+        pCopy.final_pcs = isText(newSets) ? newSets : (Number(newSets) * Number(pCopy.active_multiplier || 1));
+        pCopy.sequence = recalculateSequence(pCopy.sequence, pCopy.dirtyFields, pCopy.part_sets, pCopy.final_pcs, pCopy.active_multiplier);
       }
       copy[pIdx] = pCopy;
       return copy;
@@ -102,19 +150,11 @@ export function useProduceMath() {
     setProduceParts(prev => {
        const copy = [...prev];
        const pCopy = { ...copy[pIdx] }; 
-       const mult = newMult === "" ? "" : Number(newMult);
-       pCopy.active_multiplier = mult;
+       pCopy.active_multiplier = newMult;
+       
        if (!pCopy.is_custom_override) {
-         pCopy.final_pcs = (pCopy.part_sets === "" || mult === "") ? "" : pCopy.part_sets * mult;
-         pCopy.sequence = pCopy.sequence.map((s, sIdx) => {
-           const stepDirty = pCopy.dirtyFields || {};
-           const defaultStepInput = sIdx === 0 ? pCopy.part_sets : pCopy.final_pcs;
-           return {
-             ...s,
-             input_qty: stepDirty[`input_${sIdx}`] ? s.input_qty : defaultStepInput,
-             output_qty: stepDirty[`output_${sIdx}`] ? s.output_qty : pCopy.final_pcs
-           };
-         });
+         pCopy.final_pcs = isText(pCopy.part_sets) ? pCopy.part_sets : (isText(newMult) ? "" : Number(pCopy.part_sets) * Number(newMult));
+         pCopy.sequence = recalculateSequence(pCopy.sequence, pCopy.dirtyFields, pCopy.part_sets, pCopy.final_pcs, pCopy.active_multiplier);
        }
        copy[pIdx] = pCopy;
        return copy;
@@ -127,12 +167,10 @@ export function useProduceMath() {
        const pCopy = { ...copy[pIdx] }; 
        pCopy.is_custom_override = checked;
        pCopy.dirtyFields = { ...(pCopy.dirtyFields || {}), custom_override: checked };
+       
        if (!checked) {
-         pCopy.final_pcs = (pCopy.part_sets === "" || pCopy.active_multiplier === "") ? "" : pCopy.part_sets * pCopy.active_multiplier;
-         pCopy.sequence = pCopy.sequence.map((s, sIdx) => {
-           const defaultStepInput = sIdx === 0 ? pCopy.part_sets : pCopy.final_pcs;
-           return {...s, input_qty: defaultStepInput, output_qty: pCopy.final_pcs};
-         });
+         pCopy.final_pcs = isText(pCopy.part_sets) ? pCopy.part_sets : (Number(pCopy.part_sets) * Number(pCopy.active_multiplier || 1));
+         pCopy.sequence = recalculateSequence(pCopy.sequence, pCopy.dirtyFields, pCopy.part_sets, pCopy.final_pcs, pCopy.active_multiplier);
        }
        copy[pIdx] = pCopy;
        return copy;
@@ -143,16 +181,9 @@ export function useProduceMath() {
     setProduceParts(prev => {
        const copy = [...prev];
        const pCopy = { ...copy[pIdx] }; 
-       pCopy.final_pcs = newPcs === "" ? "" : Number(newPcs);
+       pCopy.final_pcs = newPcs;
        pCopy.dirtyFields = { ...(pCopy.dirtyFields || {}), custom_override: true };
-       pCopy.sequence = pCopy.sequence.map((s, sIdx) => {
-         const stepDirty = pCopy.dirtyFields || {};
-         return {
-           ...s,
-           input_qty: stepDirty[`input_${sIdx}`] ? s.input_qty : pCopy.final_pcs,
-           output_qty: stepDirty[`output_${sIdx}`] ? s.output_qty : pCopy.final_pcs
-         };
-       });
+       pCopy.sequence = recalculateSequence(pCopy.sequence, pCopy.dirtyFields, pCopy.part_sets, pCopy.final_pcs, pCopy.active_multiplier);
        copy[pIdx] = pCopy;
        return copy;
     });
@@ -163,22 +194,40 @@ export function useProduceMath() {
         const copy = [...prev];
         const pCopy = {...copy[pIdx]};
         const seqCopy = [...pCopy.sequence];
-        const num = val === "" ? "" : Number(val);
         
-        pCopy.dirtyFields = { ...(pCopy.dirtyFields || {}), [`${field === 'input_qty' ? 'input' : 'output'}_${sIdx}`]: true };
+        // Only mark fields as dirty if the user edits the In/Out directly
+        if (field === 'input_qty') pCopy.dirtyFields = { ...(pCopy.dirtyFields || {}), [`input_${sIdx}`]: true };
+        if (field === 'output_qty') pCopy.dirtyFields = { ...(pCopy.dirtyFields || {}), [`output_${sIdx}`]: true };
         
-        seqCopy[sIdx] = {...seqCopy[sIdx], [field]: num};
-        
-        if (field === 'output_qty') {
-            let cascadedOut = num;
-            for (let i = sIdx + 1; i < seqCopy.length; i++) {
-                const stepDirty = pCopy.dirtyFields || {};
-                if (!stepDirty[`input_${i}`]) seqCopy[i].input_qty = cascadedOut;
-                if (!stepDirty[`output_${i}`]) seqCopy[i].output_qty = cascadedOut;
-                cascadedOut = seqCopy[i].output_qty;
-            }
+        // If they change wastage, un-dirty the output so the math can recalculate automatically
+        if (field === 'wastage_val' || field === 'wastage_type') {
+           if (pCopy.dirtyFields) delete pCopy.dirtyFields[`output_${sIdx}`];
         }
+
+        seqCopy[sIdx] = { ...seqCopy[sIdx], [field]: val };
         pCopy.sequence = seqCopy;
+
+        pCopy.sequence = recalculateSequence(pCopy.sequence, pCopy.dirtyFields, pCopy.part_sets, pCopy.final_pcs, pCopy.active_multiplier);
+        
+        copy[pIdx] = pCopy;
+        return copy;
+    });
+  };
+
+  const handleRecalculateChain = (pIdx) => {
+    setProduceParts(prev => {
+        const copy = [...prev];
+        const pCopy = { ...copy[pIdx] };
+        
+        // Wipe all step dirty locks, but keep global part locks
+        const newDirty = { 
+            part_sets: pCopy.dirtyFields?.part_sets,
+            custom_override: pCopy.dirtyFields?.custom_override
+        };
+        pCopy.dirtyFields = newDirty;
+        
+        pCopy.sequence = recalculateSequence(pCopy.sequence, newDirty, pCopy.part_sets, pCopy.final_pcs, pCopy.active_multiplier);
+        
         copy[pIdx] = pCopy;
         return copy;
     });
@@ -219,6 +268,7 @@ export function useProduceMath() {
     toggleCustomOverride,
     updatePartCustomPcs,
     handleStepQtyChange,
+    handleRecalculateChain,
     updatePartNotes,
     togglePartExpanded
   };

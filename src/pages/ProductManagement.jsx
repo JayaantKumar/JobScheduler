@@ -59,7 +59,6 @@ export default function ProductManagement() {
     setTimeout(() => setShowToast(false), 3000);
   };
 
-  // ⭐️ ROUND 17 FIX: Added Guardrail to prevent orphaned jobs
   const handleDelete = async (id) => {
     try {
       const qProduct = query(collection(db, "jobs"), where("product.id", "==", id));
@@ -135,7 +134,6 @@ export default function ProductManagement() {
         </div>
       )}
 
-      {/* ⭐️ ROUND 17 FIX: Updated confirm modal to conditionally render the confirm button */}
       {confirmConfig && confirmConfig.isOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
           <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-md shadow-2xl overflow-hidden animate-fade-in">
@@ -195,7 +193,8 @@ export default function ProductManagement() {
       <ProductTable 
         products={filteredProducts} 
         machines={machines}
-        onProduce={produceMath.openProduceModal}
+        // ⭐️ ROUND 18: Passing dbProcesses down to calculate default wastage
+        onProduce={(prod) => produceMath.openProduceModal(prod, dbProcesses)}
         onEdit={openTemplateModal}
         onDelete={handleDelete}
       />
@@ -214,6 +213,7 @@ export default function ProductManagement() {
         toggleCustomOverride={produceMath.toggleCustomOverride}
         updatePartCustomPcs={produceMath.updatePartCustomPcs}
         handleStepQtyChange={produceMath.handleStepQtyChange}
+        handleRecalculateChain={produceMath.handleRecalculateChain} // ⭐️ ROUND 18: Added Recalculate Function
         togglePartExpanded={produceMath.togglePartExpanded}
         machines={machines}
         dbProcesses={dbProcesses}
@@ -234,7 +234,8 @@ export default function ProductManagement() {
         inventoryItems={inventoryItems}
         onSaveSuccess={(savedData) => {
           setTemplateModalOpen(false);
-          produceMath.openProduceModal(savedData);
+          // ⭐️ ROUND 18: Passing dbProcesses here as well for post-save production
+          produceMath.openProduceModal(savedData, dbProcesses);
         }}
         openInlineModal={(type) => setInlineModal({ isOpen: true, type })}
       />

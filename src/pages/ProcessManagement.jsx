@@ -26,7 +26,10 @@ export default function ProcessManagement() {
   const [defaultMachineId, setDefaultMachineId] = useState("");
   const [inputUnit, setInputUnit] = useState("");
   const [outputUnit, setOutputUnit] = useState("");
-  const [attributes, setAttributes] = useState([]); // ⭐️ NEW: Holds the custom attributes
+  const [attributes, setAttributes] = useState([]); 
+  
+  // ⭐️ ROUND 18: Default Wastage State
+  const [defaultWastage, setDefaultWastage] = useState(0);
 
   const openModal = (proc = null) => {
     if (proc) {
@@ -35,7 +38,8 @@ export default function ProcessManagement() {
       setDefaultMachineId(proc.defaultMachineId || "");
       setInputUnit(proc.inputUnit || "");
       setOutputUnit(proc.outputUnit || "");
-      setAttributes(proc.attributes || []); // Load existing attributes
+      setAttributes(proc.attributes || []); 
+      setDefaultWastage(proc.defaultWastage || 0); // Load existing wastage
     } else {
       setEditingProcess(null);
       setProcessName(""); 
@@ -43,6 +47,7 @@ export default function ProcessManagement() {
       setInputUnit(""); 
       setOutputUnit("");
       setAttributes([]);
+      setDefaultWastage(0); // Reset for new
     }
     setIsModalOpen(true);
   };
@@ -76,7 +81,8 @@ export default function ProcessManagement() {
       machineType: defaultMachineName, 
       inputUnit, 
       outputUnit,
-      attributes, // ⭐️ Save dynamic attributes to the database
+      attributes, 
+      defaultWastage: Number(defaultWastage) || 0, // ⭐️ Save default wastage to the database
       updated_at: serverTimestamp() 
     };
 
@@ -97,7 +103,6 @@ export default function ProcessManagement() {
   const handleDelete = async (id, name) => {
     const isLocked = name && LOCKED_PROCESS_NAMES.includes(name.toLowerCase().trim());
 
-    // ⭐️ NEW: Unlock feature for locked processes (fulfills the client brief for cleanup)
     if (isLocked) {
       const confirmForce = window.prompt(`SECURITY ALERT: "${name}" is a core process. To force delete and unlock it, type 'UNLOCK' below.`);
       if (confirmForce !== 'UNLOCK') return;
@@ -140,13 +145,14 @@ export default function ProcessManagement() {
               <tr className="bg-gray-950/50 border-b border-gray-800 text-xs font-bold text-gray-400 uppercase tracking-wider">
                 <th className="py-4 px-6">Process Name</th>
                 <th className="py-4 px-6">Configured Attributes</th>
+                <th className="py-4 px-6">Default Wastage</th>
                 <th className="py-4 px-6">Default Assigned Machine</th>
                 <th className="py-4 px-6 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800">
               {processes.length === 0 ? (
-                <tr><td colSpan="4" className="py-12 text-center text-gray-500">No processes defined yet. Start building your custom list!</td></tr>
+                <tr><td colSpan="5" className="py-12 text-center text-gray-500">No processes defined yet. Start building your custom list!</td></tr>
               ) : (
                 processes.map((proc) => {
                   const isLocked = proc.processName && LOCKED_PROCESS_NAMES.includes(proc.processName.toLowerCase().trim());
@@ -169,6 +175,10 @@ export default function ProcessManagement() {
                         ) : (
                           <span className="text-gray-600 italic text-xs">No attributes</span>
                         )}
+                      </td>
+                      <td className="py-4 px-6 text-gray-400 font-medium">
+                        {/* ⭐️ ROUND 18: Display default wastage */}
+                        {proc.defaultWastage ? <span className="text-orange-400">{proc.defaultWastage}%</span> : "0%"}
                       </td>
                       <td className="py-4 px-6 text-primary-400 font-medium">
                         {proc.defaultMachineName || proc.machineType || <span className="text-gray-500 italic">Unassigned</span>}
@@ -213,17 +223,34 @@ export default function ProcessManagement() {
               
               <div className="space-y-4">
                 <h4 className="text-sm font-bold text-gray-400 uppercase tracking-wider border-b border-gray-800 pb-2">Basic Info</h4>
-                <div>
-                  <label className={labelClass}>Process Name *</label>
-                  <input 
-                    type="text" 
-                    required 
-                    value={processName} 
-                    onChange={e => setProcessName(e.target.value)} 
-                    placeholder="e.g., Lamination" 
-                    className={inputClass} 
-                  />
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className={labelClass}>Process Name *</label>
+                    <input 
+                      type="text" 
+                      required 
+                      value={processName} 
+                      onChange={e => setProcessName(e.target.value)} 
+                      placeholder="e.g., Lamination" 
+                      className={inputClass} 
+                    />
+                  </div>
+                  <div>
+                    {/* ⭐️ ROUND 18: Default Wastage Input */}
+                    <label className={labelClass}>Default Expected Wastage (%)</label>
+                    <input 
+                      type="number" 
+                      min="0"
+                      step="0.1"
+                      value={defaultWastage} 
+                      onChange={e => setDefaultWastage(e.target.value)} 
+                      placeholder="e.g. 5 for 5%" 
+                      className={inputClass} 
+                    />
+                  </div>
                 </div>
+                
                 <div>
                   <label className={labelClass}>Default Assigned Machine (Optional)</label>
                   <select value={defaultMachineId} onChange={e => setDefaultMachineId(e.target.value)} className={inputClass} disabled={machLoading}>

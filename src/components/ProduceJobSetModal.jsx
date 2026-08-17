@@ -17,6 +17,7 @@ export default function ProduceJobSetModal({
   toggleCustomOverride,
   updatePartCustomPcs,
   handleStepQtyChange,
+  handleRecalculateChain, // ⭐️ ROUND 18: New prop for manual re-chaining
   togglePartExpanded,
   updatePartNotes, 
   machines,
@@ -32,14 +33,17 @@ export default function ProduceJobSetModal({
   const [localMaterials, setLocalMaterials] = useState([]);
   const [pickerState, setPickerState] = useState({ openId: null, search: "", includeOutOfStock: false });
 
-  // Initialize local materials from the master product template when modal opens
+  // ⭐️ ROUND 18: Local state for Repeat Jobs & Physical Samples
+  const [repeatJobRef, setRepeatJobRef] = useState("");
+  const [physicalSampleApproved, setPhysicalSampleApproved] = useState(false);
+  const [sampleNote, setSampleNote] = useState("");
+
   useEffect(() => {
     if (isOpen && activeProduceProduct && produceParts.length > 0) {
       const initialMats = produceParts.map((p, i) => {
         const masterPart = activeProduceProduct.parts.find(mp => mp.id === p.id) || activeProduceProduct.parts[i];
         const rows = masterPart?.materialRows || [];
         
-        // Fallback: If template has no rows, provide a default empty row so the table is never blank
         if (rows.length === 0) {
           return [{
             id: Date.now() + Math.random(),
@@ -55,7 +59,6 @@ export default function ProduceJobSetModal({
           }];
         }
         
-        // ⭐️ ROUND 16 FIX (POINT 2): Strictly inherit template Basis Calc settings
         return rows.map(r => {
            const cat = (r.category || '').toLowerCase();
            const isBoardOrPaper = cat === 'paper' || cat === 'board' || cat === 'rigid' || cat.includes('kraft') || cat.includes('kappa');
@@ -68,12 +71,14 @@ export default function ProduceJobSetModal({
         });
       });
       setLocalMaterials(initialMats);
+      setRepeatJobRef("");
+      setPhysicalSampleApproved(false);
+      setSampleNote("");
     }
   }, [isOpen, activeProduceProduct, produceParts]);
 
   if (!isOpen) return null;
 
-  // -- Material Override Handlers --
   const handleLocalMaterialItemSelect = (pIdx, rowId, item) => {
     setLocalMaterials(prev => {
       const newMats = [...prev];
@@ -257,7 +262,6 @@ export default function ProduceJobSetModal({
       </td>
     );
   };
-  // -- End Material Override Logic --
 
   const handleQuickProduce = async (e) => {
     e.preventDefault();
@@ -357,8 +361,10 @@ export default function ProduceJobSetModal({
             process_name: step.process_name || "Unassigned Process",
             status: "pending",
             status_updated_at: creationTimestamp, 
-            input_qty: step.input_qty || pState.final_pcs, 
-            output_qty: step.output_qty || pState.final_pcs, 
+            input_qty: step.input_qty !== undefined ? step.input_qty : pState.final_pcs, 
+            output_qty: step.output_qty !== undefined ? step.output_qty : pState.final_pcs, 
+            expected_wastage_val: step.wastage_val || 0,
+            expected_wastage_type: step.wastage_type || '%',
             remarks: instructions, 
             process_details: step.process_details || {}, 
             assigned_machine_id: step.assigned_machine || null,
@@ -399,6 +405,11 @@ export default function ProduceJobSetModal({
           quantity_target: pState.final_pcs,
           
           artwork_required: masterPart.artwork_required ?? true,
+
+          // ⭐️ ROUND 18: Repeat Job & Physical Sample Payloads
+          repeat_job_ref: repeatJobRef || null,
+          physical_sample_approved: physicalSampleApproved,
+          physical_sample_note: physicalSampleApproved ? sampleNote : null,
 
           product_snapshot: {
             id: activeProduceProduct.id,
@@ -486,6 +497,23 @@ export default function ProduceJobSetModal({
             </div>
           </div>
           
+          {/* ⭐️ ROUND 18: Repeat Job & Physical Sample UI */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-gray-900 border border-gray-800 p-4 rounded-lg">
+            <div>
+              <label className="block text-[10px] uppercase font-bold text-gray-400 mb-1">Repeat Job Reference (Optional)</label>
+              <input type="text" value={repeatJobRef} onChange={e => setRepeatJobRef(e.target.value)} placeholder="e.g. JOB-123456-A" className="w-full bg-gray-950 border border-gray-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-primary-500 transition-colors" />
+            </div>
+            <div className="flex flex-col justify-center">
+               <label className="flex items-center gap-2 cursor-pointer mt-1">
+                 <input type="checkbox" checked={physicalSampleApproved} onChange={e => setPhysicalSampleApproved(e.target.checked)} className="w-4 h-4 rounded bg-gray-900 border-gray-600 focus:ring-primary-500" />
+                 <span className="text-sm font-bold text-gray-300">Physical Sample Approved</span>
+               </label>
+               {physicalSampleApproved && (
+                 <input type="text" value={sampleNote} onChange={e => setSampleNote(e.target.value)} placeholder="Note (e.g. Held at P56, ref Job XXX)" className="w-full bg-gray-950 border border-gray-700 rounded px-3 py-1.5 mt-2 text-xs text-white focus:outline-none focus:border-primary-500 transition-colors" />
+               )}
+            </div>
+          </div>
+
           {produceParts.length > 0 && (
             <div className="space-y-4">
               {produceParts.map((p, pIdx) => {
@@ -617,7 +645,6 @@ export default function ProduceJobSetModal({
                                   if (req > totalBal) {
                                     stockDisplay = <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-red-500/20 text-red-400">SHORT {req - totalBal}</span>;
                                   } else if (req > localBal) {
-                                    // ⭐️ ROUND 16 FIX (POINT 3): Ensure location IDs are resolved via string matching so they don't break
                                     const holding = Object.entries(localBalances).filter(([, q]) => q > 0).map(([locKey]) => {
                                       const matchedLoc = locations?.find(l => String(l.id) === String(locKey) || String(l.code) === String(locKey));
                                       return matchedLoc ? (matchedLoc.code || matchedLoc.name) : locKey;
@@ -696,19 +723,45 @@ export default function ProduceJobSetModal({
                       </div>
 
                       <div className="space-y-2">
+                        {/* ⭐️ ROUND 18: Recalculate Chain button */}
+                        <div className="flex justify-between items-end mb-2">
+                           <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block">Production Route Targets</span>
+                           <button type="button" onClick={() => handleRecalculateChain && handleRecalculateChain(pIdx)} className="text-[10px] bg-gray-800 text-gray-400 px-2 py-1 rounded hover:bg-gray-700 hover:text-white transition-colors border border-gray-700">
+                             ⟳ Recalculate Chain
+                           </button>
+                        </div>
+                        
                         {p.sequence.map((step, sIdx) => (
-                          <div key={sIdx} className="flex items-center gap-3 bg-gray-950 p-2.5 rounded border border-gray-800 text-xs">
-                            <span className="text-gray-500 font-bold w-4">{sIdx+1}.</span>
-                            <span className="text-gray-300 w-48 truncate">{step.process_name}</span>
-                            <div className="flex items-center gap-2">
-                              <div className="bg-gray-900 px-2 py-1 rounded border border-gray-700 text-gray-400 relative">
-                                In: <input type="number" value={step.input_qty} onChange={e => handleStepQtyChange(pIdx, sIdx, 'input_qty', e.target.value)} className="w-20 bg-transparent text-white font-mono outline-none" />
-                                {p.dirtyFields?.[`input_${sIdx}`] && <span className="absolute -top-1 -right-1 w-2 h-2 bg-orange-500 rounded-full shadow-[0_0_4px_#f97316]" title="Manually edited (Locked)"></span>}
-                              </div>
-                              <span className="text-primary-500 font-bold">→</span>
-                              <div className="bg-gray-900 px-2 py-1 rounded border border-gray-700 text-gray-400 relative">
-                                Out: <input type="number" value={step.output_qty} onChange={e => handleStepQtyChange(pIdx, sIdx, 'output_qty', e.target.value)} className="w-20 bg-transparent text-white font-mono outline-none" />
-                                {p.dirtyFields?.[`output_${sIdx}`] && <span className="absolute -top-1 -right-1 w-2 h-2 bg-orange-500 rounded-full shadow-[0_0_4px_#f97316]" title="Manually edited (Locked)"></span>}
+                          <div key={sIdx} className="flex flex-col gap-2 bg-gray-950 p-2.5 rounded border border-gray-800 text-xs">
+                            <div className="flex items-center gap-3">
+                              <span className="text-gray-500 font-bold w-4">{sIdx+1}.</span>
+                              <span className="text-gray-300 w-48 truncate">{step.process_name}</span>
+                              
+                              <div className="flex items-center gap-2 flex-1 justify-end">
+                                {/* ⭐️ ROUND 18: Inputs changed from type="number" to type="text" for TBD support */}
+                                <div className="bg-gray-900 px-2 py-1.5 rounded border border-gray-700 text-gray-400 relative flex items-center gap-1">
+                                  In: <input type="text" value={step.input_qty !== undefined ? step.input_qty : ''} onChange={e => handleStepQtyChange(pIdx, sIdx, 'input_qty', e.target.value)} className="w-16 bg-transparent text-white font-mono outline-none" placeholder="TBD" />
+                                  {p.dirtyFields?.[`input_${sIdx}`] && <span className="absolute -top-1 -right-1 w-2 h-2 bg-orange-500 rounded-full shadow-[0_0_4px_#f97316]" title="Manually edited (Locked)"></span>}
+                                </div>
+                                
+                                <span className="text-gray-600 font-bold">-</span>
+                                
+                                {/* ⭐️ ROUND 18: Expected Wastage inputs */}
+                                <div className="bg-gray-900 px-2 py-1.5 rounded border border-gray-700 text-gray-400 flex items-center gap-1">
+                                  Wastage: 
+                                  <input type="number" value={step.wastage_val || ''} onChange={e => handleStepQtyChange(pIdx, sIdx, 'wastage_val', e.target.value)} className="w-12 bg-transparent text-white font-mono outline-none text-right" placeholder="0" />
+                                  <select value={step.wastage_type || '%'} onChange={e => handleStepQtyChange(pIdx, sIdx, 'wastage_type', e.target.value)} className="bg-transparent text-white font-bold text-[10px] outline-none appearance-none ml-0.5">
+                                    <option value="%">%</option>
+                                    <option value="fixed">pcs</option>
+                                  </select>
+                                </div>
+                                
+                                <span className="text-primary-500 font-bold">→</span>
+                                
+                                <div className="bg-gray-900 px-2 py-1.5 rounded border border-gray-700 text-gray-400 relative flex items-center gap-1">
+                                  Out: <input type="text" value={step.output_qty !== undefined ? step.output_qty : ''} onChange={e => handleStepQtyChange(pIdx, sIdx, 'output_qty', e.target.value)} className="w-16 bg-transparent text-white font-mono outline-none" placeholder="TBD" />
+                                  {p.dirtyFields?.[`output_${sIdx}`] && <span className="absolute -top-1 -right-1 w-2 h-2 bg-orange-500 rounded-full shadow-[0_0_4px_#f97316]" title="Manually edited (Locked)"></span>}
+                                </div>
                               </div>
                             </div>
                           </div>
