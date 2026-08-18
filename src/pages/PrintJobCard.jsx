@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-// ⭐️ PHASE 3: Added updateDoc and increment
 import { collection, doc, query, where, getDocs, onSnapshot, updateDoc, increment } from "firebase/firestore";
 import { db } from "../firebase/config";
 import QRCode from "react-qr-code";
@@ -20,22 +19,21 @@ export default function PrintJobCard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   
-  // ⭐️ PHASE 3: Loading state to prevent double-clicking the print button
   const [isPrinting, setIsPrinting] = useState(false);
+  
+  // ⭐️ ROUND 19 FIX: State to hold live product files
+  const [liveProductFiles, setLiveProductFiles] = useState([]);
 
   const formatDate = (isoString) => {
     if (!isoString) return "N/A";
     return new Date(isoString).toLocaleDateString("en-GB", { day: 'numeric', month: 'short', year: 'numeric' });
   };
 
-  // ⭐️ PHASE 3: Intercept Auto-Print to log it in Firebase first
   useEffect(() => {
     if (isAutoprint && jobId) {
       updateDoc(doc(db, "jobs", jobId), { print_count: increment(1) })
         .then(() => {
-           // Clear the URL param so it doesn't loop
            navigate(`/print/${jobId}`, { replace: true });
-           // Wait 1.5s for Firebase onSnapshot to update the UI with the new count, then print
            setTimeout(() => window.print(), 1500); 
         })
         .catch((err) => {
@@ -86,6 +84,27 @@ export default function PrintJobCard() {
     return () => unsub();
   }, [jobId]);
 
+  // ⭐️ ROUND 19 FIX: Live Product Subscription
+  // ⭐️ ROUND 19 FIX: Live Product Subscription
+  useEffect(() => {
+    // Just return here, do not call setState synchronously
+    if (!job?.product?.id) return; 
+
+    const unsubProduct = onSnapshot(doc(db, "products", job.product.id), (pDoc) => {
+      if (pDoc.exists()) {
+        setLiveProductFiles(pDoc.data().files || []);
+      } else {
+        setLiveProductFiles([]);
+      }
+    });
+
+    return () => {
+      unsubProduct();
+      // Safely clear the state during the effect's cleanup phase instead!
+      setLiveProductFiles([]); 
+    };
+  }, [job?.product?.id]);
+
   useEffect(() => {
     if (job) {
       const prodName = job.product?.name || job.title || "Job";
@@ -97,28 +116,22 @@ export default function PrintJobCard() {
     }
   }, [job]);
 
-  // ⭐️ PHASE 3: Manual Print Tracker
   const handleManualPrint = async () => {
     setIsPrinting(true);
     try {
-      // Increment the count centrally on the server
       await updateDoc(doc(db, "jobs", jobId), { print_count: increment(1) });
       
-      // Delay opening the print dialog slightly so the onSnapshot has time 
-      // to pull the new count from Firebase and render "Reprint #X" on the page
       setTimeout(() => {
         window.print();
         setIsPrinting(false);
       }, 1200);
     } catch (err) {
       console.error("Failed to update print count:", err);
-      // Fallback: print anyway if offline
       window.print();
       setIsPrinting(false);
     }
   };
 
-  // ⭐️ PHASE 3: Printer Jam Reset
   const handleResetCounter = async () => {
     const confirmReset = window.confirm(
       "Are you sure you want to reset this Job Card back to 'Original'?\n\nOnly use this if the physical printer jammed, ran out of ink, or failed to print."
@@ -131,6 +144,49 @@ export default function PrintJobCard() {
       }
     }
   };
+
+  // ⭐️ ROUND 19 FIX: Extract Live Artwork Status at Render Time
+  const isArtworkRequired = job?.artwork_required ?? job?.product?.artwork_required ?? true;
+  
+  const getLiveArtworkStatus = () => {
+    const prodFiles = liveProductFiles.filter(f => f.category === 'Artwork');
+    const targetPartId = job?.product?.parts?.find(p => p.part_name === job?.part_name)?.id;
+    
+    const isApplicable = (f) => {
+       const scope = f.applies_to || "All Parts";
+       return scope === "All Parts" || scope === job?.part_name || (targetPartId && scope === targetPartId);
+    };
+    
+    const applicableLive = prodFiles.filter(isApplicable);
+
+    const latestVersions = new Map();
+    applicableLive.forEach(f => {
+        const key = f.purpose || f.name;
+        const existing = latestVersions.get(key);
+        const existingTime = existing?.uploaded_at ? new Date(existing.uploaded_at).getTime() : 0;
+        const fTime = f.uploaded_at ? new Date(f.uploaded_at).getTime() : 0;
+        
+        if (!existing || fTime > existingTime) {
+            latestVersions.set(key, f);
+        }
+    });
+
+    const latestFiles = Array.from(latestVersions.values());
+    
+    if (latestFiles.length === 0) return { isApproved: false, files: [] };
+
+    const isFullyApproved = latestFiles.every(f => f.status === 'APPROVED');
+
+    return {
+        isApproved: isFullyApproved,
+        files: isFullyApproved ? latestFiles : []
+    };
+  };
+
+  const liveArtworkData = job ? getLiveArtworkStatus() : { isApproved: false, files: [] };
+  const isArtworkApproved = liveArtworkData.isApproved;
+  const approvedArtworks = liveArtworkData.files;
+
 
   if (loading) return <div className="p-12 text-center font-bold text-gray-500 animate-pulse bg-gray-900 min-h-screen">Loading Print Layout...</div>;
   if (error) return <div className="p-12 text-center font-bold text-red-500 bg-gray-900 min-h-screen">{error}</div>;
@@ -151,7 +207,6 @@ export default function PrintJobCard() {
         </button>
         
         <div className="flex items-center gap-3">
-          {/* ⭐️ PHASE 3: Conditional Reset Button */}
           {job.print_count > 1 && (
             <button 
               onClick={handleResetCounter}
@@ -235,13 +290,16 @@ export default function PrintJobCard() {
             </div>
             <div>
               <div className="text-[9px] font-bold uppercase tracking-widest text-gray-800 mb-0.5">Master Files & Assets</div>
-              { !job.artwork_required ? (
+              
+              {/* ⭐️ ROUND 19 FIX: Live Status Render */}
+              { !isArtworkRequired ? (
                  <div className="text-sm font-black tracking-widest text-gray-800">ARTWORK: NOT REQUIRED (PLAIN / UNPRINTED)</div>
-              ) : (!job.product?.files || job.product.files.length === 0) ? (
+              ) : !isArtworkApproved ? (
                  <div className="text-sm font-black tracking-widest text-red-600">ARTWORK: NOT APPROVED (DO NOT START)</div>
               ) : (
-                 <div className="text-sm font-black tracking-widest text-gray-800">ARTWORK: APPROVED ({job.product.files[0].name})</div>
+                 <div className="text-sm font-black tracking-widest text-gray-800">ARTWORK: APPROVED ({approvedArtworks.map(a => a.name).join(', ')})</div>
               )}
+
             </div>
           </div>
 
@@ -347,7 +405,6 @@ export default function PrintJobCard() {
                         <td className="p-1 border-r border-black font-bold text-black">{step.assigned_machine_name || '—'}</td>
                         <td className="p-1 border-r border-black font-bold text-center text-black">{step.assigned_machine_place || '—'}</td>
                         
-                        {/* ⭐️ Ensure TBD strings format cleanly on the final print */}
                         <td className="p-1 border-r border-black text-right font-mono font-bold text-black">
                           {typeof step.input_qty === 'string' ? step.input_qty : Number(step.input_qty).toLocaleString()}
                         </td>

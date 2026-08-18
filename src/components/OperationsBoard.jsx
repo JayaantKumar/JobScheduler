@@ -1,12 +1,15 @@
 import { useState, useEffect, useMemo } from "react";
-// Change this line at the top:
-import { collection, query, where, getDocs, doc, updateDoc, increment } from "firebase/firestore";
+// ⭐️ ROUND 19 FIX: Import onSnapshot to listen to live products
+import { collection, query, where, getDocs, doc, updateDoc, increment, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase/config";
-import JobViewModal from "./JobViewModal"; // ⭐️ IMPORTED JOB VIEW MODAL
+import JobViewModal from "./JobViewModal"; 
 
 export default function OperationsBoard() {
   const [loading, setLoading] = useState(true);
   const [rawJobs, setRawJobs] = useState([]);
+  
+  // ⭐️ ROUND 19 FIX: Live Product Cache
+  const [liveProducts, setLiveProducts] = useState({});
   
   // Modal State for Viewing/Editing a Job
   const [selectedJob, setSelectedJob] = useState(null);
@@ -45,13 +48,31 @@ export default function OperationsBoard() {
     return () => { isMounted = false; };
   }, []);
 
+  // ⭐️ ROUND 19 FIX: Subscribe to all master products associated with active jobs
+  useEffect(() => {
+    const productIds = [...new Set(rawJobs.map(j => j.product?.id).filter(Boolean))];
+    if (productIds.length === 0) return;
+
+    // To prevent hitting Firestore "IN" clause limits, fetch all products
+    // (Assuming <1000 active products. For large scale, chunk the query).
+    const unsub = onSnapshot(collection(db, "products"), (snap) => {
+       const pMap = {};
+       snap.docs.forEach(doc => {
+           pMap[doc.id] = doc.data();
+       });
+       setLiveProducts(pMap);
+    });
+
+    return () => unsub();
+  }, [rawJobs]);
+
   const getDaysAtStep = (dateString) => {
     if (!dateString) return 0;
     const diff = new Date() - new Date(dateString);
     return Math.floor(diff / (1000 * 60 * 60 * 24));
   };
 
-  // Process data: calculate current step, days at step, and overdue flags
+  // Process data: calculate current step, days at step, overdue flags, and ⭐️ LIVE ARTWORK STATUS
   const processedJobs = useMemo(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -72,6 +93,37 @@ export default function OperationsBoard() {
       if (deadlineDate) deadlineDate.setHours(0, 0, 0, 0);
       const isOverdue = deadlineDate ? deadlineDate < today : false;
 
+      // ⭐️ ROUND 19 FIX: Calculate live artwork approval dynamically
+      const isArtworkRequired = job.artwork_required ?? job.product?.artwork_required ?? true;
+      let isLiveArtworkApproved = false;
+      
+      if (isArtworkRequired && job.product?.id && liveProducts[job.product.id]) {
+          const liveProd = liveProducts[job.product.id];
+          const prodFiles = (liveProd.files || []).filter(f => f.category === 'Artwork');
+          const targetPartId = job.product?.parts?.find(p => p.part_name === job.part_name)?.id;
+          
+          const applicableLive = prodFiles.filter(f => {
+             const scope = f.applies_to || "All Parts";
+             return scope === "All Parts" || scope === job.part_name || (targetPartId && scope === targetPartId);
+          });
+
+          const latestVersions = new Map();
+          applicableLive.forEach(f => {
+              const key = f.purpose || f.name;
+              const existing = latestVersions.get(key);
+              const existingTime = existing?.uploaded_at ? new Date(existing.uploaded_at).getTime() : 0;
+              const fTime = f.uploaded_at ? new Date(f.uploaded_at).getTime() : 0;
+              if (!existing || fTime > existingTime) latestVersions.set(key, f);
+          });
+
+          const latestFiles = Array.from(latestVersions.values());
+          if (latestFiles.length > 0) {
+             isLiveArtworkApproved = latestFiles.every(f => f.status === 'APPROVED');
+          }
+      } else if (!isArtworkRequired) {
+          isLiveArtworkApproved = true; 
+      }
+
       return {
         ...job,
         currentStep,
@@ -79,18 +131,24 @@ export default function OperationsBoard() {
         place,
         stepStatus,
         daysAtStep,
-        isOverdue
+        isOverdue,
+        isArtworkRequired,
+        isLiveArtworkApproved
       };
     });
 
     return jobs.sort((a, b) => {
+      // Unapproved artwork jobs bubble to the top visually if they are stuck
+      if (!a.isLiveArtworkApproved && b.isLiveArtworkApproved) return -1;
+      if (a.isLiveArtworkApproved && !b.isLiveArtworkApproved) return 1;
+      
       if (b.daysAtStep !== a.daysAtStep) return b.daysAtStep - a.daysAtStep;
       if (a.set_code && b.set_code && a.set_code !== b.set_code) {
         return a.set_code.localeCompare(b.set_code);
       }
       return Number(a.part_index || 0) - Number(b.part_index || 0);
     });
-  }, [rawJobs]);
+  }, [rawJobs, liveProducts]);
 
   // Apply UI Filters
   const filteredJobs = useMemo(() => {
@@ -207,7 +265,13 @@ export default function OperationsBoard() {
                   className="hover:bg-gray-800/40 transition-colors cursor-pointer group"
                 >
                   <td className="p-4">
-                    <div className="font-bold text-white text-sm">{job.set_code?.includes('-') ? `SET-${job.set_code}` : job.set_code}</div>
+                    <div className="font-bold text-white text-sm flex items-center gap-2">
+                       {job.set_code?.includes('-') ? `SET-${job.set_code}` : job.set_code}
+                       {/* ⭐️ ROUND 19 FIX: Live Artwork Warning Icon */}
+                       {job.isArtworkRequired && !job.isLiveArtworkApproved && (
+                           <span title="Artwork Pending/Unapproved" className="text-red-500 animate-pulse">⚠️</span>
+                       )}
+                    </div>
                     <div className="text-[10px] text-gray-500 font-mono mt-0.5">{job.display_id}</div>
                   </td>
                   <td className="p-4 text-xs font-bold text-gray-300">{job.customer}</td>

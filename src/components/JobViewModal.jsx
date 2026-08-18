@@ -58,17 +58,19 @@ export default function JobViewModal({ job, onClose }) {
     return () => { unsubInv(); unsubDies(); unsubLocs(); unsubSettings(); };
   }, []);
 
-  // 2. Live Product Files Sync
+  // 2. Live Product Files Sync (Safe Cleanup)
   useEffect(() => {
-    if (!localJob?.product?.id) {
-      setLiveProductFiles([]);
-      return;
-    }
+    if (!localJob?.product?.id) return;
+
     const unsubProduct = onSnapshot(doc(db, "products", localJob.product.id), (pDoc) => {
       if (pDoc.exists()) setLiveProductFiles(pDoc.data().files || []);
       else setLiveProductFiles([]);
     });
-    return () => unsubProduct();
+
+    return () => {
+      unsubProduct();
+      setLiveProductFiles([]);
+    };
   }, [localJob?.product?.id]);
 
   // 3. Live Sibling Job Sync
@@ -275,22 +277,62 @@ export default function JobViewModal({ job, onClose }) {
     showToast("Client update copied to clipboard!", "success");
   };
 
-  const getApplicableFiles = (category) => {
-    const jobFiles = (localJob.files || []).filter(f => f.category === category && f.status === 'APPROVED');
-    const prodFiles = liveProductFiles.filter(f => f.category === category && f.status === 'APPROVED');
+  const getLiveArtworkStatus = () => {
+    const prodFiles = liveProductFiles.filter(f => f.category === 'Artwork');
     const targetPartId = localJob.product?.parts?.find(p => p.part_name === localJob.part_name)?.id;
+    
     const isApplicable = (f) => {
        const scope = f.applies_to || "All Parts";
        return scope === "All Parts" || scope === localJob.part_name || (targetPartId && scope === targetPartId);
     };
+    
+    const applicableLive = prodFiles.filter(isApplicable);
+
+    const latestVersions = new Map();
+    applicableLive.forEach(f => {
+        const key = f.purpose || f.name;
+        const existing = latestVersions.get(key);
+        const existingTime = existing?.uploaded_at ? new Date(existing.uploaded_at).getTime() : 0;
+        const fTime = f.uploaded_at ? new Date(f.uploaded_at).getTime() : 0;
+        
+        if (!existing || fTime > existingTime) {
+            latestVersions.set(key, f);
+        }
+    });
+
+    const latestFiles = Array.from(latestVersions.values());
+    
+    if (latestFiles.length === 0) return { isApproved: false, files: [] };
+
+    const isFullyApproved = latestFiles.every(f => f.status === 'APPROVED');
+
+    return {
+        isApproved: isFullyApproved,
+        files: isFullyApproved ? latestFiles : []
+    };
+  };
+
+  const liveArtworkData = getLiveArtworkStatus();
+  const isArtworkApproved = liveArtworkData.isApproved;
+  const approvedArtworks = liveArtworkData.files;
+
+  const getApplicableMergedFiles = (category) => {
+    const jobFiles = (localJob.files || []).filter(f => f.category === category && f.status === 'APPROVED');
+    const prodFiles = liveProductFiles.filter(f => f.category === category && f.status === 'APPROVED');
+    const targetPartId = localJob.product?.parts?.find(p => p.part_name === localJob.part_name)?.id;
+    
+    const isApplicable = (f) => {
+       const scope = f.applies_to || "All Parts";
+       return scope === "All Parts" || scope === localJob.part_name || (targetPartId && scope === targetPartId);
+    };
+    
     const map = new Map();
     prodFiles.filter(isApplicable).forEach(f => map.set(f.purpose || f.name, f));
     jobFiles.filter(isApplicable).forEach(f => map.set(f.purpose || f.name, f));
     return Array.from(map.values());
   };
 
-  const approvedArtworks = getApplicableFiles('Artwork');
-  const approvedDielines = getApplicableFiles('Dieline');
+  const approvedDielines = getApplicableMergedFiles('Dieline');
 
   const copyApprovedFiles = () => {
     const finalFiles = [...approvedArtworks, ...approvedDielines].filter(f => f.url);
@@ -348,7 +390,6 @@ export default function JobViewModal({ job, onClose }) {
   const productSku = localJob.product_snapshot?.sku || localJob.product?.sku || "N/A";
   const isArtworkRequired = localJob.artwork_required ?? localJob.product?.artwork_required ?? true;
 
-  // ⭐️ ROUND 18.1 FIX: Typography and contrast synced for embedded PrintView fallback
   const PrintView = (
     <div id="print-card" className="hidden print:block w-full bg-white text-black font-sans relative text-sm">
       
@@ -409,7 +450,7 @@ export default function JobViewModal({ job, onClose }) {
             <div className="text-black font-black text-base uppercase tracking-wider mt-1 bg-gray-100 p-2 border border-black inline-block">
               ✓ ARTWORK: NOT REQUIRED (PLAIN / UNPRINTED)
             </div>
-          ) : approvedArtworks.length === 0 ? (
+          ) : !isArtworkApproved ? (
             <div className="text-red-600 font-black text-xl uppercase tracking-widest mt-1">
               ⚠️ ARTWORK: NOT APPROVED (DO NOT START)
             </div>
@@ -659,7 +700,6 @@ export default function JobViewModal({ job, onClose }) {
                   </span>
                   {isMultiPart && <span className="bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wider ml-1">Part {localJob.part_index} of {localJob.parts_total || siblings.length}</span>}
                   
-                  {/* Print Indicator Badge */}
                   {localJob.print_count > 0 && (
                     <span className="bg-blue-900/40 text-blue-400 px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wider ml-2 border border-blue-500/30">
                       Printed {localJob.print_count}x
@@ -719,7 +759,24 @@ export default function JobViewModal({ job, onClose }) {
 
           <div className="p-6 overflow-y-auto custom-scrollbar flex-1 bg-[#0a0f1a] space-y-6">
             
-            {/* ⭐️ ROUND 10 ITEM B1: Show Special Instructions prominently on UI */}
+            {/* ⭐️ ROUND 19 FIX: LIVE ARTWORK BAND IN DARK UI */}
+            <div className={`p-4 rounded-xl border flex flex-col justify-center shadow-lg ${
+              !isArtworkRequired ? 'bg-gray-900 border-gray-800' :
+              !isArtworkApproved ? 'bg-red-950/20 border-red-900/50' :
+              'bg-green-950/10 border-green-900/30'
+            }`}>
+              <div className="text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-1">Master Files & Assets</div>
+              {!isArtworkRequired ? (
+                 <div className="text-sm font-black tracking-widest text-gray-400">✓ ARTWORK: NOT REQUIRED (PLAIN / UNPRINTED)</div>
+              ) : !isArtworkApproved ? (
+                 <div className="text-lg font-black tracking-widest text-red-500 flex items-center gap-2 animate-pulse">
+                   ⚠️ ARTWORK: NOT APPROVED (DO NOT START)
+                 </div>
+              ) : (
+                 <div className="text-sm font-black tracking-widest text-green-400">✓ ARTWORK: APPROVED ({approvedArtworks.map(a => a.name).join(', ')})</div>
+              )}
+            </div>
+
             {localJob.notes && (
                <div className="bg-gray-950 p-4 border-l-4 border-primary-500 rounded-r-lg shadow-lg">
                   <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">Special Instructions / Notes</h3>
