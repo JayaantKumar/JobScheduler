@@ -278,7 +278,7 @@ export default function JobViewModal({ job, onClose }) {
   };
 
   const getLiveArtworkStatus = () => {
-    const prodFiles = liveProductFiles.filter(f => f.category === 'Artwork');
+    const prodFiles = liveProductFiles.filter(f => String(f.category).trim().toLowerCase() === 'artwork');
     const targetPartId = localJob.product?.parts?.find(p => p.part_name === localJob.part_name)?.id;
     
     const isApplicable = (f) => {
@@ -304,7 +304,9 @@ export default function JobViewModal({ job, onClose }) {
     
     if (latestFiles.length === 0) return { isApproved: false, files: [] };
 
-    const isFullyApproved = latestFiles.every(f => f.status === 'APPROVED');
+    const isFullyApproved = latestFiles.every(f => 
+        String(f.status).trim().toUpperCase() === 'APPROVED'
+    );
 
     return {
         isApproved: isFullyApproved,
@@ -317,8 +319,9 @@ export default function JobViewModal({ job, onClose }) {
   const approvedArtworks = liveArtworkData.files;
 
   const getApplicableMergedFiles = (category) => {
-    const jobFiles = (localJob.files || []).filter(f => f.category === category && f.status === 'APPROVED');
-    const prodFiles = liveProductFiles.filter(f => f.category === category && f.status === 'APPROVED');
+    // ⭐️ ROUND 20 BUG 1 FIX: Protect Dielines and other categories with strict string checks
+    const jobFiles = (localJob.files || []).filter(f => f.category === category && String(f.status).trim().toUpperCase() === 'APPROVED');
+    const prodFiles = liveProductFiles.filter(f => f.category === category && String(f.status).trim().toUpperCase() === 'APPROVED');
     const targetPartId = localJob.product?.parts?.find(p => p.part_name === localJob.part_name)?.id;
     
     const isApplicable = (f) => {

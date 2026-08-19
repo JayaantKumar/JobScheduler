@@ -149,7 +149,8 @@ export default function PrintJobCard() {
   const isArtworkRequired = job?.artwork_required ?? job?.product?.artwork_required ?? true;
   
   const getLiveArtworkStatus = () => {
-    const prodFiles = liveProductFiles.filter(f => f.category === 'Artwork');
+    // Force strict category match
+    const prodFiles = liveProductFiles.filter(f => String(f.category).trim().toLowerCase() === 'artwork');
     const targetPartId = job?.product?.parts?.find(p => p.part_name === job?.part_name)?.id;
     
     const isApplicable = (f) => {
@@ -173,9 +174,13 @@ export default function PrintJobCard() {
 
     const latestFiles = Array.from(latestVersions.values());
     
+    // ⭐️ ROUND 20 BUG 1 FIX: If no files exist, it is explicitly NOT approved.
     if (latestFiles.length === 0) return { isApproved: false, files: [] };
 
-    const isFullyApproved = latestFiles.every(f => f.status === 'APPROVED');
+    // ⭐️ ROUND 20 BUG 1 FIX: Bulletproof, case-insensitive string evaluation
+    const isFullyApproved = latestFiles.every(f => 
+        String(f.status).trim().toUpperCase() === 'APPROVED'
+    );
 
     return {
         isApproved: isFullyApproved,

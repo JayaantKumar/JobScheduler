@@ -93,13 +93,13 @@ export default function OperationsBoard() {
       if (deadlineDate) deadlineDate.setHours(0, 0, 0, 0);
       const isOverdue = deadlineDate ? deadlineDate < today : false;
 
-      // ⭐️ ROUND 19 FIX: Calculate live artwork approval dynamically
+      // ⭐️ ROUND 20 BUG 1 FIX: Calculate live artwork approval dynamically with strict rules
       const isArtworkRequired = job.artwork_required ?? job.product?.artwork_required ?? true;
       let isLiveArtworkApproved = false;
       
       if (isArtworkRequired && job.product?.id && liveProducts[job.product.id]) {
           const liveProd = liveProducts[job.product.id];
-          const prodFiles = (liveProd.files || []).filter(f => f.category === 'Artwork');
+          const prodFiles = (liveProd.files || []).filter(f => String(f.category).trim().toLowerCase() === 'artwork');
           const targetPartId = job.product?.parts?.find(p => p.part_name === job.part_name)?.id;
           
           const applicableLive = prodFiles.filter(f => {
@@ -118,7 +118,9 @@ export default function OperationsBoard() {
 
           const latestFiles = Array.from(latestVersions.values());
           if (latestFiles.length > 0) {
-             isLiveArtworkApproved = latestFiles.every(f => f.status === 'APPROVED');
+             isLiveArtworkApproved = latestFiles.every(f => 
+                 String(f.status).trim().toUpperCase() === 'APPROVED'
+             );
           }
       } else if (!isArtworkRequired) {
           isLiveArtworkApproved = true; 
