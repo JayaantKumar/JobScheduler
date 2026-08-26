@@ -80,8 +80,16 @@ export default function AdminLayout() {
           >
             Job Management
           </NavLink>
+
+          {/* ⭐️ ROUND 21: ADDED NEW REPEAT ORDERS LINK */}
+          <NavLink
+            to="/dashboard/repeat-orders"
+            onClick={handleNavClick}
+            className={navLinkClasses}
+          >
+            Repeat Orders
+          </NavLink>
           
-          {/* ⭐️ ADDED NEW OPERATIONS BOARD LINK */}
           <NavLink
             to="/dashboard/operations-board"
             onClick={handleNavClick}

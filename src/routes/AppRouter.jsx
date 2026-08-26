@@ -15,6 +15,9 @@ import OperationsBoard from "../components/OperationsBoard";
 import Settings from "../pages/Settings"; 
 import PrintJobCard from "../pages/PrintJobCard";
 
+// ⭐️ ROUND 21: Import the new Repeat Orders page
+import RepeatOrders from "../pages/RepeatOrders"; 
+
 const ProtectedRoute = ({ children, requiredRole }) => {
   const { user, role } = useAuth();
   
@@ -40,7 +43,6 @@ export const AppRouter = () => {
         <Route path="/login" element={<Login />} />
         <Route path="/unauthorized" element={<Unauthorized />} />
         
-        {/* ⭐️ PRINT ROUTE MOVED HERE: Outside the dashboard so it has no sidebar! */}
         <Route path="/print/:jobId" element={
           <ProtectedRoute requiredRole="admin">
             <PrintJobCard />
@@ -58,6 +60,10 @@ export const AppRouter = () => {
           <Route path="process-management" element={<ProcessManagement />} />
           <Route path="master-data" element={<MasterData />} />
           <Route path="jobs" element={<Jobs />} />
+          
+          {/* ⭐️ ROUND 21: Added Repeat Orders Route */}
+          <Route path="repeat-orders" element={<RepeatOrders />} />
+          
           <Route path="product-management" element={<ProductManagement />} />
           <Route path="inventory-management" element={<InventoryManagement />} />
           <Route path="operations-board" element={<OperationsBoard />} />

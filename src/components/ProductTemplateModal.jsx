@@ -4,7 +4,7 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage } from "../firebase/config";
 import { cleanGsm, formatInventoryLabel } from "../utils/helpers";
 
-const defaultSequence = () => ({ id: Date.now(), process_name: "", assigned_machine: "", process_details: {}, remarks: "" });
+const defaultSequence = () => ({ id: Date.now() + Math.random(), process_name: "", assigned_machine: "", process_details: {}, remarks: "" });
 
 const defaultMaterialRow = () => ({
   id: Date.now() + Math.random(),
@@ -51,15 +51,21 @@ export default function ProductTemplateModal({
   
   const [files, setFiles] = useState([]); 
   const [saving, setSaving] = useState(false);
-  
-  // ⭐️ ROUND 15 FIX: Inline error state to replace native alert()
   const [errorMsg, setErrorMsg] = useState(""); 
-
   const [pickerState, setPickerState] = useState({ openId: null, search: "", includeOutOfStock: false });
+
+  // ⭐️ ROUND 21: Presets State (Saved to Local Browser Storage)
+  const [savedPresets, setSavedPresets] = useState(() => {
+    const local = localStorage.getItem('routingPresets');
+    return local ? JSON.parse(local) : [];
+  });
+
+  // ⭐️ ROUND 21: Drag & Drop State
+  const [dragContext, setDragContext] = useState({ partId: null, dragIndex: null, dropIndex: null });
 
   useEffect(() => {
     if (isOpen) {
-      setErrorMsg(""); // Clear errors on open
+      setErrorMsg("");
       if (editingProduct) {
         setName(editingProduct.name || "");
         setSku(editingProduct.sku || "");
@@ -87,9 +93,9 @@ export default function ProductTemplateModal({
             return {
               ...p,
               id: p.id || Date.now() + Math.random(),
-              artwork_required: p.artwork_required ?? true, 
+              artwork_required: p.artwork_required === false ? false : true, 
               materialRows: matRows,
-              sequence: p.sequence?.length > 0 ? p.sequence : [defaultSequence()]
+              sequence: p.sequence?.length > 0 ? p.sequence.map(s => ({...s, id: s.id || Date.now() + Math.random()})) : [defaultSequence()]
             };
           }));
         } else {
@@ -97,7 +103,7 @@ export default function ProductTemplateModal({
             id: Date.now(),
             part_name: editingProduct.name || "Main Product",
             qty_per_set: 1,
-            artwork_required: editingProduct.artwork_required ?? true,
+            artwork_required: editingProduct.artwork_required === false ? false : true,
             materialRows: [{
               id: Date.now() + Math.random(),
               material_name: editingProduct.paperType || editingProduct.material || "",
@@ -112,7 +118,7 @@ export default function ProductTemplateModal({
               gsm: cleanGsm(editingProduct.paperGsm || editingProduct.gsm || ""),
               notes: editingProduct.sheet_size ? `Raw Sheet: ${editingProduct.sheet_size}` : ""
             }],
-            sequence: editingProduct.default_sequence?.length > 0 ? editingProduct.default_sequence : [defaultSequence()]
+            sequence: editingProduct.default_sequence?.length > 0 ? editingProduct.default_sequence.map(s => ({...s, id: s.id || Date.now() + Math.random()})) : [defaultSequence()]
           }]);
         }
       } else {
@@ -125,6 +131,70 @@ export default function ProductTemplateModal({
 
   if (!isOpen) return null;
 
+  // ⭐️ ROUND 21: Presets Logic
+  const handleSavePreset = (partId) => {
+    const part = parts.find(p => p.id === partId);
+    if (!part || part.sequence.length === 0 || !part.sequence[0].process_name) {
+      alert("Add at least one process before saving a preset.");
+      return;
+    }
+    const presetName = prompt("Name this routing preset (e.g. Standard Carton):");
+    if (presetName) {
+      const newPreset = { name: presetName, sequence: part.sequence };
+      const updatedPresets = [...savedPresets.filter(p => p.name !== presetName), newPreset]; // Overwrites if same name
+      setSavedPresets(updatedPresets);
+      localStorage.setItem('routingPresets', JSON.stringify(updatedPresets));
+      alert(`Preset '${presetName}' saved!`);
+    }
+  };
+
+  const handleLoadPreset = (partId, e) => {
+    const presetName = e.target.value;
+    if (!presetName) return;
+    
+    const preset = savedPresets.find(p => p.name === presetName);
+    if (preset) {
+      const newSeq = preset.sequence.map(s => ({ ...s, id: Date.now() + Math.random() })); // Assign fresh IDs
+      setParts(parts.map(p => p.id === partId ? { ...p, sequence: newSeq } : p));
+    }
+    e.target.value = ""; // Reset dropdown
+  };
+
+  // ⭐️ ROUND 21: Native HTML5 Drag and Drop Handlers
+  const handleDragStart = (e, partId, index) => {
+    setDragContext({ partId, dragIndex: index, dropIndex: null });
+    // This allows the browser to show a ghost image of the dragged item
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  const handleDragEnter = (e, partId, index) => {
+    e.preventDefault();
+    if (dragContext.partId === partId && dragContext.dragIndex !== index) {
+      setDragContext(prev => ({ ...prev, dropIndex: index }));
+    }
+  };
+
+  const handleDragEnd = () => {
+    setDragContext({ partId: null, dragIndex: null, dropIndex: null });
+  };
+
+  const handleDrop = (e, partId, dropIndex) => {
+    e.preventDefault();
+    if (dragContext.partId === partId && dragContext.dragIndex !== null && dragContext.dragIndex !== dropIndex) {
+      setParts(prevParts => prevParts.map(p => {
+        if (p.id === partId) {
+          const newSeq = [...p.sequence];
+          const [movedItem] = newSeq.splice(dragContext.dragIndex, 1);
+          newSeq.splice(dropIndex, 0, movedItem);
+          return { ...p, sequence: newSeq };
+        }
+        return p;
+      }));
+    }
+    setDragContext({ partId: null, dragIndex: null, dropIndex: null });
+  };
+
+  // Rest of standard handlers
   const handleCustomerSelect = (e) => {
     if (e.target.value === "ADD_NEW") openInlineModal("Customer");
     else setCustomerName(e.target.value);
@@ -208,7 +278,6 @@ export default function ProductTemplateModal({
             if (rawCat.includes('paper') || rawCat.includes('art') || rawCat.includes('kraft')) newCategory = 'paper';
             else if (rawCat.includes('board') || rawCat.includes('kappa') || rawCat.includes('rigid')) newCategory = 'board';
 
-            // ⭐️ ROUND 15 FIX: Smart fallback to extract missing GSM/Size from the formatted label
             const labelParts = (item.formattedLabel || "").split('·').map(s => s.trim());
             let extractedGsm = item.gsm || item.thickness || item.thickness_mm || "";
             let extractedSize = item.size || "";
@@ -216,14 +285,14 @@ export default function ProductTemplateModal({
             if (labelParts.length >= 2) {
                const specPart = labelParts.find(part => part.toLowerCase().includes('gsm') || part.toLowerCase().includes('mm'));
                if (!extractedGsm && specPart) {
-                   extractedGsm = specPart.replace(/[^\d.]/g, ''); // Extract just the numbers
+                   extractedGsm = specPart.replace(/[^\d.]/g, ''); 
                }
                
                const sizePart = labelParts.find(part => part.includes('x') || part.includes('*') || part.includes('in'));
                if (!extractedSize && sizePart) {
                    extractedSize = sizePart;
                } else if (!extractedSize && labelParts.length >= 3) {
-                   extractedSize = labelParts[2]; // Fallback to 3rd section if no 'x' is found
+                   extractedSize = labelParts[2]; 
                }
             }
 
@@ -336,14 +405,13 @@ export default function ProductTemplateModal({
   const copyShareLink = (url) => {
     if (!url) return alert("Save the product first to generate a live link.");
     navigator.clipboard.writeText(url);
-    alert("Share link copied to clipboard!"); // Kept as standard alert for simple clipboard actions
+    alert("Share link copied to clipboard!"); 
   };
 
   const handleSave = async (e) => {
     e.preventDefault();
     setErrorMsg("");
 
-    // ⭐️ ROUND 15 FIX (POINT 4): Inline validation block instead of browser alert()
     for (const part of parts) {
       const invalidRow = part.materialRows?.find(r => 
         (!r.material_name || r.material_name.trim() === "") && Number(r.qty_per_unit) > 0
@@ -358,32 +426,39 @@ export default function ProductTemplateModal({
     
     try {
       const processedFiles = await Promise.all(files.map(async (fileObj) => {
-        if (fileObj.rawFile) {
+        const { rawFile, ...rest } = fileObj;
+        let finalFile = { 
+          ...rest,
+          status: rest.status || "Draft" 
+        };
+
+        if (rawFile) {
           const fileExt = fileObj.name.split('.').pop();
           const cleanName = fileObj.name.replace(`.${fileExt}`, '').replace(/[^a-zA-Z0-9]/g, '_');
           const storagePath = `products/${Date.now()}_${cleanName}.${fileExt}`;
           const storageRef = ref(storage, storagePath);
           
-          await uploadBytes(storageRef, fileObj.rawFile);
-          const downloadUrl = await getDownloadURL(storageRef);
-          
-          const { rawFile: _rawFile, ...rest } = fileObj;
-          return { ...rest, url: downloadUrl };
+          await uploadBytes(storageRef, rawFile);
+          finalFile.url = await getDownloadURL(storageRef);
         }
-        return fileObj; 
+        return finalFile; 
       }));
 
-      const cleanParts = parts.map(part => ({
-        ...part,
-        materialRows: part.materialRows
-          .filter(r => r.material_name && r.material_name.trim() !== "")
-          .map(r => ({
-            ...r, 
-            gsm: r.category === 'board' ? "" : cleanGsm(r.gsm),
-            thickness_mm: r.category === 'paper' ? "" : r.thickness_mm
-        })),
-        sequence: part.sequence.filter(s => s.process_name.trim() !== "").map((s, idx) => ({ ...s, step_order: idx + 1 }))
-      }));
+      const cleanParts = parts.map(part => {
+        const { materialRows, sequence, ...restPart } = part;
+        return {
+          ...restPart,
+          artwork_required: part.artwork_required === false ? false : true,
+          materialRows: materialRows
+            .filter(r => r.material_name && r.material_name.trim() !== "")
+            .map(r => ({
+              ...r, 
+              gsm: r.category === 'board' ? "" : cleanGsm(r.gsm),
+              thickness_mm: r.category === 'paper' ? "" : r.thickness_mm
+          })),
+          sequence: sequence.filter(s => s.process_name.trim() !== "").map((s, idx) => ({ ...s, step_order: idx + 1 }))
+        };
+      });
 
       const payload = {
         name, sku, category, customerName,
@@ -496,7 +571,6 @@ export default function ProductTemplateModal({
            onBlur={() => {
              setTimeout(() => {
                if (pickerState.openId === row.id) {
-                  // ⭐️ Fix: Allow empty string so users can clear the input and test validation
                   const updatedVal = pickerState.search !== undefined ? pickerState.search : row.material_name;
                   handleMaterialRowChange(partId, row.id, 'material_name', updatedVal);
                   setPickerState(prev => ({ ...prev, openId: null }));
@@ -566,7 +640,6 @@ export default function ProductTemplateModal({
           <button onClick={onClose} className="text-gray-400 hover:text-white bg-gray-800 p-2 rounded-lg"><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg></button>
         </div>
 
-        {/* ⭐️ ROUND 15 FIX: Inline Error Banner rendering */}
         {errorMsg && (
           <div className="mx-6 mt-6 bg-red-500/10 border border-red-500/50 text-red-400 px-4 py-3 rounded flex items-start gap-3 shadow-lg">
             <span className="text-lg leading-none">🚨</span>
@@ -596,6 +669,7 @@ export default function ProductTemplateModal({
             </div>
           </div>
 
+          {/* ... (File Upload Section remains identical) ... */}
           <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden shadow-lg">
             <div className="bg-[#151724] border-b border-gray-800 p-4 flex justify-between items-center">
               <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
@@ -724,6 +798,7 @@ export default function ProductTemplateModal({
                 </div>
 
                 <div className="p-4 space-y-4">
+                  {/* ... (Material Rows remain identical) ... */}
                   <div className="border border-gray-800 rounded-lg overflow-visible relative">
                     <div className="bg-gray-950 px-4 py-2 border-b border-gray-800 flex justify-between items-center rounded-t-lg">
                       <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Materials & Cutting List</span>
@@ -814,9 +889,42 @@ export default function ProductTemplateModal({
                   </div>
 
                   <div className="bg-gray-950 p-4 rounded border border-gray-800 space-y-3 relative z-0">
+                    
+                    {/* ⭐️ ROUND 21: Routing Presets Controller */}
+                    <div className="flex justify-between items-center border-b border-gray-800 pb-2 mb-2">
+                       <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Production Routing</span>
+                       <div className="flex gap-2 items-center">
+                          <select onChange={(e) => handleLoadPreset(part.id, e)} className="bg-gray-900 border border-gray-700 text-[10px] text-gray-300 rounded px-2 py-1 outline-none">
+                            <option value="">Load Routing Preset...</option>
+                            {savedPresets.map(p => <option key={p.name} value={p.name}>{p.name}</option>)}
+                          </select>
+                          <button type="button" onClick={() => handleSavePreset(part.id)} className="text-[10px] bg-purple-900/30 text-purple-400 font-bold px-2 py-1 rounded hover:bg-purple-500 hover:text-white transition-colors">
+                            Save as Preset
+                          </button>
+                       </div>
+                    </div>
+
+                    {/* ⭐️ ROUND 21: Drag and Drop Routing Container */}
                     {part.sequence.map((step, idx) => (
-                      <div key={step.id} className="flex flex-col gap-2 border-l-2 border-gray-800 pl-3 py-1">
+                      <div 
+                        key={step.id} 
+                        draggable
+                        onDragStart={(e) => handleDragStart(e, part.id, idx)}
+                        onDragEnter={(e) => handleDragEnter(e, part.id, idx)}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDragEnd={handleDragEnd}
+                        onDrop={(e) => handleDrop(e, part.id, idx)}
+                        className={`flex flex-col gap-2 border-l-2 pl-3 py-2 transition-colors duration-150 cursor-grab active:cursor-grabbing rounded
+                          ${dragContext.partId === part.id && dragContext.dragIndex === idx ? 'opacity-40 bg-gray-900 border-gray-600 border-dashed' : 'border-gray-800 hover:border-gray-600'}
+                          ${dragContext.partId === part.id && dragContext.dropIndex === idx && dragContext.dragIndex !== idx ? 'border-t-2 border-t-primary-500 bg-primary-900/10' : ''}
+                        `}
+                      >
                         <div className="flex gap-3 items-center">
+                          {/* ⭐️ Drag Handle Icon */}
+                          <div className="text-gray-600 hover:text-white transition-colors" title="Drag to reorder">
+                            <svg className="w-4 h-4 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 8h16M4 16h16" /></svg>
+                          </div>
+                          
                           <span className="text-xs font-bold text-gray-600 w-4 font-mono">{idx+1}.</span>
                           <select required value={step.process_name} className="bg-gray-900 border border-gray-700 rounded p-1.5 text-xs text-white flex-1" onChange={(e) => handleSequenceChange(part.id, step.id, 'process_name', e.target.value)}>
                             <option value="">-- Select Process --</option>
@@ -831,12 +939,12 @@ export default function ProductTemplateModal({
                         
                         {renderDynamicProcessFields(part.id, step)}
                         
-                        <div className="pl-7 mt-1">
+                        <div className="pl-14 mt-1">
                           <input type="text" placeholder="Remarks for operator (Optional) e.g., Run at half speed" value={step.remarks || ""} onChange={(e) => handleSequenceChange(part.id, step.id, 'remarks', e.target.value)} className="w-full bg-gray-900 border border-gray-700 border-dashed rounded-md px-3 py-1.5 text-xs text-white focus:border-solid focus:border-primary-500" />
                         </div>
                       </div>
                     ))}
-                    <button type="button" onClick={() => handleSequenceAdd(part.id)} className="text-xs text-primary-500 font-bold">+ Add Process Step</button>
+                    <button type="button" onClick={() => handleSequenceAdd(part.id)} className="text-xs text-primary-500 font-bold mt-2">+ Add Process Step</button>
                   </div>
                 </div>
               </div>

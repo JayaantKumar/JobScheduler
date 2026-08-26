@@ -1,5 +1,4 @@
 import { useState, useEffect, useMemo } from "react";
-// ⭐️ ROUND 19 FIX: Import onSnapshot to listen to live products
 import { collection, query, where, getDocs, doc, updateDoc, increment, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase/config";
 import JobViewModal from "./JobViewModal"; 
@@ -8,13 +7,12 @@ export default function OperationsBoard() {
   const [loading, setLoading] = useState(true);
   const [rawJobs, setRawJobs] = useState([]);
   
-  // ⭐️ ROUND 19 FIX: Live Product Cache
   const [liveProducts, setLiveProducts] = useState({});
+  // ⭐️ ROUND 21: Added live machines state to instantly know if a location is a vendor
+  const [liveMachines, setLiveMachines] = useState({});
   
-  // Modal State for Viewing/Editing a Job
   const [selectedJob, setSelectedJob] = useState(null);
   
-  // Filters
   const [filterCustomer, setFilterCustomer] = useState("");
   const [filterPlace, setFilterPlace] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
@@ -48,13 +46,10 @@ export default function OperationsBoard() {
     return () => { isMounted = false; };
   }, []);
 
-  // ⭐️ ROUND 19 FIX: Subscribe to all master products associated with active jobs
   useEffect(() => {
     const productIds = [...new Set(rawJobs.map(j => j.product?.id).filter(Boolean))];
     if (productIds.length === 0) return;
 
-    // To prevent hitting Firestore "IN" clause limits, fetch all products
-    // (Assuming <1000 active products. For large scale, chunk the query).
     const unsub = onSnapshot(collection(db, "products"), (snap) => {
        const pMap = {};
        snap.docs.forEach(doc => {
@@ -66,13 +61,24 @@ export default function OperationsBoard() {
     return () => unsub();
   }, [rawJobs]);
 
+  // ⭐️ ROUND 21: Live subscribe to machines to fetch vendor flags
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "machines"), (snap) => {
+       const mMap = {};
+       snap.docs.forEach(doc => {
+           mMap[doc.id] = doc.data();
+       });
+       setLiveMachines(mMap);
+    });
+    return () => unsub();
+  }, []);
+
   const getDaysAtStep = (dateString) => {
     if (!dateString) return 0;
     const diff = new Date() - new Date(dateString);
     return Math.floor(diff / (1000 * 60 * 60 * 24));
   };
 
-  // Process data: calculate current step, days at step, overdue flags, and ⭐️ LIVE ARTWORK STATUS
   const processedJobs = useMemo(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -84,8 +90,13 @@ export default function OperationsBoard() {
 
       const stepName = currentStep ? `${currentIdx + 1}/${seq.length} · ${currentStep.process_name}` : 'Completed';
       const place = currentStep?.assigned_machine_place || 'Unassigned';
-      const stepStatus = currentStep?.status || 'pending';
       
+      // ⭐️ ROUND 21: Check if the currently assigned machine is an external vendor
+      const currentMachineData = currentStep?.assigned_machine_id ? liveMachines[currentStep.assigned_machine_id] : null;
+      const isVendorStep = currentMachineData?.is_vendor || false;
+      const vendorName = currentMachineData?.name || "Unknown Vendor";
+
+      const stepStatus = currentStep?.status || 'pending';
       const statusDate = currentStep?.status_updated_at || currentStep?.started_at || job.job_date;
       const daysAtStep = getDaysAtStep(statusDate);
       
@@ -93,7 +104,6 @@ export default function OperationsBoard() {
       if (deadlineDate) deadlineDate.setHours(0, 0, 0, 0);
       const isOverdue = deadlineDate ? deadlineDate < today : false;
 
-      // ⭐️ ROUND 20 BUG 1 FIX: Calculate live artwork approval dynamically with strict rules
       const isArtworkRequired = job.artwork_required ?? job.product?.artwork_required ?? true;
       let isLiveArtworkApproved = false;
       
@@ -131,6 +141,8 @@ export default function OperationsBoard() {
         currentStep,
         stepName,
         place,
+        isVendorStep,
+        vendorName,
         stepStatus,
         daysAtStep,
         isOverdue,
@@ -140,7 +152,6 @@ export default function OperationsBoard() {
     });
 
     return jobs.sort((a, b) => {
-      // Unapproved artwork jobs bubble to the top visually if they are stuck
       if (!a.isLiveArtworkApproved && b.isLiveArtworkApproved) return -1;
       if (a.isLiveArtworkApproved && !b.isLiveArtworkApproved) return 1;
       
@@ -150,9 +161,8 @@ export default function OperationsBoard() {
       }
       return Number(a.part_index || 0) - Number(b.part_index || 0);
     });
-  }, [rawJobs, liveProducts]);
+  }, [rawJobs, liveProducts, liveMachines]);
 
-  // Apply UI Filters
   const filteredJobs = useMemo(() => {
     return processedJobs.filter(job => {
       if (filterCustomer && job.customer !== filterCustomer) return false;
@@ -269,7 +279,6 @@ export default function OperationsBoard() {
                   <td className="p-4">
                     <div className="font-bold text-white text-sm flex items-center gap-2">
                        {job.set_code?.includes('-') ? `SET-${job.set_code}` : job.set_code}
-                       {/* ⭐️ ROUND 19 FIX: Live Artwork Warning Icon */}
                        {job.isArtworkRequired && !job.isLiveArtworkApproved && (
                            <span title="Artwork Pending/Unapproved" className="text-red-500 animate-pulse">⚠️</span>
                        )}
@@ -291,9 +300,21 @@ export default function OperationsBoard() {
                        </span>
                     )}
                   </td>
+                  
+                  {/* ⭐️ ROUND 21: Place column renders dynamic external vendor badge */}
                   <td className="p-4">
-                    <span className="bg-gray-950 px-2 py-1 rounded text-[10px] font-bold text-gray-400 border border-gray-800 uppercase tracking-wider">{job.place}</span>
+                    {job.isVendorStep ? (
+                       <div className="flex flex-col gap-0.5">
+                         <span className="bg-purple-900/40 px-2 py-1 rounded text-[10px] font-bold text-purple-400 border border-purple-500/30 uppercase tracking-wider inline-flex items-center gap-1 w-max">
+                           🚚 Job Work (Outbound)
+                         </span>
+                         <span className="text-[9px] text-gray-500 font-bold ml-1">{job.vendorName}</span>
+                       </div>
+                    ) : (
+                       <span className="bg-gray-950 px-2 py-1 rounded text-[10px] font-bold text-gray-400 border border-gray-800 uppercase tracking-wider">{job.place}</span>
+                    )}
                   </td>
+                  
                   <td className="p-4">
                     {getStatusBadge(job.stepStatus)}
                   </td>

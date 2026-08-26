@@ -27,7 +27,7 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
   // Fetch dynamic processes from the database
   const { processes: dbProcesses, loading: procLoading } = useProcesses();
 
-  // ⭐️ ROUND 9: Locations state for the dropdown
+  // Locations state for the dropdown
   const [locations, setLocations] = useState([]);
   const [locLoading, setLocLoading] = useState(true);
 
@@ -41,6 +41,7 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
   const ALL_TYPES = [...new Set([...PREDEFINED_TYPES, ...dbProcessNames, ...existingCustomTypes])].sort();
 
   // Form States
+  const [isVendor, setIsVendor] = useState(editingMachine?.is_vendor || false); // ⭐️ ROUND 21: Vendor Toggle
   const [name, setName] = useState(editingMachine?.name || "");
   const [machineCode, setMachineCode] = useState(editingMachine?.machineCode || ""); 
   const [company, setCompany] = useState(editingMachine?.company || ""); 
@@ -52,7 +53,7 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
   const [specs, setSpecs] = useState(editingMachine?.specs || { dimUnit: "in" });
   const [loading, setLoading] = useState(false);
 
-  // ⭐️ ROUND 9: Fetch Locations from Master Data
+  // Fetch Locations from Master Data
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "locations"), (snap) => {
       setLocations(snap.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -95,11 +96,13 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!name.trim()) return alert("Error: Please enter a Machine Name.");
-    if (!place.trim()) return alert("Error: Please select a Machine Place/Location.");
+    if (!name.trim()) return alert(`Error: Please enter a ${isVendor ? 'Vendor' : 'Machine'} Name.`);
+    
+    // ⭐️ ROUND 21: Location is strictly required for internal machines, but optional for external vendors
+    if (!isVendor && !place.trim()) return alert("Error: Please select a Machine Place/Location.");
 
     const finalType = type === "Custom" ? customType : type;
-    if (!finalType || !finalType.trim()) return alert("Error: Please select a Machine Type.");
+    if (!finalType || !finalType.trim()) return alert(`Error: Please select a ${isVendor ? 'Service' : 'Machine'} Type.`);
 
     setLoading(true);
 
@@ -108,9 +111,10 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
       machineCode: machineCode || name.replace(/\s+/g, '').toLowerCase(), 
       company: company,
       type: finalType,
-      place: place,
+      place: isVendor ? (place || "External") : place, // Ensure vendors at least get an "External" string if left blank
       status: status,
       specs: specs,
+      is_vendor: isVendor, // ⭐️ ROUND 21: Saves the vendor flag to the database
       updated_at: serverTimestamp(),
     };
 
@@ -133,52 +137,77 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-md p-6 shadow-2xl overflow-y-auto max-h-[90vh] custom-scrollbar">
-        <h3 className="text-xl font-bold text-white mb-4">{editingMachine ? "Edit Machine" : "Add New Machine"}</h3>
+        <h3 className="text-xl font-bold text-white mb-4">
+          {editingMachine 
+            ? (isVendor ? "Edit Vendor Details" : "Edit Machine") 
+            : "Add New Resource"}
+        </h3>
         
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-400 mb-1">Machine Name *</label>
-            <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Die Cutter Alpha" className={inputClass} />
-          </div>
-
-          {/* ⭐️ ROUND 9: Dropdown bound to locations Master Data */}
-          <div>
-            <label className="block text-sm font-medium text-gray-400 mb-1">Machine Place (Factory) *</label>
-            <select 
-              value={place} 
-              onChange={e => setPlace(e.target.value)} 
-              className={inputClass}
-            >
-              <option value="">{locLoading ? "Loading Locations..." : "-- Select Location --"}</option>
-              {locations.filter(l => l.active).map(loc => (
-                <option key={loc.id} value={loc.code}>{loc.name} ({loc.code})</option>
-              ))}
-              
-              {/* Fallback for legacy text values not yet mapped */}
-              {place && !locations.find(l => l.code === place) && (
-                <option value={place}>{place} (Legacy Unmapped)</option>
-              )}
-            </select>
+          
+          {/* ⭐️ ROUND 21: External Vendor Toggle */}
+          <div className="flex items-center gap-3 p-3 bg-purple-900/10 border border-purple-500/20 rounded-lg transition-colors hover:bg-purple-900/20 cursor-pointer" onClick={() => setIsVendor(!isVendor)}>
+            <label className="relative inline-flex items-center cursor-pointer pointer-events-none">
+              <input type="checkbox" className="sr-only peer" checked={isVendor} readOnly />
+              <div className="w-9 h-5 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-500"></div>
+            </label>
+            <div>
+              <div className="text-sm font-bold text-purple-400">External Vendor (Job Work)</div>
+              <div className="text-xs text-gray-500">Toggle if this is an outside contractor.</div>
+            </div>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-400 mb-1">Custom Machine ID / Code</label>
-            <input type="text" value={machineCode} onChange={e => setMachineCode(e.target.value)} placeholder="e.g. diecut001sectionA" className={`${inputClass} border-primary-500/50 text-primary-400 font-mono`} />
+            <label className="block text-sm font-medium text-gray-400 mb-1">{isVendor ? 'Vendor / Contractor Name' : 'Machine Name'} *</label>
+            <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder={isVendor ? "e.g. ABC Packaging" : "e.g. Die Cutter Alpha"} className={inputClass} />
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-400 mb-1">Machine Company / Brand</label>
-            <input type="text" value={company} onChange={e => setCompany(e.target.value)} placeholder="e.g. Bobst (Optional)" className={inputClass} />
-          </div>
+          {/* ⭐️ ROUND 21: Conditional Location Field */}
+          {isVendor ? (
+            <div>
+              <label className="block text-sm font-medium text-gray-400 mb-1">Vendor City / Location (Optional)</label>
+              <input type="text" value={place} onChange={e => setPlace(e.target.value)} placeholder="e.g. Mumbai, Maharashtra" className={inputClass} />
+            </div>
+          ) : (
+            <div>
+              <label className="block text-sm font-medium text-gray-400 mb-1">Machine Place (Factory) *</label>
+              <select 
+                value={place} 
+                onChange={e => setPlace(e.target.value)} 
+                className={inputClass}
+              >
+                <option value="">{locLoading ? "Loading Locations..." : "-- Select Location --"}</option>
+                {locations.filter(l => l.active).map(loc => (
+                  <option key={loc.id} value={loc.code}>{loc.name} ({loc.code})</option>
+                ))}
+                {/* Fallback for legacy text values not yet mapped */}
+                {place && !locations.find(l => l.code === place) && (
+                  <option value={place}>{place} (Legacy Unmapped)</option>
+                )}
+              </select>
+            </div>
+          )}
 
           <div>
-            <label className="block text-sm font-medium text-gray-400 mb-1">Machine Type *</label>
+            <label className="block text-sm font-medium text-gray-400 mb-1">Custom {isVendor ? 'Vendor' : 'Machine'} ID / Code</label>
+            <input type="text" value={machineCode} onChange={e => setMachineCode(e.target.value)} placeholder="Auto-generated if left blank" className={`${inputClass} border-primary-500/50 text-primary-400 font-mono`} />
+          </div>
+
+          {!isVendor && (
+            <div>
+              <label className="block text-sm font-medium text-gray-400 mb-1">Machine Company / Brand</label>
+              <input type="text" value={company} onChange={e => setCompany(e.target.value)} placeholder="e.g. Bobst (Optional)" className={inputClass} />
+            </div>
+          )}
+
+          <div>
+            <label className="block text-sm font-medium text-gray-400 mb-1">Primary {isVendor ? 'Service' : 'Machine'} Type *</label>
             <select 
               value={type} 
               onChange={e => { setType(e.target.value); setSpecs({ dimUnit: "in" }); }} 
               className={inputClass}
             >
-              <option value="">{procLoading ? "Loading..." : "-- Select Machine Type --"}</option>
+              <option value="">{procLoading ? "Loading..." : "-- Select Type --"}</option>
               {ALL_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
               <option value="Custom" className="text-primary-400 font-bold">+ Add Custom Type...</option>
             </select>
@@ -186,7 +215,7 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
           </div>
 
           <div className="bg-gray-950/50 p-4 rounded-lg border border-gray-800">
-            <h4 className="text-xs font-bold text-primary-400 uppercase tracking-wider mb-3">Capabilities & Specs</h4>
+            <h4 className="text-xs font-bold text-primary-400 uppercase tracking-wider mb-3">{isVendor ? 'Vendor Capabilities' : 'Capabilities & Specs'}</h4>
             
             {/* A, B, E: Size (L x W) */}
             {["Sheet Cutting", "Corrugation", "Die Cutting"].includes(type) && (
@@ -294,15 +323,19 @@ export default function MachineModal({ onClose, machines = [], editingMachine = 
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-400 mb-1 mt-4">Operational Status</label>
+            <label className="block text-sm font-medium text-gray-400 mb-1 mt-4">{isVendor ? 'Vendor Status' : 'Operational Status'}</label>
             <select value={status} onChange={e => setStatus(e.target.value)} className={inputClass}>
-              <option value="Online">Online</option><option value="Maintenance">Maintenance</option><option value="Offline">Offline</option>
+              <option value="Online">Online / Available</option>
+              <option value="Maintenance">Maintenance / Busy</option>
+              <option value="Offline">Offline / Unavailable</option>
             </select>
           </div>
 
           <div className="flex justify-end gap-3 mt-8">
             <button type="button" onClick={onClose} className="px-5 py-2.5 rounded-lg text-gray-400 hover:bg-gray-800 transition-colors">Cancel</button>
-            <button type="submit" disabled={loading} className="bg-primary-600 hover:bg-primary-500 text-white px-5 py-2.5 rounded-lg font-medium">{loading ? "Saving..." : "Save Machine"}</button>
+            <button type="submit" disabled={loading} className="bg-primary-600 hover:bg-primary-500 text-white px-5 py-2.5 rounded-lg font-medium shadow-lg">
+              {loading ? "Saving..." : (isVendor ? "Save Vendor" : "Save Machine")}
+            </button>
           </div>
         </form>
       </div>
