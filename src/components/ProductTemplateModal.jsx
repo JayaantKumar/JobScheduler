@@ -141,7 +141,7 @@ export default function ProductTemplateModal({
     const presetName = prompt("Name this routing preset (e.g. Standard Carton):");
     if (presetName) {
       const newPreset = { name: presetName, sequence: part.sequence };
-      const updatedPresets = [...savedPresets.filter(p => p.name !== presetName), newPreset]; // Overwrites if same name
+      const updatedPresets = [...savedPresets.filter(p => p.name !== presetName), newPreset]; 
       setSavedPresets(updatedPresets);
       localStorage.setItem('routingPresets', JSON.stringify(updatedPresets));
       alert(`Preset '${presetName}' saved!`);
@@ -154,16 +154,15 @@ export default function ProductTemplateModal({
     
     const preset = savedPresets.find(p => p.name === presetName);
     if (preset) {
-      const newSeq = preset.sequence.map(s => ({ ...s, id: Date.now() + Math.random() })); // Assign fresh IDs
+      const newSeq = preset.sequence.map(s => ({ ...s, id: Date.now() + Math.random() })); 
       setParts(parts.map(p => p.id === partId ? { ...p, sequence: newSeq } : p));
     }
-    e.target.value = ""; // Reset dropdown
+    e.target.value = ""; 
   };
 
   // ⭐️ ROUND 21: Native HTML5 Drag and Drop Handlers
   const handleDragStart = (e, partId, index) => {
     setDragContext({ partId, dragIndex: index, dropIndex: null });
-    // This allows the browser to show a ghost image of the dragged item
     e.dataTransfer.effectAllowed = "move";
   };
 
@@ -192,6 +191,22 @@ export default function ProductTemplateModal({
       }));
     }
     setDragContext({ partId: null, dragIndex: null, dropIndex: null });
+  };
+
+  // ⭐️ ROUND 23: Mobile-friendly up/down reordering for Sequence
+  const handleSequenceMove = (partId, index, direction) => {
+    setParts(parts.map(p => {
+      if (p.id === partId) {
+        const newSeq = [...p.sequence];
+        if (direction === 'up' && index > 0) {
+          [newSeq[index - 1], newSeq[index]] = [newSeq[index], newSeq[index - 1]];
+        } else if (direction === 'down' && index < newSeq.length - 1) {
+          [newSeq[index + 1], newSeq[index]] = [newSeq[index], newSeq[index + 1]];
+        }
+        return { ...p, sequence: newSeq };
+      }
+      return p;
+    }));
   };
 
   // Rest of standard handlers
@@ -914,15 +929,21 @@ export default function ProductTemplateModal({
                         onDragOver={(e) => e.preventDefault()}
                         onDragEnd={handleDragEnd}
                         onDrop={(e) => handleDrop(e, part.id, idx)}
-                        className={`flex flex-col gap-2 border-l-2 pl-3 py-2 transition-colors duration-150 cursor-grab active:cursor-grabbing rounded
+                        className={`flex flex-col gap-2 border-l-2 pl-3 py-2 transition-colors duration-150 rounded
                           ${dragContext.partId === part.id && dragContext.dragIndex === idx ? 'opacity-40 bg-gray-900 border-gray-600 border-dashed' : 'border-gray-800 hover:border-gray-600'}
                           ${dragContext.partId === part.id && dragContext.dropIndex === idx && dragContext.dragIndex !== idx ? 'border-t-2 border-t-primary-500 bg-primary-900/10' : ''}
                         `}
                       >
                         <div className="flex gap-3 items-center">
-                          {/* ⭐️ Drag Handle Icon */}
-                          <div className="text-gray-600 hover:text-white transition-colors" title="Drag to reorder">
-                            <svg className="w-4 h-4 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 8h16M4 16h16" /></svg>
+                          {/* ⭐️ ROUND 23: Drag Handle + Mobile Up/Down Arrows */}
+                          <div className="flex items-center gap-1">
+                            <div className="flex flex-col gap-0.5 items-center justify-center">
+                               <button type="button" onClick={(e) => { e.stopPropagation(); handleSequenceMove(part.id, idx, 'up'); }} className="text-[10px] text-gray-600 hover:text-white px-1" disabled={idx === 0}>▲</button>
+                               <button type="button" onClick={(e) => { e.stopPropagation(); handleSequenceMove(part.id, idx, 'down'); }} className="text-[10px] text-gray-600 hover:text-white px-1" disabled={idx === part.sequence.length - 1}>▼</button>
+                            </div>
+                            <div className="text-gray-600 hover:text-white transition-colors ml-1 cursor-grab active:cursor-grabbing" title="Drag to reorder">
+                              <svg className="w-4 h-4 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 8h16M4 16h16" /></svg>
+                            </div>
                           </div>
                           
                           <span className="text-xs font-bold text-gray-600 w-4 font-mono">{idx+1}.</span>

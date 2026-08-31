@@ -14,6 +14,7 @@ import InventoryManagement from "../pages/InventoryManagement";
 import OperationsBoard from "../components/OperationsBoard";
 import Settings from "../pages/Settings"; 
 import PrintJobCard from "../pages/PrintJobCard";
+import JobWork from "../pages/JobWork";
 
 // ⭐️ ROUND 21: Import the new Repeat Orders page
 import RepeatOrders from "../pages/RepeatOrders"; 
@@ -68,6 +69,9 @@ export const AppRouter = () => {
           <Route path="inventory-management" element={<InventoryManagement />} />
           <Route path="operations-board" element={<OperationsBoard />} />
           <Route path="settings" element={<Settings />} />
+          
+          {/* ⭐️ ROUND 23: Added Job Work Route */}
+          <Route path="job-work" element={<JobWork />} />
         </Route>
         
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

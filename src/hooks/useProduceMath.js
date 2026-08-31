@@ -206,7 +206,8 @@ export function useProduceMath() {
     const val = e.target.value;
     setProduceQty(val);
     if (activeProduceProduct) {
-      setProduceParts(prev => generateProduceParts(val, activeProduceProduct.parts, prev));
+      // Pass cachedProcesses explicitly to ensure default wastages are preserved during global quantity changes
+      setProduceParts(prev => generateProduceParts(val, activeProduceProduct.parts, prev, cachedProcesses));
     }
   };
 
@@ -247,7 +248,15 @@ export function useProduceMath() {
        const copy = [...prev];
        const pCopy = { ...copy[pIdx] }; 
        pCopy.is_custom_override = checked;
-       pCopy.dirtyFields = { ...(pCopy.dirtyFields || {}), custom_override: checked };
+       
+       const newDirty = { ...(pCopy.dirtyFields || {}) };
+       if (checked) {
+           newDirty.custom_override = true;
+       } else {
+           // ⭐️ ROUND 23: Deleting the lock ensures the math cascade recognizes it is truly unticked
+           delete newDirty.custom_override; 
+       }
+       pCopy.dirtyFields = newDirty;
 
        if (!checked) {
          pCopy.final_pcs = isText(pCopy.part_sets) ? pCopy.part_sets : (Number(pCopy.part_sets) * Number(pCopy.active_multiplier || 1));
@@ -270,7 +279,7 @@ export function useProduceMath() {
     });
   };
 
-  // ⭐️ ROUND 21.1 HOTFIX (BUG 2): Supports clearing dirty locks when passing empty string
+  // ⭐️ ROUND 21.1 HOTFIX: Supports clearing dirty locks when passing empty string
   const handleStepQtyChange = (pIdx, sIdx, field, val) => {
     setProduceParts(prev => {
         const copy = [...prev];
@@ -304,7 +313,7 @@ export function useProduceMath() {
     });
   };
 
-  // ⭐️ ROUND 21.1 HOTFIX (BUG 2): Recalculate options support ("untouched only" vs "reset all")
+  // ⭐️ ROUND 21.1 HOTFIX: Recalculate options support ("untouched only" vs "reset all")
   const handleRecalculateChain = (pIdx, options = { resetAll: false }) => {
     setProduceParts(prev => {
         const copy = [...prev];
@@ -359,9 +368,9 @@ export function useProduceMath() {
     produceDate,
     setProduceDate,
     produceParts,
-    repeatSourceGroup, // Expose this so the Modal knows it's repeating
+    repeatSourceGroup, 
     openProduceModal,
-    openProduceModalForRepeat, // Expose the new loader
+    openProduceModalForRepeat, 
     handleProduceQtyChange,
     updatePartSets,
     updatePartMultiplier,

@@ -16,18 +16,18 @@ export default function AdminLayout() {
   const handleNavClick = () => setIsMobileMenuOpen(false);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-950 print:hidden">
+    <div className="flex h-screen overflow-hidden bg-gray-950 print:h-auto print:bg-white print:overflow-visible">
       {/* Mobile Overlay Background */}
       {isMobileMenuOpen && (
         <div
-          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-20 md:hidden"
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-20 md:hidden print:hidden"
           onClick={() => setIsMobileMenuOpen(false)}
         />
       )}
 
       {/* Sidebar - Now slides in on mobile, static on desktop */}
       <aside
-        className={`fixed md:relative w-64 h-full bg-gray-900 border-r border-gray-800 flex flex-col z-30 transform transition-transform duration-300 ${isMobileMenuOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}
+        className={`fixed md:relative w-64 h-full bg-gray-900 border-r border-gray-800 flex flex-col z-30 transform transition-transform duration-300 print:hidden ${isMobileMenuOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}
       >
         <div className="p-6 text-2xl font-bold text-white tracking-wider flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -81,7 +81,6 @@ export default function AdminLayout() {
             Job Management
           </NavLink>
 
-          {/* ⭐️ ROUND 21: ADDED NEW REPEAT ORDERS LINK */}
           <NavLink
             to="/dashboard/repeat-orders"
             onClick={handleNavClick}
@@ -127,7 +126,15 @@ export default function AdminLayout() {
             Inventory Management
           </NavLink>
           
-          {/* Product Management permanently visible */}
+          {/* ⭐️ ROUND 23: ADDED JOB WORK & CHALLANS LINK */}
+          <NavLink
+            to="/dashboard/job-work"
+            onClick={handleNavClick}
+            className={navLinkClasses}
+          >
+            Job Work & Challans
+          </NavLink>
+
           <NavLink
             to="/dashboard/product-management"
             onClick={handleNavClick}
@@ -145,7 +152,7 @@ export default function AdminLayout() {
           </NavLink>
         </nav>
 
-        {/* Action Footer (Toggle removed completely) */}
+        {/* Action Footer */}
         <div className="px-5 py-4 border-t border-gray-800 shrink-0 bg-gray-900">
           <button
             onClick={logoutUser}
@@ -158,8 +165,8 @@ export default function AdminLayout() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col h-full overflow-hidden relative w-full">
-        <header className="h-16 shrink-0 bg-gray-900 border-b border-gray-800 flex items-center px-4 md:px-8 justify-between z-10">
+      <main className="flex-1 flex flex-col h-full overflow-hidden relative w-full print:h-auto print:overflow-visible">
+        <header className="h-16 shrink-0 bg-gray-900 border-b border-gray-800 flex items-center px-4 md:px-8 justify-between z-10 print:hidden">
           <div className="flex items-center gap-3">
             {/* Hamburger Button for Mobile */}
             <button
@@ -190,7 +197,7 @@ export default function AdminLayout() {
           </div>
         </header>
 
-        <div className="flex-1 overflow-auto p-4 md:p-8 bg-gray-950 custom-scrollbar">
+        <div className="flex-1 overflow-auto p-4 md:p-8 bg-gray-950 custom-scrollbar print:p-0 print:bg-white print:overflow-visible">
           <Outlet />
         </div>
       </main>

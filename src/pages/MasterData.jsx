@@ -7,19 +7,29 @@ export default function MasterData() {
 
   // --- EXISTING APP STATES ---
   const [dies, setDies] = useState([]);
-  
-  // RESTORED MASTER DATA STATES
   const [customers, setCustomers] = useState([]);
   const [productCategories, setProductCategories] = useState([]);
   const [rates, setRates] = useState([]);
   const [machines, setMachines] = useState([]);
 
-  // --- ⭐️ ROUND 9: LOCATIONS STATE ---
+  // --- LOCATIONS STATE ---
   const [locations, setLocations] = useState([]);
   const [isLocModalOpen, setLocModalOpen] = useState(false);
   const [editingLoc, setEditingLoc] = useState(null);
   const [locForm, setLocForm] = useState({ name: "", code: "", address: "", notes: "", active: true });
   const [savingLoc, setSavingLoc] = useState(false);
+
+  // --- ⭐️ ROUND 23: VENDORS STATE ---
+  const [vendors, setVendors] = useState([]);
+  const [isVendorModalOpen, setVendorModalOpen] = useState(false);
+  const [editingVendor, setEditingVendor] = useState(null);
+  const [vendorForm, setVendorForm] = useState({
+    name: "", code: "", contact: "", phone: "", address: "", notes: "", active: true
+  });
+  const [savingVendor, setSavingVendor] = useState(false);
+
+  // --- ⭐️ ROUND 23: PRESETS STATE (Local Storage) ---
+  const [presets, setPresets] = useState([]);
 
   // --- INVENTORY MODULE STATES ---
   const [matCategories, setMatCategories] = useState([]);
@@ -30,7 +40,7 @@ export default function MasterData() {
   const [attributes, setAttributes] = useState([]);
   const [savingMat, setSavingMat] = useState(false);
 
-  // --- GENERIC MODAL FOR RESTORED TABS ---
+  // --- GENERIC MODAL ---
   const [genericModal, setGenericModal] = useState({ isOpen: false, type: "", editId: null, name: "", extraValue: "" });
   const [savingGeneric, setSavingGeneric] = useState(false);
 
@@ -54,21 +64,91 @@ export default function MasterData() {
     const unsubCust = onSnapshot(collection(db, "customers"), snap => setCustomers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubProdCats = onSnapshot(collection(db, "productCategories"), snap => setProductCategories(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubMachines = onSnapshot(collection(db, "machines"), snap => setMachines(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-    
-    // ⭐️ ROUND 9: Listen for Locations
     const unsubLocs = onSnapshot(collection(db, "locations"), snap => setLocations(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsubVendors = onSnapshot(collection(db, "vendors"), snap => setVendors(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
 
     const unsubRates = onSnapshot(collection(db, "rates"), snap => {
       setRates(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       setLoading(false);
     });
 
+    // Load Local Presets
+    const localPresets = localStorage.getItem('routingPresets');
+    if (localPresets) setPresets(JSON.parse(localPresets));
+
     return () => {
-      unsubDies(); unsubMatCats(); unsubCust(); unsubProdCats(); unsubMachines(); unsubRates(); unsubLocs();
+      unsubDies(); unsubMatCats(); unsubCust(); unsubProdCats(); unsubMachines(); unsubRates(); unsubLocs(); unsubVendors();
     };
   }, []);
 
-  // --- ⭐️ ROUND 9: LOCATIONS HANDLERS ---
+  // --- ⭐️ ROUND 23: VENDORS HANDLERS ---
+  const openVendorModal = (vendor = null) => {
+    if (vendor) {
+      setEditingVendor(vendor);
+      setVendorForm({
+        name: vendor.name || "", code: vendor.code || "", contact: vendor.contact || "",
+        phone: vendor.phone || "", address: vendor.address || "", notes: vendor.notes || "", active: vendor.active ?? true
+      });
+    } else {
+      setEditingVendor(null);
+      setVendorForm({ name: "", code: "", contact: "", phone: "", address: "", notes: "", active: true });
+    }
+    setVendorModalOpen(true);
+  };
+
+  const handleSaveVendor = async (e) => {
+    e.preventDefault();
+    if (!vendorForm.name.trim() || !vendorForm.code.trim()) return alert("Name and Short Code are required.");
+    setSavingVendor(true);
+    try {
+      const formattedCode = vendorForm.code.trim().toUpperCase();
+      const payload = { ...vendorForm, code: formattedCode, updated_at: serverTimestamp() };
+      
+      if (editingVendor) {
+        await updateDoc(doc(db, "vendors", editingVendor.id), payload);
+      } else {
+        await addDoc(collection(db, "vendors"), { ...payload, created_at: serverTimestamp() });
+      }
+      setVendorModalOpen(false);
+    } catch (err) { alert("Failed to save vendor: " + err.message); } 
+    finally { setSavingVendor(false); }
+  };
+
+  const handleDeleteVendor = (vendor) => {
+    setConfirmConfig({
+      isOpen: true,
+      title: "Delete Vendor",
+      message: `Are you sure you want to permanently delete the vendor: ${vendor.name}?`,
+      isDanger: true,
+      confirmText: "Delete Vendor",
+      onConfirm: async () => {
+        setConfirmConfig(null);
+        await deleteDoc(doc(db, "vendors", vendor.id));
+      },
+      onCancel: () => setConfirmConfig(null)
+    });
+  };
+
+  // --- ⭐️ ROUND 23: PRESETS HANDLERS ---
+  const handleRenamePreset = (presetName) => {
+    const newName = prompt(`Rename preset '${presetName}' to:`, presetName);
+    if (!newName || newName.trim() === "" || newName === presetName) return;
+    
+    const updated = presets.map(p => p.name === presetName ? { ...p, name: newName.trim() } : p);
+    setPresets(updated);
+    localStorage.setItem('routingPresets', JSON.stringify(updated));
+  };
+
+  const handleDeletePreset = (presetName) => {
+    if (window.confirm(`Delete routing preset '${presetName}'?`)) {
+      const updated = presets.filter(p => p.name !== presetName);
+      setPresets(updated);
+      localStorage.setItem('routingPresets', JSON.stringify(updated));
+    }
+  };
+
+
+  // --- LOCATIONS HANDLERS ---
   const openLocModal = (loc = null) => {
     if (loc) {
       setEditingLoc(loc);
@@ -87,7 +167,6 @@ export default function MasterData() {
     e.preventDefault();
     if (!locForm.name.trim() || !locForm.code.trim()) return;
 
-    // ⭐️ ROUND 9.3: Validate Location Code to prevent Firestore Path crashes
     const forbiddenChars = /[~*/[\]]/;
     if (forbiddenChars.test(locForm.code)) {
       setConfirmConfig({
@@ -102,7 +181,6 @@ export default function MasterData() {
 
     setSavingLoc(true);
     try {
-      // Force code to be uppercase to match exact machine Place strings (e.g. "OJ274")
       const formattedCode = locForm.code.trim().toUpperCase();
       const payload = { ...locForm, code: formattedCode, updated_at: serverTimestamp() };
       
@@ -112,24 +190,17 @@ export default function MasterData() {
         await addDoc(collection(db, "locations"), { ...payload, created_at: serverTimestamp() });
       }
       setLocModalOpen(false);
-    } catch (err) { 
-      alert("Failed to save location: " + err.message); 
-    } finally { 
-      setSavingLoc(false); 
-    }
+    } catch (err) { alert("Failed to save location: " + err.message); } 
+    finally { setSavingLoc(false); }
   };
 
   const handleDeleteLoc = async (loc) => {
     try {
       const invSnap = await getDocs(collection(db, "inventoryItems"));
       let hasStock = false;
-      
       invSnap.forEach(d => {
         const item = d.data();
-        // Check if item has a balance at this location id, or if legacy location string matches the code
-        if ((item.balances && item.balances[loc.id] > 0) || item.location === loc.code) {
-          hasStock = true;
-        }
+        if ((item.balances && item.balances[loc.id] > 0) || item.location === loc.code) hasStock = true;
       });
 
       if (hasStock) {
@@ -155,9 +226,7 @@ export default function MasterData() {
         },
         onCancel: () => setConfirmConfig(null)
       });
-    } catch (error) {
-      console.error("Error checking location usage:", error);
-    }
+    } catch (error) { console.error("Error checking location usage:", error); }
   };
 
   // --- MATERIAL CATEGORY HANDLERS ---
@@ -217,9 +286,7 @@ export default function MasterData() {
         },
         onCancel: () => setConfirmConfig(null)
       });
-    } catch (error) {
-      console.error("Error checking category usage:", error);
-    }
+    } catch (error) { console.error("Error checking category usage:", error); }
   };
 
   // --- MASTER DIES HANDLERS ---
@@ -246,11 +313,8 @@ export default function MasterData() {
     setSavingGeneric(true);
     try {
       const payload = { ...dieForm, updated_at: serverTimestamp() };
-      if (editingDie) {
-        await updateDoc(doc(db, "dies", editingDie.id), payload);
-      } else {
-        await addDoc(collection(db, "dies"), { ...payload, created_at: serverTimestamp() });
-      }
+      if (editingDie) await updateDoc(doc(db, "dies", editingDie.id), payload);
+      else await addDoc(collection(db, "dies"), { ...payload, created_at: serverTimestamp() });
       setDieModalOpen(false);
     } catch (err) { alert("Failed to save die: " + err.message); }
     finally { setSavingGeneric(false); }
@@ -265,9 +329,7 @@ export default function MasterData() {
         p.parts?.forEach(part => {
           part.sequence?.forEach(seq => {
             if (seq.process_details) {
-              Object.values(seq.process_details).forEach(val => {
-                if (val === die.dieNumber) isUsed = true;
-              });
+              Object.values(seq.process_details).forEach(val => { if (val === die.dieNumber) isUsed = true; });
             }
           });
         });
@@ -290,18 +352,13 @@ export default function MasterData() {
         message: `Are you sure you want to permanently delete Die ${die.dieNumber}?`,
         isDanger: true,
         confirmText: "Delete Die",
-        onConfirm: async () => {
-          setConfirmConfig(null);
-          await deleteDoc(doc(db, "dies", die.id));
-        },
+        onConfirm: async () => { setConfirmConfig(null); await deleteDoc(doc(db, "dies", die.id)); },
         onCancel: () => setConfirmConfig(null)
       });
-    } catch (error) {
-      console.error("Error checking die usage:", error);
-    }
+    } catch (error) { console.error("Error checking die usage:", error); }
   };
 
-  // --- GENERIC HANDLERS FOR RESTORED TABS ---
+  // --- GENERIC HANDLERS ---
   const openGenericModal = (type, item = null) => {
     setGenericModal({
       isOpen: true, type: type, editId: item ? item.id : null, name: item ? item.name : "", extraValue: item && item.value ? item.value : ""
@@ -380,9 +437,11 @@ export default function MasterData() {
 
       {/* SUB-TABS ENGINE */}
       <div className="flex items-center gap-6 border-b border-gray-800 mb-6 overflow-x-auto no-scrollbar">
-        {["locations", "material_cats", "dies", "customers", "product_cats", "rates"].map(tab => {
+        {["locations", "vendors", "presets", "material_cats", "dies", "customers", "product_cats", "rates"].map(tab => {
           const labels = {
             locations: "Storage Locations",
+            vendors: "Job Work Vendors", // ⭐️ ROUND 23
+            presets: "Routing Presets",  // ⭐️ ROUND 23
             material_cats: "Raw Material Categories",
             dies: "Master Inventory Dies",
             customers: "Customers",
@@ -402,7 +461,129 @@ export default function MasterData() {
       </div>
 
       {/* ======================================================== */}
-      {/* ⭐️ ROUND 9: STORAGE LOCATIONS VIEW */}
+      {/* ⭐️ ROUND 23: JOB WORK VENDORS VIEW */}
+      {/* ======================================================== */}
+      {activeSubTab === "vendors" && (
+        <div className="space-y-6 flex-1 flex flex-col">
+          <div className="flex justify-between items-center">
+            <div>
+              <h3 className="text-lg font-bold text-white">External Job Work Vendors</h3>
+              <p className="text-xs text-gray-500">Manage outside parties used for outsourcing production steps.</p>
+            </div>
+            <button onClick={() => openVendorModal()} className="bg-primary-600 hover:bg-primary-500 text-white text-xs font-bold px-4 py-2.5 rounded-lg transition-colors shadow-lg">+ Add Vendor</button>
+          </div>
+          
+          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden shadow-xl flex-1">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse min-w-[900px]">
+                <thead>
+                  <tr className="bg-gray-950/50 border-b border-gray-800 text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+                    <th className="py-4 px-6 w-[25%]">Vendor Name & Code</th>
+                    <th className="py-4 px-6 w-[20%]">Contact Details</th>
+                    <th className="py-4 px-6 w-[30%]">Address & Notes</th>
+                    <th className="py-4 px-6 w-[10%] text-center">Status</th>
+                    <th className="py-4 px-6 w-[15%] text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-800">
+                  {vendors.length === 0 ? (
+                    <tr><td colSpan="5" className="py-12 text-center text-gray-500 italic text-sm">No external vendors configured.</td></tr>
+                  ) : (
+                    vendors.map((vendor) => (
+                      <tr key={vendor.id} className={`hover:bg-gray-800/20 transition-colors ${!vendor.active ? 'opacity-50' : ''}`}>
+                        <td className="py-4 px-6">
+                          <div className="font-bold text-white text-sm">{vendor.name}</div>
+                          <span className="bg-purple-900/30 text-purple-400 border border-purple-500/30 px-2 py-0.5 rounded text-[10px] font-bold mt-1 inline-block uppercase tracking-wider">{vendor.code}</span>
+                        </td>
+                        <td className="py-4 px-6">
+                          <div className="text-xs text-gray-300 font-medium">{vendor.contact || "—"}</div>
+                          <div className="text-xs text-gray-500 mt-0.5">{vendor.phone || "—"}</div>
+                        </td>
+                        <td className="py-4 px-6">
+                          <div className="text-xs text-gray-300">{vendor.address || "—"}</div>
+                          {vendor.notes && <div className="text-[10px] text-gray-500 mt-1 italic">{vendor.notes}</div>}
+                        </td>
+                        <td className="py-4 px-6 text-center">
+                          <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${vendor.active ? 'bg-green-500/10 text-green-400' : 'bg-gray-800 text-gray-500'}`}>
+                            {vendor.active ? 'Active' : 'Inactive'}
+                          </span>
+                        </td>
+                        <td className="py-4 px-6 text-right">
+                          <div className="flex justify-end gap-2 items-center">
+                            <button onClick={() => openVendorModal(vendor)} className="text-xs font-medium text-gray-400 hover:text-white border border-gray-700 hover:bg-gray-800 px-3 py-1 rounded transition-colors">Edit</button>
+                            <button onClick={() => handleDeleteVendor(vendor)} className="text-xs font-medium text-gray-600 hover:text-red-400 p-1 rounded transition-colors">Delete</button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* ⭐️ ROUND 23: ROUTING PRESETS VIEW */}
+      {/* ======================================================== */}
+      {activeSubTab === "presets" && (
+        <div className="space-y-6 flex-1 flex flex-col">
+          <div className="flex justify-between items-center">
+            <div>
+              <h3 className="text-lg font-bold text-white">Routing Presets</h3>
+              <p className="text-xs text-gray-500">Manage saved production sequences. <strong className="text-primary-400">Note:</strong> Editing these will not alter past products.</p>
+            </div>
+          </div>
+          
+          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden shadow-xl flex-1">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse min-w-[600px]">
+                <thead>
+                  <tr className="bg-gray-950/50 border-b border-gray-800 text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+                    <th className="py-4 px-6 w-[40%]">Preset Name</th>
+                    <th className="py-4 px-6 w-[40%]">Routing Sequence Overview</th>
+                    <th className="py-4 px-6 w-[20%] text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-800">
+                  {presets.length === 0 ? (
+                    <tr><td colSpan="3" className="py-12 text-center text-gray-500 italic text-sm">No routing presets saved. Create one in the Product Template editor.</td></tr>
+                  ) : (
+                    presets.map((preset, idx) => (
+                      <tr key={idx} className="hover:bg-gray-800/20 transition-colors">
+                        <td className="py-4 px-6 font-bold text-white text-sm">{preset.name}</td>
+                        <td className="py-4 px-6">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {preset.sequence?.map((step, i) => (
+                              <div key={i} className="flex items-center gap-2">
+                                <span className="bg-gray-800 text-gray-300 text-[10px] font-bold px-2 py-0.5 rounded border border-gray-700">
+                                  {step.process_name}
+                                </span>
+                                {i < preset.sequence.length - 1 && <span className="text-gray-600 text-[10px]">➔</span>}
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                        <td className="py-4 px-6 text-right">
+                          <div className="flex justify-end gap-2 items-center">
+                            <button onClick={() => handleRenamePreset(preset.name)} className="text-xs font-medium text-gray-400 hover:text-white border border-gray-700 hover:bg-gray-800 px-3 py-1 rounded transition-colors">Rename</button>
+                            <button onClick={() => handleDeletePreset(preset.name)} className="text-xs font-medium text-gray-600 hover:text-red-400 p-1 rounded transition-colors">Delete</button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+
+      {/* ======================================================== */}
+      {/* STORAGE LOCATIONS VIEW */}
       {/* ======================================================== */}
       {activeSubTab === "locations" && (
         <div className="space-y-6 flex-1 flex flex-col">
@@ -464,7 +645,7 @@ export default function MasterData() {
       )}
 
       {/* ======================================================== */}
-      {/* VIEW 1: RAW MATERIAL CATEGORIES */}
+      {/* REST OF THE TABS (MATERIAL CATS, DIES, ETC) REMAIN SAME */}
       {/* ======================================================== */}
       {activeSubTab === "material_cats" && (
         <div className="space-y-6 flex-1 flex flex-col">
@@ -518,9 +699,7 @@ export default function MasterData() {
         </div>
       )}
 
-      {/* ======================================================== */}
       {/* MASTER DIES VIEW */}
-      {/* ======================================================== */}
       {activeSubTab === "dies" && (
         <div className="space-y-6 flex-1 flex flex-col">
           <div className="flex justify-between items-center">
@@ -585,9 +764,7 @@ export default function MasterData() {
         </div>
       )}
 
-      {/* ======================================================== */}
       {/* RESTORED VIEWS: CUSTOMERS, PRODUCT CATS, RATES */}
-      {/* ======================================================== */}
       {["customers", "product_cats", "rates"].includes(activeSubTab) && (() => {
         let type = "";
         let dataList = [];
@@ -643,8 +820,67 @@ export default function MasterData() {
       })()}
 
       {/* ======================================================== */}
-      {/* ⭐️ ROUND 9: LOCATIONS CRUD MODAL */}
+      {/* ⭐️ ROUND 23: VENDORS CRUD MODAL */}
       {/* ======================================================== */}
+      {isVendorModalOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-xl flex flex-col shadow-2xl overflow-hidden animate-fade-in">
+            <div className="p-6 border-b border-gray-800 bg-[#151724]">
+              <h3 className="text-lg font-bold text-white">{editingVendor ? "Edit Vendor" : "Add External Vendor"}</h3>
+              <p className="text-xs text-gray-400 mt-1">Vendors are outside parties used for job work, NOT physical factory storage locations.</p>
+            </div>
+            <form onSubmit={handleSaveVendor} className="p-6 space-y-4 bg-[#0a0f1a]">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className={labelClass}>Vendor Name *</label>
+                  <input required type="text" value={vendorForm.name} onChange={e => setVendorForm({...vendorForm, name: e.target.value})} className={inputClass} placeholder="e.g. ABC Lamination" />
+                </div>
+                <div>
+                  <label className={labelClass}>Short Code *</label>
+                  <input required type="text" value={vendorForm.code} onChange={e => setVendorForm({...vendorForm, code: e.target.value.toUpperCase()})} className={`${inputClass} font-mono`} placeholder="e.g. V-ABC" />
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className={labelClass}>Contact Person</label>
+                  <input type="text" value={vendorForm.contact} onChange={e => setVendorForm({...vendorForm, contact: e.target.value})} className={inputClass} placeholder="e.g. Rahul Sharma" />
+                </div>
+                <div>
+                  <label className={labelClass}>Phone Number</label>
+                  <input type="text" value={vendorForm.phone} onChange={e => setVendorForm({...vendorForm, phone: e.target.value})} className={inputClass} placeholder="e.g. +91 98765 43210" />
+                </div>
+              </div>
+
+              <div>
+                <label className={labelClass}>Full Address</label>
+                <input type="text" value={vendorForm.address} onChange={e => setVendorForm({...vendorForm, address: e.target.value})} className={inputClass} placeholder="Vendor billing or workshop address..." />
+              </div>
+              
+              <div>
+                <label className={labelClass}>Notes</label>
+                <textarea rows="2" value={vendorForm.notes} onChange={e => setVendorForm({...vendorForm, notes: e.target.value})} className={`${inputClass} resize-none`} placeholder="Specialization, typical turn-around time, etc."></textarea>
+              </div>
+              
+              <div className="pt-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={vendorForm.active} onChange={e => setVendorForm({...vendorForm, active: e.target.checked})} className="rounded bg-gray-900 border-gray-700 w-4 h-4 text-primary-600 focus:ring-primary-500" />
+                  <span className="text-sm font-medium text-gray-300">Vendor is active and available</span>
+                </label>
+              </div>
+              
+              <div className="pt-4 flex justify-end gap-3 border-t border-gray-800">
+                <button type="button" onClick={() => setVendorModalOpen(false)} className="px-4 py-2 bg-gray-950 hover:bg-gray-800 text-xs text-gray-400 hover:text-white rounded transition-colors font-medium">Cancel</button>
+                <button type="submit" disabled={savingVendor} className="bg-primary-600 hover:bg-primary-500 disabled:opacity-50 text-xs font-bold text-white px-5 py-2 rounded transition-colors shadow-lg">
+                  {savingVendor ? "Saving..." : "Save Vendor"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* LOCATIONS CRUD MODAL */}
       {isLocModalOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-xl flex flex-col shadow-2xl overflow-hidden animate-fade-in">
