@@ -43,8 +43,17 @@ export default function ProduceJobSetModal({
   const [physicalSampleApproved, setPhysicalSampleApproved] = useState(false);
   const [sampleNote, setSampleNote] = useState("");
 
-  // ⭐️ ROUND 21.1: State for our beautiful custom recalculate modal
   const [recalcModal, setRecalcModal] = useState({ isOpen: false, pIdx: null });
+
+  // ⭐️ ROUND 24 FIX: Interactive state for the Repeat Mode checkboxes
+  const [repeatToggles, setRepeatToggles] = useState({
+    targetQuantities: true,
+    materialOverrides: true,
+    routingTargets: true,
+    wastageEntries: true,
+    notes: true,
+    linkedRef: true
+  });
 
   const safeInventoryItems = inventoryItems || [];
   const safeMachines = machines || [];
@@ -62,7 +71,7 @@ export default function ProduceJobSetModal({
         const masterPart = activeProduceProduct.parts.find(mp => mp.id === p.id) || activeProduceProduct.parts[i];
         let rows = masterPart?.materialRows || [];
         
-        if (isRepeat && repeatSourceGroup[i] && repeatSourceGroup[i].product?.materialRows?.length > 0) {
+        if (isRepeat && repeatToggles.materialOverrides && repeatSourceGroup[i] && repeatSourceGroup[i].product?.materialRows?.length > 0) {
            rows = repeatSourceGroup[i].product.materialRows;
         }
         
@@ -95,7 +104,7 @@ export default function ProduceJobSetModal({
       
       setLocalMaterials(initialMats);
       
-      if (isRepeat) {
+      if (isRepeat && repeatToggles.linkedRef) {
          const firstJob = repeatSourceGroup[0];
          setRepeatJobRef(firstJob.set_code ? `SET-${firstJob.set_code}` : (firstJob.display_id || `JOB-${firstJob.id}`));
          setPhysicalSampleApproved(firstJob.physical_sample_approved || false);
@@ -111,6 +120,116 @@ export default function ProduceJobSetModal({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, activeProduceProduct, produceParts, repeatSourceGroup]);
+
+  // ⭐️ ROUND 24 FIX: Handler to clear or restore pre-filled data when checkboxes are unticked/ticked
+  const handleRepeatToggle = (field, checked) => {
+    setRepeatToggles(prev => ({ ...prev, [field]: checked }));
+    
+    if (!repeatSourceGroup) return;
+
+    if (!checked) {
+      if (field === 'targetQuantities') {
+        produceParts.forEach((_, pIdx) => {
+           updatePartSets(pIdx, "");
+           toggleCustomOverride(pIdx, false);
+        });
+      } else if (field === 'materialOverrides') {
+        const initialMats = produceParts.map((p, i) => {
+          const masterPart = activeProduceProduct.parts.find(mp => mp.id === p.id) || activeProduceProduct.parts[i];
+          let rows = masterPart?.materialRows || [];
+          if (rows.length === 0) return [{ id: Date.now() + Math.random(), material_name: "", category: "paper", piece_purpose: "Main", size: "", qty_per_unit: 1, unit: "sheets", basis: "per_step", basis_step_index: 0, is_substituted: false }];
+          
+          return rows.map(r => {
+             const cat = (r.category || '').toLowerCase();
+             const isBoardOrPaper = cat === 'paper' || cat === 'board' || cat === 'rigid';
+             return { ...r, basis: r.basis || (isBoardOrPaper ? 'per_step' : 'per_piece'), basis_step_index: r.basis_step_index !== undefined ? Number(r.basis_step_index) : 0, is_substituted: false };
+          });
+        });
+        setLocalMaterials(initialMats);
+      } else if (field === 'routingTargets') {
+         produceParts.forEach((p, pIdx) => {
+            p.sequence?.forEach((s, sIdx) => {
+              handleStepQtyChange(pIdx, sIdx, 'input_qty', "");
+              handleStepQtyChange(pIdx, sIdx, 'output_qty', "");
+            });
+            setTimeout(() => handleRecalculateChain && handleRecalculateChain(pIdx, { resetAll: false }), 50);
+         });
+      } else if (field === 'wastageEntries') {
+         produceParts.forEach((p, pIdx) => {
+            p.sequence?.forEach((s, sIdx) => {
+              handleStepQtyChange(pIdx, sIdx, 'wastage_val', "");
+              handleStepQtyChange(pIdx, sIdx, 'wastage_type', "%");
+            });
+            setTimeout(() => handleRecalculateChain && handleRecalculateChain(pIdx, { resetAll: false }), 50);
+         });
+      } else if (field === 'notes') {
+         produceParts.forEach((_, pIdx) => updatePartNotes(pIdx, ""));
+      } else if (field === 'linkedRef') {
+         setRepeatJobRef("");
+         setPhysicalSampleApproved(false);
+         setSampleNote("");
+      }
+    } else {
+      if (field === 'targetQuantities') {
+        produceParts.forEach((p, pIdx) => {
+           const ref = repeatSourceGroup[pIdx];
+           if (ref) {
+             updatePartSets(pIdx, ref.sets_qty || "");
+             if (ref.is_custom_override) {
+               toggleCustomOverride(pIdx, true);
+               updatePartCustomPcs(pIdx, ref.quantity_target || "");
+             }
+           }
+        });
+      } else if (field === 'materialOverrides') {
+        const initialMats = produceParts.map((p, i) => {
+          const masterPart = activeProduceProduct.parts.find(mp => mp.id === p.id) || activeProduceProduct.parts[i];
+          let rows = masterPart?.materialRows || [];
+          if (repeatSourceGroup[i] && repeatSourceGroup[i].product?.materialRows?.length > 0) {
+             rows = repeatSourceGroup[i].product.materialRows;
+          }
+          if (rows.length === 0) return [{ id: Date.now() + Math.random(), material_name: "", category: "paper", piece_purpose: "Main", size: "", qty_per_unit: 1, unit: "sheets", basis: "per_step", basis_step_index: 0, is_substituted: false }];
+          
+          return rows.map(r => {
+             const cat = (r.category || '').toLowerCase();
+             const isBoardOrPaper = cat === 'paper' || cat === 'board' || cat === 'rigid';
+             return { ...r, basis: r.basis || (isBoardOrPaper ? 'per_step' : 'per_piece'), basis_step_index: r.basis_step_index !== undefined ? Number(r.basis_step_index) : 0, is_substituted: r.is_substituted || false };
+          });
+        });
+        setLocalMaterials(initialMats);
+      } else if (field === 'routingTargets') {
+         produceParts.forEach((p, pIdx) => {
+            const ref = repeatSourceGroup[pIdx];
+            if (ref && ref.process_sequence) {
+               ref.process_sequence.forEach((s, sIdx) => {
+                 if (s.input_qty !== undefined) handleStepQtyChange(pIdx, sIdx, 'input_qty', s.input_qty);
+                 if (s.output_qty !== undefined) handleStepQtyChange(pIdx, sIdx, 'output_qty', s.output_qty);
+               });
+            }
+         });
+      } else if (field === 'wastageEntries') {
+         produceParts.forEach((p, pIdx) => {
+            const ref = repeatSourceGroup[pIdx];
+            if (ref && ref.process_sequence) {
+               ref.process_sequence.forEach((s, sIdx) => {
+                 if (s.expected_wastage_val !== undefined) handleStepQtyChange(pIdx, sIdx, 'wastage_val', s.expected_wastage_val);
+                 if (s.expected_wastage_type !== undefined) handleStepQtyChange(pIdx, sIdx, 'wastage_type', s.expected_wastage_type);
+               });
+            }
+         });
+      } else if (field === 'notes') {
+         produceParts.forEach((p, pIdx) => {
+            const ref = repeatSourceGroup[pIdx];
+            if (ref) updatePartNotes(pIdx, ref.notes || "");
+         });
+      } else if (field === 'linkedRef') {
+         const firstJob = repeatSourceGroup[0];
+         setRepeatJobRef(firstJob.set_code ? `SET-${firstJob.set_code}` : (firstJob.display_id || `JOB-${firstJob.id}`));
+         setPhysicalSampleApproved(firstJob.physical_sample_approved || false);
+         setSampleNote(firstJob.physical_sample_note || "");
+      }
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -568,15 +687,27 @@ export default function ProduceJobSetModal({
                 <h3>Repeat Order Mode Active</h3>
              </div>
              <p className="text-xs text-purple-300/80 leading-relaxed">
-                Historical values from <strong className="text-white bg-purple-500/20 px-1.5 py-0.5 rounded">{repeatSourceGroup[0].set_code ? `SET-${repeatSourceGroup[0].set_code}` : repeatSourceGroup[0].display_id}</strong> have been successfully retrieved. The following attributes have been pre-filled for this run. You can manually adjust or clear them below.
+                Historical values from <strong className="text-white bg-purple-500/20 px-1.5 py-0.5 rounded">{repeatSourceGroup[0].set_code ? `SET-${repeatSourceGroup[0].set_code}` : repeatSourceGroup[0].display_id}</strong> have been successfully retrieved. Uncheck below to discard copied properties.
              </p>
              <div className="grid grid-cols-2 sm:grid-cols-3 gap-y-2.5 gap-x-4 mt-2">
-                <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider font-bold text-gray-400"><input type="checkbox" checked readOnly className="rounded bg-gray-900 border-gray-600 text-purple-500 focus:ring-purple-500 pointer-events-none" /> Target Quantities</label>
-                <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider font-bold text-gray-400"><input type="checkbox" checked readOnly className="rounded bg-gray-900 border-gray-600 text-purple-500 focus:ring-purple-500 pointer-events-none" /> Material Overrides</label>
-                <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider font-bold text-gray-400"><input type="checkbox" checked readOnly className="rounded bg-gray-900 border-gray-600 text-purple-500 focus:ring-purple-500 pointer-events-none" /> Routing Targets</label>
-                <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider font-bold text-gray-400"><input type="checkbox" checked readOnly className="rounded bg-gray-900 border-gray-600 text-purple-500 focus:ring-purple-500 pointer-events-none" /> Wastage Entries</label>
-                <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider font-bold text-gray-400"><input type="checkbox" checked readOnly className="rounded bg-gray-900 border-gray-600 text-purple-500 focus:ring-purple-500 pointer-events-none" /> Notes & Instructions</label>
-                <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider font-bold text-gray-400"><input type="checkbox" checked readOnly className="rounded bg-gray-900 border-gray-600 text-purple-500 focus:ring-purple-500 pointer-events-none" /> Linked Reference</label>
+                <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider font-bold text-gray-400 cursor-pointer">
+                  <input type="checkbox" checked={repeatToggles.targetQuantities} onChange={(e) => handleRepeatToggle('targetQuantities', e.target.checked)} className="rounded bg-gray-900 border-gray-600 text-purple-500 focus:ring-purple-500" /> Target Quantities
+                </label>
+                <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider font-bold text-gray-400 cursor-pointer">
+                  <input type="checkbox" checked={repeatToggles.materialOverrides} onChange={(e) => handleRepeatToggle('materialOverrides', e.target.checked)} className="rounded bg-gray-900 border-gray-600 text-purple-500 focus:ring-purple-500" /> Material Overrides
+                </label>
+                <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider font-bold text-gray-400 cursor-pointer">
+                  <input type="checkbox" checked={repeatToggles.routingTargets} onChange={(e) => handleRepeatToggle('routingTargets', e.target.checked)} className="rounded bg-gray-900 border-gray-600 text-purple-500 focus:ring-purple-500" /> Routing Targets
+                </label>
+                <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider font-bold text-gray-400 cursor-pointer">
+                  <input type="checkbox" checked={repeatToggles.wastageEntries} onChange={(e) => handleRepeatToggle('wastageEntries', e.target.checked)} className="rounded bg-gray-900 border-gray-600 text-purple-500 focus:ring-purple-500" /> Wastage Entries
+                </label>
+                <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider font-bold text-gray-400 cursor-pointer">
+                  <input type="checkbox" checked={repeatToggles.notes} onChange={(e) => handleRepeatToggle('notes', e.target.checked)} className="rounded bg-gray-900 border-gray-600 text-purple-500 focus:ring-purple-500" /> Notes & Instructions
+                </label>
+                <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider font-bold text-gray-400 cursor-pointer">
+                  <input type="checkbox" checked={repeatToggles.linkedRef} onChange={(e) => handleRepeatToggle('linkedRef', e.target.checked)} className="rounded bg-gray-900 border-gray-600 text-purple-500 focus:ring-purple-500" /> Linked Reference
+                </label>
              </div>
           </div>
         )}
@@ -836,8 +967,18 @@ export default function ProduceJobSetModal({
                               <div className="flex items-center gap-2 flex-1 justify-end">
                                 <div className="bg-gray-900 px-2 py-1.5 rounded border border-gray-700 text-gray-400 relative flex items-center gap-1">
                                   In: <input type="text" value={step.input_qty !== undefined ? step.input_qty : ''} onChange={e => handleStepQtyChange(pIdx, sIdx, 'input_qty', e.target.value)} className="w-16 bg-transparent text-white font-mono outline-none" placeholder="TBD" />
+                                  
+                                  {/* ⭐️ ROUND 24 FIX: Route Target Untick & Recalculate Sequence */}
                                   {p.dirtyFields?.[`input_${sIdx}`] && (
-                                    <button type="button" onClick={() => handleStepQtyChange(pIdx, sIdx, 'input_qty', "")} className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-orange-500 rounded-full flex items-center justify-center text-white text-[10px] font-bold shadow-lg hover:bg-red-500 transition-colors" title="Manually edited (Click to clear lock)">✕</button>
+                                    <button 
+                                      type="button" 
+                                      onClick={() => { 
+                                        handleStepQtyChange(pIdx, sIdx, 'input_qty', ""); 
+                                        setTimeout(() => handleRecalculateChain && handleRecalculateChain(pIdx, { resetAll: false }), 50); 
+                                      }} 
+                                      className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-orange-500 rounded-full flex items-center justify-center text-white text-[10px] font-bold shadow-lg hover:bg-red-500 transition-colors" 
+                                      title="Manually edited (Click to clear lock & recalculate)"
+                                    >✕</button>
                                   )}
                                 </div>
                                 
@@ -850,8 +991,18 @@ export default function ProduceJobSetModal({
                                     <option value="%">%</option>
                                     <option value="fixed">pcs</option>
                                   </select>
+
+                                  {/* ⭐️ ROUND 24 FIX: Route Target Untick & Recalculate Sequence */}
                                   {p.dirtyFields?.[`wastage_val_${sIdx}`] && (
-                                    <button type="button" onClick={() => handleStepQtyChange(pIdx, sIdx, 'wastage_val', "")} className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-orange-500 rounded-full flex items-center justify-center text-white text-[10px] font-bold shadow-lg hover:bg-red-500 transition-colors" title="Manually edited (Click to clear lock)">✕</button>
+                                    <button 
+                                      type="button" 
+                                      onClick={() => { 
+                                        handleStepQtyChange(pIdx, sIdx, 'wastage_val', ""); 
+                                        setTimeout(() => handleRecalculateChain && handleRecalculateChain(pIdx, { resetAll: false }), 50); 
+                                      }} 
+                                      className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-orange-500 rounded-full flex items-center justify-center text-white text-[10px] font-bold shadow-lg hover:bg-red-500 transition-colors" 
+                                      title="Manually edited (Click to clear lock & recalculate)"
+                                    >✕</button>
                                   )}
                                 </div>
                                 
@@ -859,8 +1010,18 @@ export default function ProduceJobSetModal({
                                 
                                 <div className="bg-gray-900 px-2 py-1.5 rounded border border-gray-700 text-gray-400 relative flex items-center gap-1">
                                   Out: <input type="text" value={step.output_qty !== undefined ? step.output_qty : ''} onChange={e => handleStepQtyChange(pIdx, sIdx, 'output_qty', e.target.value)} className="w-16 bg-transparent text-white font-mono outline-none" placeholder="TBD" />
+                                  
+                                  {/* ⭐️ ROUND 24 FIX: Route Target Untick & Recalculate Sequence */}
                                   {p.dirtyFields?.[`output_${sIdx}`] && (
-                                    <button type="button" onClick={() => handleStepQtyChange(pIdx, sIdx, 'output_qty', "")} className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-orange-500 rounded-full flex items-center justify-center text-white text-[10px] font-bold shadow-lg hover:bg-red-500 transition-colors" title="Manually edited (Click to clear lock)">✕</button>
+                                    <button 
+                                      type="button" 
+                                      onClick={() => { 
+                                        handleStepQtyChange(pIdx, sIdx, 'output_qty', ""); 
+                                        setTimeout(() => handleRecalculateChain && handleRecalculateChain(pIdx, { resetAll: false }), 50); 
+                                      }} 
+                                      className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-orange-500 rounded-full flex items-center justify-center text-white text-[10px] font-bold shadow-lg hover:bg-red-500 transition-colors" 
+                                      title="Manually edited (Click to clear lock & recalculate)"
+                                    >✕</button>
                                   )}
                                 </div>
                               </div>

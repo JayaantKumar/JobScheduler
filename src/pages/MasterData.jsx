@@ -19,7 +19,7 @@ export default function MasterData() {
   const [locForm, setLocForm] = useState({ name: "", code: "", address: "", notes: "", active: true });
   const [savingLoc, setSavingLoc] = useState(false);
 
-  // --- ⭐️ ROUND 23: VENDORS STATE ---
+  // --- ⭐️ ROUND 23/24: VENDORS STATE ---
   const [vendors, setVendors] = useState([]);
   const [isVendorModalOpen, setVendorModalOpen] = useState(false);
   const [editingVendor, setEditingVendor] = useState(null);
@@ -81,7 +81,7 @@ export default function MasterData() {
     };
   }, []);
 
-  // --- ⭐️ ROUND 23: VENDORS HANDLERS ---
+  // --- ⭐️ ROUND 23/24: VENDORS HANDLERS ---
   const openVendorModal = (vendor = null) => {
     if (vendor) {
       setEditingVendor(vendor);
@@ -114,19 +114,46 @@ export default function MasterData() {
     finally { setSavingVendor(false); }
   };
 
-  const handleDeleteVendor = (vendor) => {
-    setConfirmConfig({
-      isOpen: true,
-      title: "Delete Vendor",
-      message: `Are you sure you want to permanently delete the vendor: ${vendor.name}?`,
-      isDanger: true,
-      confirmText: "Delete Vendor",
-      onConfirm: async () => {
-        setConfirmConfig(null);
-        await deleteDoc(doc(db, "vendors", vendor.id));
-      },
-      onCancel: () => setConfirmConfig(null)
-    });
+  const handleDeleteVendor = async (vendor) => {
+    try {
+      // ⭐️ ROUND 24 FIX: Referential Guard - Prevent deletion if open challans exist
+      const q = query(collection(db, "challans"), where("vendor_id", "==", vendor.id));
+      const snap = await getDocs(q);
+      
+      let hasActiveChallan = false;
+      snap.forEach(d => {
+        const challan = d.data();
+        if (challan.status === "open" || challan.status === "partial") {
+          hasActiveChallan = true;
+        }
+      });
+
+      if (hasActiveChallan) {
+        setConfirmConfig({
+          isOpen: true,
+          title: "Cannot Delete Vendor",
+          message: `The vendor "${vendor.name}" has open or partial challans active. You cannot delete a vendor while goods are outstanding. Please edit the vendor and uncheck "Active" to deactivate them instead.`,
+          isAlertOnly: true,
+          onConfirm: () => setConfirmConfig(null)
+        });
+        return;
+      }
+
+      setConfirmConfig({
+        isOpen: true,
+        title: "Delete Vendor",
+        message: `Are you sure you want to permanently delete the vendor: ${vendor.name}?`,
+        isDanger: true,
+        confirmText: "Delete Vendor",
+        onConfirm: async () => {
+          setConfirmConfig(null);
+          await deleteDoc(doc(db, "vendors", vendor.id));
+        },
+        onCancel: () => setConfirmConfig(null)
+      });
+    } catch (error) { 
+      console.error("Error checking vendor challans:", error); 
+    }
   };
 
   // --- ⭐️ ROUND 23: PRESETS HANDLERS ---
@@ -440,8 +467,8 @@ export default function MasterData() {
         {["locations", "vendors", "presets", "material_cats", "dies", "customers", "product_cats", "rates"].map(tab => {
           const labels = {
             locations: "Storage Locations",
-            vendors: "Job Work Vendors", // ⭐️ ROUND 23
-            presets: "Routing Presets",  // ⭐️ ROUND 23
+            vendors: "Job Work Vendors", 
+            presets: "Routing Presets", 
             material_cats: "Raw Material Categories",
             dies: "Master Inventory Dies",
             customers: "Customers",
@@ -461,7 +488,7 @@ export default function MasterData() {
       </div>
 
       {/* ======================================================== */}
-      {/* ⭐️ ROUND 23: JOB WORK VENDORS VIEW */}
+      {/* ⭐️ ROUND 23/24: JOB WORK VENDORS VIEW */}
       {/* ======================================================== */}
       {activeSubTab === "vendors" && (
         <div className="space-y-6 flex-1 flex flex-col">
@@ -820,7 +847,7 @@ export default function MasterData() {
       })()}
 
       {/* ======================================================== */}
-      {/* ⭐️ ROUND 23: VENDORS CRUD MODAL */}
+      {/* ⭐️ ROUND 23/24: VENDORS CRUD MODAL */}
       {/* ======================================================== */}
       {isVendorModalOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">

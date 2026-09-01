@@ -12,7 +12,6 @@ export default function JobWork() {
   const [locations, setLocations] = useState([]);
   const [loading, setLoading] = useState(true);
   
-  // ⭐️ Added state for company settings
   const [companySettings, setCompanySettings] = useState(null);
 
   const [isOutwardOpen, setIsOutwardOpen] = useState(false);
@@ -39,7 +38,6 @@ export default function JobWork() {
     const unsubJobs = onSnapshot(query(collection(db, "jobs"), orderBy("job_date", "desc")), snap => setJobs(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     const unsubLocs = onSnapshot(collection(db, "locations"), snap => setLocations(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     
-    // ⭐️ Fetch global settings for the print view
     const unsubSettings = onSnapshot(doc(db, "settings", "global"), (docSnap) => {
       if (docSnap.exists()) setCompanySettings(docSnap.data());
     });
@@ -77,6 +75,20 @@ export default function JobWork() {
     e.preventDefault();
     if (!outwardForm.vendorId || outwardForm.items.length === 0) return alert("Select a vendor and add at least one item.");
     
+    for (const line of outwardForm.items) {
+      if (line.type === "raw" && line.referenceId) {
+        if (!line.sourceLocation) {
+          return alert(`Please select a specific source rack for raw material: ${line.itemName}`);
+        }
+        const invData = inventory.find(i => i.id === line.referenceId);
+        const available = invData?.balances?.[line.sourceLocation] || 0;
+        
+        if (Number(line.qty) > available) {
+          return alert(`STOCK GUARD BLOCKED: Cannot send ${line.qty} ${line.unit} of ${line.itemName}. Only ${available} available at selected location.`);
+        }
+      }
+    }
+
     setIsSaving(true);
     try {
       const vendor = vendors.find(v => v.id === outwardForm.vendorId);
@@ -111,22 +123,19 @@ export default function JobWork() {
           if (invData) {
             const itemRef = doc(db, "inventoryItems", line.referenceId);
             const newBalances = { ...(invData.balances || {}) };
-            const vendorVirtualLoc = `VENDOR_${vendor.id}`;
             
-            if (line.sourceLocation) {
-              newBalances[line.sourceLocation] = (newBalances[line.sourceLocation] || 0) - Number(line.qty);
-            } else {
-               const firstKey = Object.keys(newBalances)[0];
-               if (firstKey) newBalances[firstKey] = (newBalances[firstKey] || 0) - Number(line.qty);
-            }
+            const vendorVirtualLoc = `AT VENDOR - ${vendor.name}`;
             
+            newBalances[line.sourceLocation] = (newBalances[line.sourceLocation] || 0) - Number(line.qty);
             newBalances[vendorVirtualLoc] = (newBalances[vendorVirtualLoc] || 0) + Number(line.qty);
+            
             batch.update(itemRef, { balances: newBalances });
 
+            // ⭐️ ROUND 24 FIX: Write exact raw IDs and expected Types to satisfy Ledger math
             const ledgerRef = doc(collection(db, "inventoryLedger"));
             batch.set(ledgerRef, {
               itemId: line.referenceId, date: serverTimestamp(), type: "OUTWARD_JOBWORK",
-              qty: -Number(line.qty), unit: line.unit, location: line.sourceLocation || "Factory",
+              qty: -Number(line.qty), unit: line.unit, location: line.sourceLocation, 
               referenceId: challanNo, remarks: `Sent to vendor: ${vendor.name}`
             });
             
@@ -170,6 +179,12 @@ export default function JobWork() {
     const receivingLines = inwardForm.lines.filter(l => Number(l.receiving_now) > 0);
     if (receivingLines.length === 0) return alert("Enter receiving quantities for at least one item.");
 
+    for (const line of receivingLines) {
+      if (line.type === "raw" && !line.target_location) {
+        return alert(`Please select a real storage location for returning raw material: ${line.itemName}.`);
+      }
+    }
+
     setIsSaving(true);
     try {
       const batch = writeBatch(db);
@@ -204,19 +219,27 @@ export default function JobWork() {
            if (invData) {
              const itemRef = doc(db, "inventoryItems", line.referenceId);
              const newBalances = { ...(invData.balances || {}) };
-             const vendorVirtualLoc = `VENDOR_${activeChallan.vendor_id}`;
+             
+             const vendorVirtualLoc = `AT VENDOR - ${activeChallan.vendor_name}`;
              
              newBalances[vendorVirtualLoc] = Math.max(0, (newBalances[vendorVirtualLoc] || 0) - Number(line.receiving_now));
-             const targetLoc = line.target_location || "Factory Floor";
-             newBalances[targetLoc] = (newBalances[targetLoc] || 0) + Number(line.receiving_now);
+             newBalances[line.target_location] = (newBalances[line.target_location] || 0) + Number(line.receiving_now);
              
              batch.update(itemRef, { balances: newBalances });
 
+             // ⭐️ ROUND 24 FIX: Write exact raw IDs and expected Types to satisfy Ledger math
              const ledgerRef = doc(collection(db, "inventoryLedger"));
              batch.set(ledgerRef, {
                itemId: line.referenceId, date: serverTimestamp(), type: "INWARD_JOBWORK_RETURN",
-               qty: Number(line.receiving_now), unit: "pcs", location: targetLoc,
+               qty: Number(line.receiving_now), unit: "pcs", location: line.target_location, // RAW ID
                referenceId: activeChallan.challan_no, remarks: `Returned from vendor: ${activeChallan.vendor_name}`
+             });
+
+             const ledgerRef2 = doc(collection(db, "inventoryLedger"));
+             batch.set(ledgerRef2, {
+               itemId: line.referenceId, date: serverTimestamp(), type: "OUTWARD_JOBWORK", 
+               qty: -Number(line.receiving_now), unit: "pcs", location: vendorVirtualLoc,
+               referenceId: activeChallan.challan_no, remarks: `Virtual return deduction: ${activeChallan.vendor_name}`
              });
            }
         }
@@ -339,7 +362,7 @@ export default function JobWork() {
                     <label className={labelClass}>Select Vendor *</label>
                     <select required value={outwardForm.vendorId} onChange={e => setOutwardForm({...outwardForm, vendorId: e.target.value})} className={inputClass}>
                       <option value="">-- Choose Vendor --</option>
-                      {vendors.map(v => <option key={v.id} value={v.id}>{v.name} ({v.code})</option>)}
+                      {vendors.filter(v => v.active !== false).map(v => <option key={v.id} value={v.id}>{v.name} ({v.code})</option>)}
                     </select>
                   </div>
                   <div>
@@ -407,7 +430,7 @@ export default function JobWork() {
                               <td className="p-2">
                                 {item.type === 'raw' ? (
                                   <select value={item.sourceLocation} onChange={e => handleOutwardLineChange(item.id, 'sourceLocation', e.target.value)} className={`${inputClass} py-1.5 text-xs`}>
-                                    <option value="">Any</option>
+                                    <option value="">-- Select Rack --</option>
                                     {locations.map(l => <option key={l.id} value={l.id}>{l.code}</option>)}
                                   </select>
                                 ) : (
@@ -519,7 +542,7 @@ export default function JobWork() {
                                 disabled={line.balance_qty <= 0}
                                 className={`w-full bg-gray-900 border ${line.balance_qty <= 0 ? 'border-gray-800 opacity-50' : 'border-gray-700'} rounded px-2 py-1.5 text-xs text-white outline-none`}
                               >
-                                <option value="">Factory Floor</option>
+                                <option value="">-- Select Target Location --</option>
                                 {locations.map(loc => <option key={loc.id} value={loc.id}>{loc.code}</option>)}
                               </select>
                             ) : (
@@ -552,7 +575,6 @@ export default function JobWork() {
              <div>
                <h1 className="text-4xl font-black tracking-tighter uppercase mb-2">DELIVERY CHALLAN</h1>
                
-               {/* ⭐️ Dynamic Logo & Text from Firebase */}
                {companySettings?.logoUrl && (
                   <img src={companySettings.logoUrl} alt="Company Logo" className="h-16 object-contain mb-3" />
                )}
