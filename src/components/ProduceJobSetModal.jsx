@@ -45,7 +45,7 @@ export default function ProduceJobSetModal({
 
   const [recalcModal, setRecalcModal] = useState({ isOpen: false, pIdx: null });
 
-  // ⭐️ ROUND 24 FIX: Interactive state for the Repeat Mode checkboxes
+  // ⭐️ ROUND 25 FIX: Interactive state for the Repeat Mode checkboxes
   const [repeatToggles, setRepeatToggles] = useState({
     targetQuantities: true,
     materialOverrides: true,
@@ -121,7 +121,7 @@ export default function ProduceJobSetModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, activeProduceProduct, produceParts, repeatSourceGroup]);
 
-  // ⭐️ ROUND 24 FIX: Handler to clear or restore pre-filled data when checkboxes are unticked/ticked
+  // ⭐️ ROUND 25 FIX: Handler to clear or restore pre-filled data when checkboxes are unticked/ticked
   const handleRepeatToggle = (field, checked) => {
     setRepeatToggles(prev => ({ ...prev, [field]: checked }));
     
@@ -147,18 +147,13 @@ export default function ProduceJobSetModal({
         });
         setLocalMaterials(initialMats);
       } else if (field === 'routingTargets') {
-         produceParts.forEach((p, pIdx) => {
-            p.sequence?.forEach((s, sIdx) => {
-              handleStepQtyChange(pIdx, sIdx, 'input_qty', "");
-              handleStepQtyChange(pIdx, sIdx, 'output_qty', "");
-            });
-            setTimeout(() => handleRecalculateChain && handleRecalculateChain(pIdx, { resetAll: false }), 50);
+         produceParts.forEach((_, pIdx) => {
+            handleRecalculateChain && handleRecalculateChain(pIdx, { resetAll: true });
          });
       } else if (field === 'wastageEntries') {
          produceParts.forEach((p, pIdx) => {
-            p.sequence?.forEach((s, sIdx) => {
-              handleStepQtyChange(pIdx, sIdx, 'wastage_val', "");
-              handleStepQtyChange(pIdx, sIdx, 'wastage_type', "%");
+            produceParts[pIdx].sequence?.forEach((_, sIdx) => {
+              handleStepQtyChange(pIdx, sIdx, 'wastage_val', 0);
             });
             setTimeout(() => handleRecalculateChain && handleRecalculateChain(pIdx, { resetAll: false }), 50);
          });
@@ -198,7 +193,7 @@ export default function ProduceJobSetModal({
         });
         setLocalMaterials(initialMats);
       } else if (field === 'routingTargets') {
-         produceParts.forEach((p, pIdx) => {
+         produceParts.forEach((_, pIdx) => {
             const ref = repeatSourceGroup[pIdx];
             if (ref && ref.process_sequence) {
                ref.process_sequence.forEach((s, sIdx) => {
@@ -208,7 +203,7 @@ export default function ProduceJobSetModal({
             }
          });
       } else if (field === 'wastageEntries') {
-         produceParts.forEach((p, pIdx) => {
+         produceParts.forEach((_, pIdx) => {
             const ref = repeatSourceGroup[pIdx];
             if (ref && ref.process_sequence) {
                ref.process_sequence.forEach((s, sIdx) => {
@@ -218,7 +213,7 @@ export default function ProduceJobSetModal({
             }
          });
       } else if (field === 'notes') {
-         produceParts.forEach((p, pIdx) => {
+         produceParts.forEach((_, pIdx) => {
             const ref = repeatSourceGroup[pIdx];
             if (ref) updatePartNotes(pIdx, ref.notes || "");
          });
@@ -626,7 +621,6 @@ export default function ProduceJobSetModal({
 
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      {/* ⭐️ ROUND 21.1: CUSTOM RECALCULATE CONFIRMATION MODAL */}
       {recalcModal.isOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
           <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-md shadow-2xl overflow-hidden animate-fade-in">
@@ -968,7 +962,7 @@ export default function ProduceJobSetModal({
                                 <div className="bg-gray-900 px-2 py-1.5 rounded border border-gray-700 text-gray-400 relative flex items-center gap-1">
                                   In: <input type="text" value={step.input_qty !== undefined ? step.input_qty : ''} onChange={e => handleStepQtyChange(pIdx, sIdx, 'input_qty', e.target.value)} className="w-16 bg-transparent text-white font-mono outline-none" placeholder="TBD" />
                                   
-                                  {/* ⭐️ ROUND 24 FIX: Route Target Untick & Recalculate Sequence */}
+                                  {/* ⭐️ ROUND 25 FIX: Route Target Reset & Immediate Recalculate */}
                                   {p.dirtyFields?.[`input_${sIdx}`] && (
                                     <button 
                                       type="button" 
@@ -992,7 +986,7 @@ export default function ProduceJobSetModal({
                                     <option value="fixed">pcs</option>
                                   </select>
 
-                                  {/* ⭐️ ROUND 24 FIX: Route Target Untick & Recalculate Sequence */}
+                                  {/* ⭐️ ROUND 25 FIX: Route Target Reset & Immediate Recalculate */}
                                   {p.dirtyFields?.[`wastage_val_${sIdx}`] && (
                                     <button 
                                       type="button" 
@@ -1011,7 +1005,7 @@ export default function ProduceJobSetModal({
                                 <div className="bg-gray-900 px-2 py-1.5 rounded border border-gray-700 text-gray-400 relative flex items-center gap-1">
                                   Out: <input type="text" value={step.output_qty !== undefined ? step.output_qty : ''} onChange={e => handleStepQtyChange(pIdx, sIdx, 'output_qty', e.target.value)} className="w-16 bg-transparent text-white font-mono outline-none" placeholder="TBD" />
                                   
-                                  {/* ⭐️ ROUND 24 FIX: Route Target Untick & Recalculate Sequence */}
+                                  {/* ⭐️ ROUND 25 FIX: Route Target Reset & Immediate Recalculate */}
                                   {p.dirtyFields?.[`output_${sIdx}`] && (
                                     <button 
                                       type="button" 

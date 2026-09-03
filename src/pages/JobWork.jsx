@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { collection, doc, onSnapshot, query, writeBatch, serverTimestamp, orderBy } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { formatInventoryLabel } from "../utils/helpers";
@@ -45,6 +45,14 @@ export default function JobWork() {
     return () => { unsubChallans(); unsubVendors(); unsubInv(); unsubJobs(); unsubLocs(); unsubSettings(); };
   }, []);
 
+  // ⭐️ RECOVERY FIX: Helper to accurately read stock whether stored by ID or by readable Code
+  const getAvailableStock = (invItem, locationId) => {
+    if (!invItem || !locationId) return 0;
+    const locObj = locations.find(l => l.id === locationId);
+    const locCode = locObj ? locObj.code : locationId;
+    return (invItem.balances?.[locationId] || 0) + (invItem.balances?.[locCode] || 0);
+  };
+
   const handleAddOutwardLine = () => {
     setOutwardForm(prev => ({
       ...prev,
@@ -71,20 +79,62 @@ export default function JobWork() {
     }));
   };
 
+  const outwardStockValidation = useMemo(() => {
+    let hasError = false;
+    const usageMap = {};
+    const lineErrors = {};
+
+    outwardForm.items.forEach(line => {
+      if (line.type === 'raw' && line.referenceId && line.sourceLocation) {
+        const key = `${line.referenceId}_${line.sourceLocation}`;
+        usageMap[key] = (usageMap[key] || 0) + Number(line.qty || 0);
+      }
+    });
+
+    outwardForm.items.forEach(line => {
+      if (line.type === 'raw' && line.referenceId && line.sourceLocation) {
+        const invData = inventory.find(i => i.id === line.referenceId);
+        
+        // ⭐️ Uses the new robust stock check
+        const available = getAvailableStock(invData, line.sourceLocation);
+        const key = `${line.referenceId}_${line.sourceLocation}`;
+        
+        if (Number(line.qty) > available) {
+          lineErrors[line.id] = `Over available limit (${available})`;
+          hasError = true;
+        } else if (usageMap[key] > available) {
+          lineErrors[line.id] = `Total across lines exceeds ${available}`;
+          hasError = true;
+        }
+      }
+    });
+
+    return { hasError, lineErrors };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [outwardForm.items, inventory, locations]);
+
   const submitOutwardChallan = async (e) => {
     e.preventDefault();
     if (!outwardForm.vendorId || outwardForm.items.length === 0) return alert("Select a vendor and add at least one item.");
     
+    if (outwardStockValidation.hasError) return alert("Please fix stock quantity errors before submitting.");
+    
+    const aggregateCheck = {};
     for (const line of outwardForm.items) {
       if (line.type === "raw" && line.referenceId) {
         if (!line.sourceLocation) {
           return alert(`Please select a specific source rack for raw material: ${line.itemName}`);
         }
         const invData = inventory.find(i => i.id === line.referenceId);
-        const available = invData?.balances?.[line.sourceLocation] || 0;
         
-        if (Number(line.qty) > available) {
-          return alert(`STOCK GUARD BLOCKED: Cannot send ${line.qty} ${line.unit} of ${line.itemName}. Only ${available} available at selected location.`);
+        // ⭐️ Uses the new robust stock check
+        const available = getAvailableStock(invData, line.sourceLocation);
+        
+        const key = `${line.referenceId}_${line.sourceLocation}`;
+        aggregateCheck[key] = (aggregateCheck[key] || 0) + Number(line.qty);
+
+        if (aggregateCheck[key] > available) {
+          return alert(`STOCK GUARD BLOCKED: Cumulative quantity for ${line.itemName} exceeds the ${available} available at selected location.`);
         }
       }
     }
@@ -126,24 +176,40 @@ export default function JobWork() {
             
             const vendorVirtualLoc = `AT VENDOR - ${vendor.name}`;
             
-            newBalances[line.sourceLocation] = (newBalances[line.sourceLocation] || 0) - Number(line.qty);
-            newBalances[vendorVirtualLoc] = (newBalances[vendorVirtualLoc] || 0) + Number(line.qty);
-            
+            const sourceLocObj = locations.find(l => l.id === line.sourceLocation);
+            const sourceLocCode = sourceLocObj ? sourceLocObj.code : line.sourceLocation;
+
+            // ⭐️ Robust math retrieval for ledger
+            const prevSourceQty = getAvailableStock(invData, line.sourceLocation);
+            const newSourceQty = prevSourceQty - Number(line.qty);
+            const prevVendorQty = newBalances[vendorVirtualLoc] || 0;
+            const newVendorQty = prevVendorQty + Number(line.qty);
+            const totalFactoryBalance = invData.balance || 0; 
+
+            // Update Stored Balances cleanly via code
+            delete newBalances[line.sourceLocation]; 
+            newBalances[sourceLocCode] = newSourceQty;
+            newBalances[vendorVirtualLoc] = newVendorQty;
             batch.update(itemRef, { balances: newBalances });
 
-            // ⭐️ ROUND 24 FIX: Write exact raw IDs and expected Types to satisfy Ledger math
-            const ledgerRef = doc(collection(db, "inventoryLedger"));
-            batch.set(ledgerRef, {
-              itemId: line.referenceId, date: serverTimestamp(), type: "OUTWARD_JOBWORK",
-              qty: -Number(line.qty), unit: line.unit, location: line.sourceLocation, 
-              referenceId: challanNo, remarks: `Sent to vendor: ${vendor.name}`
+            const ledgerRefOut = doc(collection(db, "inventoryTransactions"));
+            batch.set(ledgerRefOut, {
+              itemId: line.referenceId, itemName: invData.name, 
+              type: "transfer_out", date: outwardForm.challanDate, 
+              qty: -Number(line.qty), location: sourceLocCode, toLocation: vendorVirtualLoc,
+              transfer_id: challanNo, previous_balance: prevSourceQty, new_balance: newSourceQty,
+              total_balance: totalFactoryBalance, notes: `Sent to vendor: ${vendor.name}`,
+              created_at: serverTimestamp()
             });
             
-            const ledgerRef2 = doc(collection(db, "inventoryLedger"));
-            batch.set(ledgerRef2, {
-              itemId: line.referenceId, date: serverTimestamp(), type: "INWARD_JOBWORK_VIRTUAL",
-              qty: Number(line.qty), unit: line.unit, location: vendorVirtualLoc,
-              referenceId: challanNo, remarks: `Virtual receipt at vendor: ${vendor.name}`
+            const ledgerRefIn = doc(collection(db, "inventoryTransactions"));
+            batch.set(ledgerRefIn, {
+              itemId: line.referenceId, itemName: invData.name, 
+              type: "transfer_in", date: outwardForm.challanDate, 
+              qty: Number(line.qty), location: vendorVirtualLoc, fromLocation: sourceLocCode,
+              transfer_id: challanNo, previous_balance: prevVendorQty, new_balance: newVendorQty,
+              total_balance: totalFactoryBalance, notes: `Receipt at vendor: ${vendor.name}`,
+              created_at: serverTimestamp()
             });
           }
         }
@@ -219,27 +285,42 @@ export default function JobWork() {
            if (invData) {
              const itemRef = doc(db, "inventoryItems", line.referenceId);
              const newBalances = { ...(invData.balances || {}) };
-             
              const vendorVirtualLoc = `AT VENDOR - ${activeChallan.vendor_name}`;
              
-             newBalances[vendorVirtualLoc] = Math.max(0, (newBalances[vendorVirtualLoc] || 0) - Number(line.receiving_now));
-             newBalances[line.target_location] = (newBalances[line.target_location] || 0) + Number(line.receiving_now);
-             
+             const targetLocObj = locations.find(l => l.id === line.target_location);
+             const targetLocCode = targetLocObj ? targetLocObj.code : line.target_location;
+
+             // ⭐️ Robust math retrieval for ledger
+             const prevVendorQty = newBalances[vendorVirtualLoc] || 0;
+             const newVendorQty = Math.max(0, prevVendorQty - Number(line.receiving_now));
+             const prevTargetQty = getAvailableStock(invData, line.target_location);
+             const newTargetQty = prevTargetQty + Number(line.receiving_now);
+             const totalFactoryBalance = invData.balance || 0;
+
+             // Update Stored Balances cleanly via code
+             newBalances[vendorVirtualLoc] = newVendorQty;
+             delete newBalances[line.target_location];
+             newBalances[targetLocCode] = newTargetQty;
              batch.update(itemRef, { balances: newBalances });
 
-             // ⭐️ ROUND 24 FIX: Write exact raw IDs and expected Types to satisfy Ledger math
-             const ledgerRef = doc(collection(db, "inventoryLedger"));
-             batch.set(ledgerRef, {
-               itemId: line.referenceId, date: serverTimestamp(), type: "INWARD_JOBWORK_RETURN",
-               qty: Number(line.receiving_now), unit: "pcs", location: line.target_location, // RAW ID
-               referenceId: activeChallan.challan_no, remarks: `Returned from vendor: ${activeChallan.vendor_name}`
+             const ledgerRefOut = doc(collection(db, "inventoryTransactions"));
+             batch.set(ledgerRefOut, {
+               itemId: line.referenceId, itemName: invData.name, 
+               type: "transfer_out", date: inwardForm.receivedDate, 
+               qty: -Number(line.receiving_now), location: vendorVirtualLoc, toLocation: targetLocCode,
+               transfer_id: activeChallan.challan_no, previous_balance: prevVendorQty, new_balance: newVendorQty,
+               total_balance: totalFactoryBalance, notes: `Returned from vendor: ${activeChallan.vendor_name}`,
+               created_at: serverTimestamp()
              });
 
-             const ledgerRef2 = doc(collection(db, "inventoryLedger"));
-             batch.set(ledgerRef2, {
-               itemId: line.referenceId, date: serverTimestamp(), type: "OUTWARD_JOBWORK", 
-               qty: -Number(line.receiving_now), unit: "pcs", location: vendorVirtualLoc,
-               referenceId: activeChallan.challan_no, remarks: `Virtual return deduction: ${activeChallan.vendor_name}`
+             const ledgerRefIn = doc(collection(db, "inventoryTransactions"));
+             batch.set(ledgerRefIn, {
+               itemId: line.referenceId, itemName: invData.name, 
+               type: "transfer_in", date: inwardForm.receivedDate, 
+               qty: Number(line.receiving_now), location: targetLocCode, fromLocation: vendorVirtualLoc,
+               transfer_id: activeChallan.challan_no, previous_balance: prevTargetQty, new_balance: newTargetQty,
+               total_balance: totalFactoryBalance, notes: `Receipt from vendor challan: ${activeChallan.challan_no}`,
+               created_at: serverTimestamp()
              });
            }
         }
@@ -404,52 +485,79 @@ export default function JobWork() {
                         {outwardForm.items.length === 0 ? (
                           <tr><td colSpan="6" className="p-8 text-center text-gray-500 italic text-sm">Add items you are sending out.</td></tr>
                         ) : (
-                          outwardForm.items.map((item) => (
-                            <tr key={item.id} className="bg-[#0a0f1a]">
-                              <td className="p-2">
-                                <select value={item.type} onChange={e => handleOutwardLineChange(item.id, 'type', e.target.value)} className={`${inputClass} py-1.5 text-xs`}>
-                                  <option value="job">Job (Semi-Finished)</option>
-                                  <option value="raw">Raw Material</option>
-                                </select>
-                              </td>
-                              <td className="p-2">
-                                {item.type === 'raw' ? (
-                                  <select value={item.referenceId} onChange={e => handleOutwardLineChange(item.id, 'referenceId', e.target.value)} className={`${inputClass} py-1.5 text-xs`}>
-                                    <option value="">-- Select Material --</option>
-                                    {inventory.map(inv => <option key={inv.id} value={inv.id}>{formatInventoryLabel(inv)}</option>)}
+                          outwardForm.items.map((item) => {
+                            // ⭐️ Uses robust math retrieval for the UI display
+                            const invData = inventory.find(i => i.id === item.referenceId);
+                            const availStock = item.referenceId && item.sourceLocation 
+                                ? getAvailableStock(invData, item.sourceLocation)
+                                : null;
+                                
+                            return (
+                              <tr key={item.id} className="bg-[#0a0f1a]">
+                                <td className="p-2 align-top pt-3">
+                                  <select value={item.type} onChange={e => handleOutwardLineChange(item.id, 'type', e.target.value)} className={`${inputClass} py-1.5 text-xs`}>
+                                    <option value="job">Job (Semi-Finished)</option>
+                                    <option value="raw">Raw Material</option>
                                   </select>
-                                ) : (
-                                  <select value={item.referenceId} onChange={e => handleOutwardLineChange(item.id, 'referenceId', e.target.value)} className={`${inputClass} py-1.5 text-xs`}>
-                                    <option value="">-- Select Active Job --</option>
-                                    {jobs.filter(j => j.status !== 'completed').map(j => (
-                                      <option key={j.id} value={j.id}>{j.display_id || j.set_code} - {j.title}</option>
-                                    ))}
+                                </td>
+                                <td className="p-2 align-top pt-3">
+                                  {item.type === 'raw' ? (
+                                    <select value={item.referenceId} onChange={e => handleOutwardLineChange(item.id, 'referenceId', e.target.value)} className={`${inputClass} py-1.5 text-xs`}>
+                                      <option value="">-- Select Material --</option>
+                                      {inventory.map(inv => <option key={inv.id} value={inv.id}>{formatInventoryLabel(inv)}</option>)}
+                                    </select>
+                                  ) : (
+                                    <select value={item.referenceId} onChange={e => handleOutwardLineChange(item.id, 'referenceId', e.target.value)} className={`${inputClass} py-1.5 text-xs`}>
+                                      <option value="">-- Select Active Job --</option>
+                                      {jobs.filter(j => j.status !== 'completed').map(j => (
+                                        <option key={j.id} value={j.id}>{j.display_id || j.set_code} - {j.title}</option>
+                                      ))}
+                                    </select>
+                                  )}
+                                </td>
+                                <td className="p-2 align-top pt-3">
+                                  {item.type === 'raw' ? (
+                                    <div className="flex flex-col gap-1">
+                                      <select value={item.sourceLocation} onChange={e => handleOutwardLineChange(item.id, 'sourceLocation', e.target.value)} className={`${inputClass} py-1.5 text-xs`}>
+                                        <option value="">-- Select Rack --</option>
+                                        {locations.map(l => <option key={l.id} value={l.id}>{l.code}</option>)}
+                                      </select>
+                                      {availStock !== null && (
+                                        <span className={`text-[10px] font-bold px-1 uppercase tracking-wide ${availStock < Number(item.qty) ? 'text-red-400 bg-red-500/10 rounded' : 'text-green-400'}`}>
+                                          Avail: {availStock}
+                                        </span>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <span className="text-xs text-gray-600 block text-center mt-2">—</span>
+                                  )}
+                                </td>
+                                <td className="p-2 align-top pt-3">
+                                  <input 
+                                    type="number" 
+                                    required min="1" 
+                                    value={item.qty} 
+                                    onChange={e => handleOutwardLineChange(item.id, 'qty', e.target.value)} 
+                                    className={`${inputClass} py-1.5 text-xs ${outwardStockValidation.lineErrors[item.id] ? 'border-red-500 bg-red-500/10 text-red-100' : ''}`} 
+                                    placeholder="Qty" 
+                                  />
+                                  {outwardStockValidation.lineErrors[item.id] && (
+                                    <span className="text-[9px] text-red-400 font-bold block mt-1 leading-tight">
+                                      {outwardStockValidation.lineErrors[item.id]}
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="p-2 align-top pt-3">
+                                  <select value={item.unit} onChange={e => handleOutwardLineChange(item.id, 'unit', e.target.value)} className={`${inputClass} py-1.5 text-xs`}>
+                                    <option value="pcs">pcs</option><option value="sheets">sheets</option><option value="kg">kg</option>
                                   </select>
-                                )}
-                              </td>
-                              <td className="p-2">
-                                {item.type === 'raw' ? (
-                                  <select value={item.sourceLocation} onChange={e => handleOutwardLineChange(item.id, 'sourceLocation', e.target.value)} className={`${inputClass} py-1.5 text-xs`}>
-                                    <option value="">-- Select Rack --</option>
-                                    {locations.map(l => <option key={l.id} value={l.id}>{l.code}</option>)}
-                                  </select>
-                                ) : (
-                                  <span className="text-xs text-gray-600 block text-center">—</span>
-                                )}
-                              </td>
-                              <td className="p-2">
-                                <input type="number" required min="1" value={item.qty} onChange={e => handleOutwardLineChange(item.id, 'qty', e.target.value)} className={`${inputClass} py-1.5 text-xs`} placeholder="Qty" />
-                              </td>
-                              <td className="p-2">
-                                <select value={item.unit} onChange={e => handleOutwardLineChange(item.id, 'unit', e.target.value)} className={`${inputClass} py-1.5 text-xs`}>
-                                  <option value="pcs">pcs</option><option value="sheets">sheets</option><option value="kg">kg</option>
-                                </select>
-                              </td>
-                              <td className="p-2 text-center">
-                                <button type="button" onClick={() => setOutwardForm(p => ({ ...p, items: p.items.filter(i => i.id !== item.id) }))} className="text-gray-600 hover:text-red-400 font-bold">✕</button>
-                              </td>
-                            </tr>
-                          ))
+                                </td>
+                                <td className="p-2 text-center align-top pt-4">
+                                  <button type="button" onClick={() => setOutwardForm(p => ({ ...p, items: p.items.filter(i => i.id !== item.id) }))} className="text-gray-600 hover:text-red-400 font-bold">✕</button>
+                                </td>
+                              </tr>
+                            );
+                          })
                         )}
                       </tbody>
                     </table>
@@ -458,7 +566,11 @@ export default function JobWork() {
 
                 <div className="pt-4 flex justify-end gap-3 sticky bottom-0 bg-[#0a0f1a] py-2">
                   <button type="button" onClick={() => setIsOutwardOpen(false)} className="px-5 py-2 text-gray-400 bg-gray-900 rounded-lg hover:text-white transition-colors">Cancel</button>
-                  <button type="submit" disabled={isSaving} className="bg-primary-600 hover:bg-primary-500 disabled:opacity-50 text-white font-bold px-6 py-2 rounded-lg shadow-lg transition-colors">
+                  <button 
+                    type="submit" 
+                    disabled={isSaving || outwardStockValidation.hasError || outwardForm.items.length === 0} 
+                    className="bg-primary-600 hover:bg-primary-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold px-6 py-2 rounded-lg shadow-lg transition-colors"
+                  >
                     {isSaving ? "Saving..." : "Generate Challan"}
                   </button>
                 </div>
