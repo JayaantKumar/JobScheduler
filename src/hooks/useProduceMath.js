@@ -7,41 +7,34 @@ export function useProduceMath() {
   const [produceDate, setProduceDate] = useState("");
   const [produceParts, setProduceParts] = useState([]);
   
-  // ⭐️ ROUND 21: Added state to track if we are in Repeat Mode
   const [repeatSourceGroup, setRepeatSourceGroup] = useState(null);
-
   const [cachedProcesses, setCachedProcesses] = useState([]);
 
-  // ⭐️ ROUND 18.3 FIX: Check if a value is text without modifying the user's keystrokes
   const isText = (val) => {
     if (val === "" || val === null || val === undefined) return true;
+    if (typeof val === 'number' && Number.isNaN(val)) return true;
     if (typeof val === 'string' && isNaN(Number(val))) return true;
     return false;
   };
 
-  // ⭐️ ROUND 21.1 HOTFIX: Refined sequence engine with strict manual override tracking
   const recalculateSequence = (sequence, dirtyFields, baseSets, basePcs, multiplier, processes = cachedProcesses) => {
     let previousOutput = basePcs; 
 
     return sequence.map((step, idx) => {
-        // 1. Determine Input
         let stepInput = step.input_qty;
         if (!dirtyFields[`input_${idx}`]) {
             stepInput = idx === 0 ? baseSets : previousOutput; 
         }
 
-        // 2. Fetch Default Wastage
         const processDef = processes.find(dp => dp.processName === step.process_name);
         const defWastage = processDef?.defaultWastage || 0;
 
-        // ⭐️ Preserves 0 values strictly
         const wVal = (step.wastage_val !== undefined && step.wastage_val !== null && step.wastage_val !== "") 
           ? step.wastage_val 
           : defWastage;
 
         const wType = step.wastage_type || '%';
 
-        // 3. Determine Output
         let stepOutput = step.output_qty;
 
         if (!dirtyFields[`output_${idx}`]) {
@@ -64,7 +57,6 @@ export function useProduceMath() {
             }
         }
 
-        // Cascade this output to become the next step's default input
         previousOutput = stepOutput; 
 
         return {
@@ -113,7 +105,7 @@ export function useProduceMath() {
 
   const openProduceModal = (prod, dbProcesses = []) => {
     setCachedProcesses(dbProcesses);
-    setRepeatSourceGroup(null); // ⭐️ Clear repeat mode for standard generation
+    setRepeatSourceGroup(null);
     
     const formattedProd = { ...prod };
     if (!formattedProd.parts) {
@@ -129,16 +121,13 @@ export function useProduceMath() {
     setProduceModalOpen(true);
   };
 
-  // ⭐️ ROUND 21: New function to open modal pre-filled with past job data
   const openProduceModalForRepeat = (jobGroup, dbProcesses = []) => {
     if (!jobGroup || jobGroup.length === 0) return;
     
     setCachedProcesses(dbProcesses);
     
-    // Sort group to ensure Part A, Part B sequence is correct
     const sortedGroup = [...jobGroup].sort((a, b) => (a.part_index || 0) - (b.part_index || 0));
     
-    // 1. Reconstruct a "Product Template" from the past jobs
     const mockProduct = {
       id: sortedGroup[0].product?.id || sortedGroup[0].product_snapshot?.id || "custom-repeat",
       name: sortedGroup[0].product?.name || sortedGroup[0].product_snapshot?.name || sortedGroup[0].title,
@@ -155,14 +144,12 @@ export function useProduceMath() {
       }))
     };
 
-    // 2. Extract historical values and lock them with dirtyFields
     const historyParts = sortedGroup.map((j, i) => {
       const dirty = {};
       if (j.is_custom_override) dirty.custom_override = true;
-      if (j.sets_qty !== undefined) dirty.part_sets = true; // Lock global qty for this part
+      if (j.sets_qty !== undefined) dirty.part_sets = true; 
 
       const mappedSequence = (j.process_sequence || []).map((step, sIdx) => {
-         // Freeze the past numbers so the engine doesn't auto-overwrite them on load
          dirty[`input_${sIdx}`] = true;
          dirty[`output_${sIdx}`] = true;
          dirty[`wastage_val_${sIdx}`] = true;
@@ -191,7 +178,6 @@ export function useProduceMath() {
     setActiveProduceProduct(mockProduct);
     setProduceQty(sortedGroup[0].sets_qty || "");
     
-    // Inject the historical parts as existing data
     setProduceParts(generateProduceParts(sortedGroup[0].sets_qty || "", mockProduct.parts, historyParts, dbProcesses)); 
     
     const defaultDate = new Date();
@@ -206,7 +192,6 @@ export function useProduceMath() {
     const val = e.target.value;
     setProduceQty(val);
     if (activeProduceProduct) {
-      // Pass cachedProcesses explicitly to ensure default wastages are preserved during global quantity changes
       setProduceParts(prev => generateProduceParts(val, activeProduceProduct.parts, prev, cachedProcesses));
     }
   };
@@ -249,14 +234,13 @@ export function useProduceMath() {
        const pCopy = { ...copy[pIdx] }; 
        pCopy.is_custom_override = checked;
        
-       const newDirty = { ...(pCopy.dirtyFields || {}) };
        if (checked) {
-           newDirty.custom_override = true;
+           pCopy.dirtyFields = { ...(pCopy.dirtyFields || {}), custom_override: true };
        } else {
-           // ⭐️ ROUND 23: Deleting the lock ensures the math cascade recognizes it is truly unticked
-           delete newDirty.custom_override; 
+           const newDirty = {};
+           if (pCopy.dirtyFields?.part_sets) newDirty.part_sets = true; 
+           pCopy.dirtyFields = newDirty;
        }
-       pCopy.dirtyFields = newDirty;
 
        if (!checked) {
          pCopy.final_pcs = isText(pCopy.part_sets) ? pCopy.part_sets : (Number(pCopy.part_sets) * Number(pCopy.active_multiplier || 1));
@@ -279,7 +263,6 @@ export function useProduceMath() {
     });
   };
 
-  // ⭐️ ROUND 21.1 HOTFIX: Supports clearing dirty locks when passing empty string
   const handleStepQtyChange = (pIdx, sIdx, field, val) => {
     setProduceParts(prev => {
         const copy = [...prev];
@@ -287,23 +270,25 @@ export function useProduceMath() {
         const seqCopy = [...pCopy.sequence];
         const dirty = { ...(pCopy.dirtyFields || {}) };
 
-        if (val === "") {
-          // Passing empty string clears the manual lock
-          delete dirty[`${field}_${sIdx}`];
+        const isBlank = val === "" || val === null || val === undefined || Number.isNaN(val);
+
+        // ⭐️ ROUND 26 CRITICAL FIX: Explicitly match the correct lock keys
+        if (isBlank) {
+          if (field === 'input_qty') delete dirty[`input_${sIdx}`];
+          if (field === 'output_qty') delete dirty[`output_${sIdx}`];
+          if (field === 'wastage_val') delete dirty[`wastage_val_${sIdx}`];
         } else {
-          // Non-empty string sets dirty lock
           if (field === 'input_qty') dirty[`input_${sIdx}`] = true;
           if (field === 'output_qty') dirty[`output_${sIdx}`] = true;
           if (field === 'wastage_val') dirty[`wastage_val_${sIdx}`] = true;
         }
 
         if (field === 'wastage_val' || field === 'wastage_type') {
-           // Changing wastage clears output dirty lock so math auto-cascades
            delete dirty[`output_${sIdx}`];
         }
 
         pCopy.dirtyFields = dirty;
-        seqCopy[sIdx] = { ...seqCopy[sIdx], [field]: val };
+        seqCopy[sIdx] = { ...seqCopy[sIdx], [field]: isBlank ? "" : val };
         pCopy.sequence = seqCopy;
 
         pCopy.sequence = recalculateSequence(pCopy.sequence, pCopy.dirtyFields, pCopy.part_sets, pCopy.final_pcs, pCopy.active_multiplier);
@@ -313,7 +298,6 @@ export function useProduceMath() {
     });
   };
 
-  // ⭐️ ROUND 21.1 HOTFIX: Recalculate options support ("untouched only" vs "reset all")
   const handleRecalculateChain = (pIdx, options = { resetAll: false }) => {
     setProduceParts(prev => {
         const copy = [...prev];
@@ -322,10 +306,8 @@ export function useProduceMath() {
         let newDirty = {};
 
         if (!options?.resetAll) {
-          // Keep step locks when recalculating untouched fields only
           newDirty = { ...pCopy.dirtyFields };
         } else {
-          // Wipes all step locks when resetting everything, preserving only part-level locks
           newDirty = { 
               part_sets: pCopy.dirtyFields?.part_sets,
               custom_override: pCopy.dirtyFields?.custom_override
